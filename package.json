@@ -1,0 +1,17 @@
+{
+  "name": "tingke-banlv",
+  "version": "0.1.0",
+  "description": "听课伴侣 - 实时字幕 + 交互式单词学习工具",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && python main.py",
+    "build": "cd frontend && npm run build",
+    "electron:dev": "cd frontend && npm run electron:dev",
+    "electron:build": "cd frontend && npm run electron:build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

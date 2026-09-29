@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.tingkebanlv/
+*.pyc
+__pycache__/
+.env
+*.egg-info/
+.DS_Store
+ecdict.db
+
+# 本地保留的重复项目副本（不入库，避免仓库内两份代码）
+tingke-banlv/
