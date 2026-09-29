@@ -1,5 +1,8 @@
 # 听课伴侣 — 实时字幕 · 交互学词
 
+![CI](https://github.com/lizerankmpop-dev/tingke-banlv/actions/workflows/ci.yml/badge.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 实时字幕工具，支持**在线网课**和**线下课堂**两种模式。捕获系统音频或麦克风收音，生成逐词同步字幕，点击单词即可学习。完全免费，本地运行。
 
 ## 核心功能
