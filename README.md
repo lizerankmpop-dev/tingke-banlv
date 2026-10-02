@@ -48,7 +48,10 @@
 | 音频来源 | 系统音频（WASAPI loopback） | 麦克风 |
 | 适用场景 | Coursera / B站 / YouTube | 教室 / 讲座 / 会议室 |
 | 识别语言 | 英文为主 | 中英混合 |
-| 额外需求 | 虚拟音频设备 | 降噪麦克风（建议） |
+| 额外需求 | 无（Windows 下由 PyAudioWPatch 直接采集） | 降噪麦克风（建议） |
+
+> Windows 的 WASAPI 回环采集由 `PyAudioWPatch` 提供，**不需要**安装 VB-Cable
+> 之类的虚拟声卡，也不需要在系统声音设置里把默认播放设备改掉。
 
 ## 技术栈
 
@@ -56,9 +59,9 @@
 |------|------|
 | 桌面框架 | Electron + React + TypeScript |
 | 状态管理 | Zustand |
-| ASR 引擎 | Faster-Whisper (small) |
-| 语音检测 | Silero VAD |
-| 音频捕获 | PyAudio（Loopback + Microphone） |
+| ASR 引擎 | Faster-Whisper（默认 `base`，可配置） |
+| 语音检测 | Silero VAD（ONNX 后端） |
+| 音频捕获 | PyAudioWPatch（WASAPI Loopback，Windows）/ PyAudio（麦克风） |
 | 术语提取 | Ollama + Qwen2.5（可切换云端 API） |
 | 术语热词 | 内置领域术语库 + 自定义术语 → Whisper initial_prompt |
 | 本地词典 | ECDICT + 内置词表（3300+ 词） |
@@ -76,8 +79,41 @@
 | `TINGKEBANLV_CLOUD_MODEL` | — | 云端模型名，如 `deepseek-chat` |
 | `TINGKEBANLV_TERM_PROMPT_MAX` | `800` | 术语热词最大字符数 |
 | `WHISPER_DEVICE` | 自动检测 | `cuda` / `cpu` |
+| `TINGKEBANLV_WHISPER_MODEL` | `base` | 模型规格：`tiny`/`base`/`small`/`medium`/`large-v3` |
+| `TINGKEBANLV_WHISPER_THREADS` | 自动（≤8） | ctranslate2 的 CPU 线程数 |
+| `TINGKEBANLV_VAD_SILENCE` | `0.8` | 静音多久后断句（秒），越大片段越长 |
+| `TINGKEBANLV_MAX_PENDING_JOBS` | `8` | 待识别队列上限（背压兜底） |
+| `TINGKEBANLV_DISABLE_VAD_MODEL` | — | 设 `1` 强制使用能量检测（排障用） |
+| `HF_ENDPOINT` | `https://hf-mirror.com` | 模型下载镜像 |
 | `TINGKEBANLV_HOME` | `~/.tingkebanlv` | 数据与模型存储目录（日志落盘于此） |
+| `WHISPER_MODEL_DIR` | `<TINGKEBANLV_HOME>/whisper_models` | 模型缓存目录 |
 | `TINGKEBANLV_GPU_SANDBOX` | — | 设为 `1` 恢复 Chromium GPU 沙箱默认行为（排障用） |
+| `TINGKEBANLV_PYTHON` | 自动探测 | 指定后端 Python 解释器（打包排障用） |
+
+### 实时性：为什么默认是 base 而不是 small
+
+实测（`scripts/bench_matrix.py`，32 核 CPU，`int8`，8 秒片段）：
+
+| 模型 | 线程 | 2s 片段 | 4s 片段 | 8s 片段 | 15s 片段 |
+|---|---|---|---|---|---|
+| tiny | 4 | 0.551 | 0.251 | 0.138 | 0.077 |
+| base | 4 | 0.908 | 0.482 | 0.249 | 0.164 |
+| small | 4 | **2.814** | **1.438** | 0.738 | 0.428 |
+| small | 8 | **2.126** | **1.115** | 0.584 | 0.332 |
+
+表内为 RTF（识别耗时 / 音频时长），**必须 < 1**，否则字幕会持续滞后。
+
+关键规律是：**每次调用都有约 4 秒固定开销**，与音频长短几乎无关
+（small/4 线程下 2 秒片段耗时 5.63s，而 15 秒片段只耗时 6.42s；Whisper 按 30 秒窗口处理、
+短输入会被补齐）。所以片段切得越碎越亏，2 秒片段直接不可用。
+
+据此确定的默认值：`base` 模型 + 自动线程数 + 静音阈值放宽到 0.8s，
+让片段自然落在 4~12 秒。若机器较强想换回 `small`，设
+`TINGKEBANLV_WHISPER_MODEL=small`，但需注意 4 秒片段上它会跟不上。
+
+运行时可通过 `GET /api/asr/poll` 返回的 `stats` 观察是否降级：
+`backlog` 持续 >0 说明跟不上，`mergedCalls` >0 说明已在合并片段，
+`droppedSegments` >0 说明开始丢内容。
 
 切换云端 LLM 示例：
 
@@ -125,6 +161,40 @@ ollama pull qwen2.5:7b
 ```bash
 npm run dev
 ```
+
+### 测试
+
+```bash
+cd backend && PYTHONPATH=. python -m pytest tests/ -v
+```
+
+其中 `tests/test_asr_pipeline_e2e.py` 覆盖音频捕获、VAD、消息队列、术语入库、
+背压与完整链路（文件音频 → VAD → Whisper → 字幕）。
+
+端到端用例需要 faster-whisper 模型，未指定时自动跳过：
+
+```bash
+TINGKEBANLV_TEST_MODEL_DIR=<含 model.bin 的模型目录> \
+  PYTHONPATH=. python -m pytest tests/test_asr_pipeline_e2e.py -v -k end_to_end
+```
+
+### 实时性基准
+
+改动 ASR 参数（模型规格、线程数、断句阈值）后，建议用基准脚本确认仍能跟上实时：
+
+```bash
+cd scripts
+# 单配置：整段 + 分段串行两种口径的 RTF
+python bench_asr.py --audio <16k单声道wav> --model base --repeat 6 --segment 8
+
+# 参数矩阵：模型 × 线程 × 片段长度
+python bench_matrix.py --audio <wav> --models tiny=/path,tiny,/path --threads 4,8,16
+
+# 单次调用成本曲线（用于判断片段该切多长）
+python bench_call_cost.py <wav> /path/to/model_dir 8 5
+```
+
+判据是 RTF < 1；同时看「单段平均耗时」，它决定字幕出字延迟。
 
 ## 打包分发
 

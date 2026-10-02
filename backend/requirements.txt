@@ -1,12 +1,21 @@
 # ASR
 faster-whisper>=1.0.3
 silero-vad>=5.1
-pyaudio>=0.2.14
+
+# 音频采集
+# Windows 必须用 PyAudioWPatch：它是 PyAudio 的 WASAPI-loopback 分支，
+# 能直接采集系统声音，免去 VB-Cable 这类虚拟声卡的安装步骤。
+# 注意：它发布为 `pyaudiowpatch` 模块名，**不提供** `pyaudio`，
+# 代码里必须写 `import pyaudiowpatch as pyaudio`（见 audio/capture.py）。
+# 非 Windows 平台仍可用官方 pyaudio。
+pyaudio>=0.2.14; sys_platform != "win32"
+PyAudioWPatch>=0.2.12; sys_platform == "win32"
 
 # API
 fastapi>=0.112.0
 uvicorn[standard]>=0.30.6
 websockets>=12.0
+httpx>=0.27.0
 
 # Database
 aiosqlite>=0.20.0
@@ -20,3 +29,6 @@ ollama>=0.3.0
 
 # Utilities
 python-dotenv>=1.0.1
+
+# 测试
+pytest>=8.0.0
