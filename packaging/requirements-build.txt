@@ -1,0 +1,12 @@
+# 冻结后端所需的构建期依赖
+#
+#   <venv>/Scripts/python.exe -m pip install -r packaging/requirements-build.txt
+#   cd frontend && npm run backend:build
+#
+# 运行时依赖直接复用后端那一份，避免两处版本漂移导致
+# 「源码能跑、冻结包跑不起来」这类只在打包后才暴露的问题。
+-r ../backend/requirements.txt
+
+# PyInstaller 6.x：5.x 对 Python 3.13 与 ctranslate2/onnxruntime 的
+# 二进制收集支持不完整，会在运行时才报找不到 DLL。
+pyinstaller>=6.0

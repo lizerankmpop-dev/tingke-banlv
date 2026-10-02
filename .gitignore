@@ -17,3 +17,8 @@ frontend/release/
 
 # 词表扩充过程的批次临时文件备份（内容已合并进 basic_vocab.json）
 backend/dictionary/_backup_batches/
+
+# PyInstaller 冻结后端的产物与中间目录（packaging/out/backend-server 约 200MB）
+packaging/out/
+packaging/build/
+*.spec.bak

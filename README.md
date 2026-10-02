@@ -198,21 +198,52 @@ python bench_call_cost.py <wav> /path/to/model_dir 8 5
 
 ## 打包分发
 
-后端与前端产物由 Electron 主进程一并打包：后端源码放入 `resources/backend`，
-前端构建产物放入 `resources/dist`，运行时由 FastAPI 同源托管 `dist`，
-因此前端 `fetch('/api/...')` 无需代理即可工作。
+后端与前端产物由 Electron 主进程一并打包，落到安装目录的 `resources/` 下：
+
+| 落点 | 内容 | 用途 |
+|------|------|------|
+| `resources/backend-server/` | PyInstaller 冻结的后端（自带解释器与依赖） | 安装版的**唯一**启动路径 |
+| `resources/backend/` | 后端源码 | 开发/调试兜底（配合 `TINGKEBANLV_PYTHON`） |
+| `resources/dist/` | 前端构建产物 | 由 FastAPI 同源托管，前端 `fetch('/api/...')` 无需代理 |
+
+### 为什么必须冻结后端
+
+安装包的目标机器上**没有 Python，也没有任何第三方依赖**。若只依赖解释器，
+主进程探测不到可用环境后应用会直接退出。因此后端用 PyInstaller 冻结成
+自带解释器、原生库与数据文件的独立可执行文件。
 
 ```bash
-cd frontend
+# 1) 先冻结后端（须在装有 backend/requirements.txt 的 venv 中执行）
+cd frontend && npm run backend:build
+#    等价于：
+#    python -m PyInstaller ../packaging/backend_server.spec --noconfirm \
+#        --distpath ../packaging/out --workpath ../packaging/build
+#    产物：packaging/out/backend-server/tingkebanlv-server.exe（约 267MB）
 
-# 只出解压目录（快，便于自测）
-npx electron-builder --win --dir
-
-# 出 NSIS 安装包
-npx electron-builder --win
+# 2) 再打 Electron 包
+npx electron-builder --win --dir   # 只出解压目录（快，便于自测）
+npx electron-builder --win         # 出 NSIS 安装包
 ```
 
 产物位于 `frontend/release/`：`win-unpacked/`（免安装）与 `tingkebanlv-<版本>-setup.exe`。
+
+冻结时特意**排除 torch**（否则 +2GB，而流式转写跑在 CPU + int8 上）与
+**hf_xet**（镜像站不代理它的 CAS 服务，代码里已用 `HF_HUB_DISABLE_XET=1` 关闭）。
+Whisper 模型权重也不随包分发，运行时下载到 `~/.tingkebanlv/whisper_models`。
+
+### 后端自检
+
+冻结包最容易漏的不是代码，而是原生库与数据文件 —— 它们只在运行时才炸。
+安装后如果「字幕不出来」，先跑自检拿结论：
+
+```bash
+"<安装目录>/resources/backend-server/tingkebanlv-server.exe" --selftest
+```
+
+它会依次检查 Python 运行时、faster-whisper/ctranslate2、onnxruntime、
+音频采集后端、内置词表、术语库、前端产物、数据库、模型缓存，
+并在模型已缓存时**用真实音频跑一次完整识别**（先强制离线加载，
+再允许联网修复），最后输出一段可直接粘贴的 JSON 结论，退出码 0/1。
 
 ### 打包环境两个常见阻塞点
 
