@@ -169,4 +169,20 @@ check("二次查询命中缓存", r2 is r1 or r2 == r1)
 print("\n" + "=" * 64)
 print(f"测试完成: {PASS} 通过, {FAIL} 失败")
 print("=" * 64)
-sys.exit(0 if FAIL == 0 else 1)
+
+
+def test_terminology_integration():
+    """
+    pytest 入口
+
+    本文件是「导入即执行」的独立脚本式测试（所有检查在模块顶层跑完，
+    结果汇总到 PASS/FAIL）。原先在顶层直接 sys.exit()，导致
+    `pytest tests/` 收集到这个模块时抛 SystemExit、整个 pytest 崩成
+    INTERNALERROR —— 于是全量测试根本跑不起来。
+    现在只在这里断言，并由 __main__ 分支保留「单独运行」的退出码语义。
+    """
+    assert FAIL == 0, f"{FAIL} 项术语集成检查失败（PASS={PASS}）"
+
+
+if __name__ == "__main__":
+    sys.exit(0 if FAIL == 0 else 1)
