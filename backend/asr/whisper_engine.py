@@ -24,9 +24,33 @@ def _get_model_dir() -> str:
         return str(Path(home) / "whisper_models")
     return str(Path.home() / ".tingkebanlv" / "whisper_models")
 
+
+def _configure_hf_environment(model_dir: str):
+    """
+    配置 HuggingFace 下载环境（直接决定首次启动能否下到模型）
+
+    1) 镜像：huggingface.co 在国内网络下常常**完全不可达**
+       （实测连接 10 秒超时、http 状态 000），而 hf-mirror.com 正常（0.88s）。
+       原代码没有任何兜底，用户首次启动只会看到「模型下载失败」。
+       默认走镜像，可用 HF_ENDPOINT 覆盖（例如有专线时指回官方站）。
+
+    2) 关闭 Xet：huggingface-hub 默认启用 hf-xet，文件内容会走
+       cas-server.xethub.hf.co，而镜像站**不代理**这个 CAS 服务，返回 401 Unauthorized。
+       最坑的是：cache 模式下它会一边报「下载成功」一边留下 **0 字节的快照文件**，
+       直到加载模型才报 "model.bin is incomplete: failed to read a value of size 4"。
+       关掉之后走普通 HTTPS 下载，配合镜像可正常工作。
+
+    3) HF_HOME 与 download_root 必须指向同一目录，理由见 _load_model 注释。
+    """
+    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    os.environ.setdefault("HF_HOME", model_dir)
+
+
 _MODEL_DIR = _get_model_dir()
 os.makedirs(_MODEL_DIR, exist_ok=True)
-os.environ.setdefault("HF_HOME", _MODEL_DIR)
+_configure_hf_environment(_MODEL_DIR)
 
 # 模型配置
 DEFAULT_MODEL = "small"  # tiny, base, small, medium, large-v3
@@ -146,33 +170,58 @@ class WhisperEngine:
         logger.info(f"模型加载进度: {stage} {progress:.0f}%")
 
     def _is_model_cached(self) -> bool:
-        """检查模型是否已缓存"""
+        """
+        检查模型是否已缓存
+
+        刻意校验文件**大小**而不只是「是否存在」：
+        在「HF 镜像 + hf-xet」组合下 snapshot_download 会一边报告下载成功、
+        一边留下 0 字节的 model.bin。只判断存在性会把这种损坏缓存当成可用，
+        之后每次启动都在加载阶段抛 "model.bin is incomplete"。
+        """
         cache_dir = Path(_MODEL_DIR) / f"models--Systran--faster-whisper-{self.model_size}"
         if not cache_dir.exists():
             return False
         snapshots = cache_dir / "snapshots"
-        if snapshots.exists():
-            for snapshot in snapshots.iterdir():
-                if snapshot.is_dir() and list(snapshot.glob("*.bin")):
-                    return True
+        if not snapshots.exists():
+            return False
+        for snapshot in snapshots.iterdir():
+            if not snapshot.is_dir():
+                continue
+            for bin_file in snapshot.glob("*.bin"):
+                try:
+                    # 真实模型至少几十 MB，1MB 阈值足以识别 0 字节/截断文件
+                    if bin_file.stat().st_size > 1024 * 1024:
+                        return True
+                except OSError:
+                    continue
         return False
 
     def _monitor_download(self, stop_event: threading.Event):
         """监控下载进度，通过缓存目录大小估算百分比"""
+        # 数值来自对 Systran/faster-whisper-* 的实际测量（model.bin + tokenizer + config）：
+        #   tiny 72MB / base 139MB / small 461MB / medium 1458MB / large-v3 约3.1GB
+        # 注意该值就是进度条的**分母**：原实现给 small 写 2GB（真实 464MB）、
+        # medium 写 5GB（真实 1.46GB），导致进度条长期封顶在 24% 左右再突跳完成。
         expected_sizes = {
             "tiny": 75 * 1024 * 1024,
-            "base": 145 * 1024 * 1024,
-            "small": 2 * 1024 * 1024 * 1024,
-            "medium": 5 * 1024 * 1024 * 1024,
-            "large-v3": 3 * 1024 * 1024 * 1024,
+            "base": 141 * 1024 * 1024,
+            "small": 464 * 1024 * 1024,
+            "medium": 1460 * 1024 * 1024,
+            "large-v3": 3100 * 1024 * 1024,
         }
-        expected = expected_sizes.get(self.model_size, 2 * 1024 * 1024 * 1024)
+        expected = expected_sizes.get(self.model_size, 464 * 1024 * 1024)
         cache_dir = Path(_MODEL_DIR) / f"models--Systran--faster-whisper-{self.model_size}"
 
         while not stop_event.is_set():
             try:
                 if cache_dir.exists():
-                    total_size = sum(f.stat().st_size for f in cache_dir.rglob("*") if f.is_file())
+                    # 只统计 blobs/：在不支持符号链接的 Windows 上，
+                    # snapshots/ 里会有一份实拷贝，两份都算会让进度显示翻倍
+                    blobs = cache_dir / "blobs"
+                    if blobs.is_dir():
+                        total_size = sum(f.stat().st_size for f in blobs.rglob("*") if f.is_file())
+                    else:
+                        total_size = sum(f.stat().st_size for f in cache_dir.rglob("*") if f.is_file())
                     progress = min(total_size / expected, 0.99) * 100
                     self._report_progress("downloading", progress)
             except Exception:
@@ -203,8 +252,14 @@ class WhisperEngine:
 
                 try:
                     import huggingface_hub
+                    # cache_dir 必须与下面 WhisperModel(download_root=_MODEL_DIR) 一致。
+                    # 原实现没传 cache_dir，配合 HF_HOME=_MODEL_DIR 会落到
+                    # <root>/hub/models--... ，而加载与缓存检查都看
+                    # <root>/models--... ，于是首次启动把同一个模型下了两遍：
+                    # 预下载一份（没人用），WhisperModel 再下一份。
                     huggingface_hub.snapshot_download(
                         f"Systran/faster-whisper-{self.model_size}",
+                        cache_dir=_MODEL_DIR,
                         allow_patterns=["*.bin", "*.json", "*.txt"],
                     )
                 except Exception as e:
