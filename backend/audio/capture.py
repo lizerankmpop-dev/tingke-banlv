@@ -4,12 +4,18 @@
   - 'loopback'：捕获系统音频输出（在线网课场景）
   - 'microphone'：麦克风输入（线下课堂场景）
 
-跨平台支持 Windows(WASAPI) / macOS(BlackHole) / Linux(PulseAudio)
+跨平台支持 Windows(WASAPI Loopback) / macOS(BlackHole) / Linux(PulseAudio)
+
+Windows 说明
+    WASAPI 回环采集依赖 PyAudioWPatch（PyAudio 的 WASAPI-loopback 分支）。
+    它以 `pyaudiowpatch` 之名发布，**不提供 `pyaudio` 这个模块名**，
+    因此必须写 `import pyaudiowpatch as pyaudio`，不能只在 requirements 里替换。
+    这样可省掉对 VB-Cable 之类虚拟声卡的依赖。
 """
 
 import logging
-import threading
 import queue
+import threading
 import time
 import platform
 from typing import Optional, Callable, Literal
@@ -18,16 +24,70 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# ============ 音频后端 ============
+# 优先 PyAudioWPatch：只有它能枚举 Windows 的 WASAPI 回环设备
+try:
+    import pyaudiowpatch as pyaudio  # type: ignore
+    AUDIO_BACKEND = "pyaudiowpatch"
+    _HAS_LOOPBACK_API = True
+except ImportError:
+    try:
+        import pyaudio  # type: ignore
+        AUDIO_BACKEND = "pyaudio"
+        _HAS_LOOPBACK_API = False
+    except ImportError:
+        pyaudio = None  # type: ignore
+        AUDIO_BACKEND = None
+        _HAS_LOOPBACK_API = False
+
+# PyAudio 的回调返回值必须在模块级取到。
+# 原实现在回调里写 pyaudio.paContinue，但 pyaudio 只在函数内部 import，
+# 于是每次回调都抛 NameError（并被 # noqa: F821 压掉了告警）。
+PA_CONTINUE = 0
+if pyaudio is not None:
+    PA_CONTINUE = getattr(pyaudio, "paContinue", 0)
+
 # 音频配置
 SAMPLE_RATE = 16000  # Whisper 使用 16kHz
 CHANNELS = 1          # 单声道
-CHUNK_DURATION = 0.03  # 30ms 块
-CHUNK_SIZE = int(SAMPLE_RATE * CHUNK_DURATION)  # 480 samples
+
+# 30ms 曾是 480 样本，但 Silero VAD 要求恰好 512 样本（16kHz），
+# 480 会让 VAD 每次都抛 "Input audio chunk is too short" 并静默降级。
+CHUNK_DURATION = 0.032  # 32ms
+CHUNK_SIZE = 512        # = 16000 * 0.032，正好满足 Silero VAD
 FORMAT = "int16"
 
 SYSTEM = platform.system()
 
 CaptureMode = Literal["loopback", "microphone"]
+
+
+def _resample_to_16k(data: np.ndarray, src_rate: int) -> np.ndarray:
+    """
+    把任意采样率的重采样到 16kHz
+
+    必要性：WASAPI 回环流在共享模式下**必须使用设备原生采样率**
+    （通常 44100 / 48000），按 16000 打开会直接失败。
+    所以先按原生率采集，再在这里转换。
+
+    整数倍降采样时先做等长均值（简易低通），避免高频混叠进语音频段；
+    非整数倍退化为线性插值。
+    """
+    if src_rate == SAMPLE_RATE or len(data) == 0:
+        return data
+
+    if src_rate % SAMPLE_RATE == 0:
+        ratio = src_rate // SAMPLE_RATE
+        usable = len(data) - (len(data) % ratio)
+        if usable == 0:
+            return np.zeros(0, dtype=np.float32)
+        return data[:usable].reshape(-1, ratio).mean(axis=1).astype(np.float32)
+
+    target_len = int(len(data) * SAMPLE_RATE / src_rate)
+    if target_len <= 0:
+        return np.zeros(0, dtype=np.float32)
+    idx = np.linspace(0, len(data) - 1, target_len)
+    return np.interp(idx, np.arange(len(data)), data).astype(np.float32)
 
 
 class AudioCapture:
@@ -46,7 +106,7 @@ class AudioCapture:
     ):
         self.on_audio_chunk = on_audio_chunk
         self.mode = mode
-        self.sample_rate = sample_rate
+        self.sample_rate = sample_rate          # 输出采样率，固定 16000
         self.chunk_size = chunk_size
         self._device_index = device_index
 
@@ -56,6 +116,12 @@ class AudioCapture:
         self._thread: Optional[threading.Thread] = None
         self._stream = None
         self._pyaudio = None
+        self._native_rate = sample_rate          # 设备实际使用的采样率
+        self._in_channels = CHANNELS             # 流实际打开的输入声道数
+        self._chunk_count = 0
+        self._dropped = 0
+
+    # ---------- 生命周期 ----------
 
     def start(self):
         """开始捕获音频"""
@@ -84,7 +150,7 @@ class AudioCapture:
                 self._pyaudio.terminate()
             except Exception:
                 pass
-        logger.info("音频捕获已停止")
+        logger.info(f"音频捕获已停止 (共 {self._chunk_count} 块, 丢弃 {self._dropped} 块)")
 
     def pause(self):
         self._paused = True
@@ -92,13 +158,26 @@ class AudioCapture:
     def resume(self):
         self._paused = False
 
+    # ---------- 设备枚举 ----------
+
     @staticmethod
     def list_devices() -> list[dict]:
         """列出所有音频设备（供前端选择麦克风用）"""
+        if pyaudio is None:
+            logger.warning(
+                f"未安装音频库（当前后端={AUDIO_BACKEND}）。"
+                f"Windows 请安装: pip install PyAudioWPatch"
+            )
+            return []
         try:
-            import pyaudio
             p = pyaudio.PyAudio()
             devices = []
+            default_input = None
+            try:
+                default_input = p.get_default_input_device_info().get("index")
+            except Exception:
+                pass
+
             for i in range(p.get_device_count()):
                 info = p.get_device_info_by_index(i)
                 devices.append({
@@ -107,73 +186,157 @@ class AudioCapture:
                     "maxInputChannels": info["maxInputChannels"],
                     "maxOutputChannels": info["maxOutputChannels"],
                     "defaultSampleRate": info["defaultSampleRate"],
-                    "isDefaultInput": bool(i == p.get_default_input_device_info().get("index")),
+                    "isDefaultInput": bool(i == default_input),
+                    "isLoopback": bool(info.get("isLoopbackDevice", False)),
                 })
             p.terminate()
             return devices
-        except ImportError:
-            logger.warning("PyAudio 未安装")
+        except Exception as e:
+            logger.error(f"枚举音频设备失败: {e}")
             return []
+
+    # ---------- 捕获主循环 ----------
 
     def _capture_loop(self):
         """音频捕获主循环"""
-        try:
-            import pyaudio
+        if pyaudio is None:
+            logger.error(
+                "音频库不可用，无法采集。请安装 PyAudioWPatch:\n"
+                "  pip install PyAudioWPatch"
+            )
+            return
 
+        try:
             self._pyaudio = pyaudio.PyAudio()
 
-            # 根据模式选择设备
             if self._device_index is not None:
                 device_index = self._device_index
             elif self.mode == "loopback":
-                device_index = self._find_loopback_device(self._pyaudio)
+                # PyAudioWPatch 自带默认回环设备，优先用它
+                device_index = self._default_loopback_index(self._pyaudio)
+                if device_index is None:
+                    device_index = self._find_loopback_device(self._pyaudio)
             else:
                 device_index = self._find_microphone_device(self._pyaudio)
 
             if device_index is None:
                 logger.error(f"未找到可用的音频设备 (模式: {self.mode})")
+                self._running = False
                 return
 
             device_info = self._pyaudio.get_device_info_by_index(device_index)
-            logger.info(f"使用音频设备: {device_info['name']} (index={device_index}, 模式={self.mode})")
+            self._native_rate = int(device_info.get("defaultSampleRate") or self.sample_rate)
+            logger.info(
+                f"使用音频设备: {device_info['name']} "
+                f"(index={device_index}, 模式={self.mode}, "
+                f"原生采样率={self._native_rate}Hz, 输入声道={device_info['maxInputChannels']})"
+            )
+
+            # 回环/多声道设备需要按声道数打开，否则 PortAudio 报错
+            in_channels = 1 if self.mode == "microphone" else 2
+            max_in = int(device_info.get("maxInputChannels") or 1)
+            if max_in > 1:
+                in_channels = min(2, max_in)
+            elif max_in == 1:
+                in_channels = 1
+            self._in_channels = in_channels
+
+            # 关键：按设备原生采样率打开，采集后再重采样到 16k。
+            # （回环设备在共享模式下不接受任意采样率）
+            frames_per_buffer = max(1, int(self._native_rate * CHUNK_DURATION))
 
             self._stream = self._pyaudio.open(
                 format=self._pyaudio.get_format_from_width(2),  # int16 = 2 bytes
-                channels=CHANNELS,
-                rate=self.sample_rate,
+                channels=in_channels,
+                rate=self._native_rate,
                 input=True,
                 input_device_index=device_index,
-                frames_per_buffer=self.chunk_size,
+                frames_per_buffer=frames_per_buffer,
                 stream_callback=self._audio_callback,
             )
 
             self._stream.start_stream()
+            logger.info(
+                f"音频流已打开: {self._native_rate}Hz/{in_channels}ch, "
+                f"块长={frames_per_buffer} 帧"
+            )
 
             while self._running and self._stream.is_active():
                 time.sleep(0.1)
 
-        except ImportError:
-            logger.error("PyAudio 未安装。请运行: pip install pyaudio")
+            # 退出循环时若仍在运行，说明流被动中断了
+            if self._running:
+                logger.warning("音频流已非活跃状态，捕获退出")
+
         except Exception as e:
-            logger.error(f"音频捕获错误: {e}")
+            logger.error(f"音频捕获错误: {type(e).__name__}: {e}")
+            self._running = False
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
-        """PyAudio 回调：音频数据到达时调用"""
-        if status:
-            logger.warning(f"音频状态: {status}")
+        """
+        PyAudio 回调：音频数据到达时调用
 
-        if not self._paused and in_data:
-            # 转换为 numpy 数组
-            audio_array = np.frombuffer(in_data, dtype=np.int16).astype(np.float32) / 32768.0
-            try:
-                self.on_audio_chunk(audio_array)
-            except Exception as e:
-                logger.error(f"音频处理回调错误: {e}")
+        注意：这里绝不能抛异常。PyAudio 的回调抛异常会中止整个音频流，
+        而这是原实现里 `pyaudio.paContinue` 未定义导致 NameError 的后果。
+        """
+        try:
+            if status:
+                logger.debug(f"音频状态: {status}")
 
-        return (in_data, pyaudio.paContinue)  # noqa: F821
+            if not self._paused and in_data:
+                pcm = np.frombuffer(in_data, dtype=np.int16)
+                if pcm.size:
+                    # 多声道 → 单声道
+                    channels = self._in_channels
+                    if channels > 1 and pcm.size % channels == 0:
+                        pcm = pcm.reshape(-1, channels).mean(axis=1).astype(np.int16)
+                    audio_array = _resample_to_16k(
+                        pcm.astype(np.float32) / 32768.0, self._native_rate
+                    )
+                    if audio_array.size:
+                        self._chunk_count += 1
+                        try:
+                            self.on_audio_chunk(audio_array)
+                        except Exception as e:
+                            logger.error(f"音频处理回调错误: {e}")
+        except Exception as e:
+            logger.error(f"音频回调异常（已吞掉以避免中止音频流）: {type(e).__name__}: {e}")
+
+        return (None, PA_CONTINUE)
+
+    # ---------- 设备查找 ----------
+
+    def _default_loopback_index(self, pyaudio_obj) -> Optional[int]:
+        """
+        用 PyAudioWPatch 的 WASAPI API 取默认回环设备
+
+        这是回环采集的正确做法：靠设备名子串匹配（'loopback'/'立体声混音'/'cable'）
+        既不可靠，也会把「立体声混音」（需要用户手动启用）和 VB-Cable 误当成首选。
+        """
+        if not _HAS_LOOPBACK_API:
+            return None
+        try:
+            info = pyaudio_obj.get_default_wasapi_loopback()
+            if info and info.get("index") is not None:
+                logger.info(f"WASAPI 默认回环设备: {info.get('name')} (index={info['index']})")
+                return int(info["index"])
+        except Exception as e:
+            logger.debug(f"get_default_wasapi_loopback 不可用: {e}")
+        return None
 
     def _find_loopback_device(self, pyaudio_obj) -> Optional[int]:
         """查找系统 Loopback 设备，找不到返回 None（不再回退到麦克风）"""
+        # 回退路径 1：PyAudioWPatch 枚举出的回环设备
+        if _HAS_LOOPBACK_API:
+            try:
+                for info in pyaudio_obj.get_loopback_device_info_generator():
+                    idx = info.get("index")
+                    if idx is not None:
+                        return int(idx)
+            except Exception:
+                pass
+
+        # 回退路径 2：按名字匹配（macOS/Linux 或旧版 PortAudio）
         for i in range(pyaudio_obj.get_device_count()):
             device = pyaudio_obj.get_device_info_by_index(i)
             name = device["name"].lower()
@@ -196,9 +359,10 @@ class AudioCapture:
 
         # 找不到 Loopback 设备：返回 None，不再回退到麦克风
         logger.warning(
-            f"未找到 Loopback 设备。请安装虚拟音频设备：\n"
-            f"  Windows: 安装 VB-Cable (https://vb-audio.com/Cable/)\n"
-            f"  macOS:   安装 BlackHole (brew install blackhole-2ch)\n"
+            f"未找到系统音频回环设备。\n"
+            f"  Windows: 需安装 PyAudioWPatch（本机当前后端={AUDIO_BACKEND}），"
+            f"安装后可直接采集系统声音，无需 VB-Cable\n"
+            f"  macOS:   brew install blackhole-2ch\n"
             f"  Linux:   pactl load-module module-loopback"
         )
         return None
@@ -209,7 +373,7 @@ class AudioCapture:
         try:
             default = pyaudio_obj.get_default_input_device_info()
             logger.info(f"使用默认麦克风: {default['name']} (index={default['index']})")
-            return default["index"]
+            return int(default["index"])
         except Exception:
             pass
 
