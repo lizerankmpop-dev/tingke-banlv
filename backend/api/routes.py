@@ -7,6 +7,7 @@ import json
 import logging
 import asyncio
 import platform
+from collections import deque
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
 from pydantic import BaseModel
 from typing import Optional
@@ -24,7 +25,15 @@ router = APIRouter()
 active_pipelines: dict[str, ASRPipeline] = {}
 
 # 轮询消息队列（按课程 ID）
-asr_message_queues: dict[str, list[dict]] = {}
+#
+# 用 deque 而非 list：生产者是 ASR 的工作线程，消费者是事件循环里的 /asr/poll，
+# list 的「copy() 再 clear()」在两步之间到达的消息会同时不在副本里也不在
+# 原列表里（被 clear 掉），即**永久丢失**。
+# deque.popleft() 是原子操作，配合「超限时 popleft」而不是重新绑定对象
+# （原实现 `queue = queue[-50:]` 会让仍在 append 的工作线程写进孤儿列表），
+# 才算真正无锁安全。
+asr_message_queues: dict[str, deque] = {}
+MAX_QUEUE_MESSAGES = 200
 
 # 全局单词讲解器（复用缓存）
 word_explainer = WordExplainer()
@@ -432,37 +441,49 @@ async def preview_terminology(req: PreviewTerminologyRequest):
 @router.get("/audio/check-loopback")
 async def check_loopback():
     """检查 Loopback 设备是否可用，返回安装指引"""
-    from audio.capture import AudioCapture
+    from audio.capture import AudioCapture, AUDIO_BACKEND, _HAS_LOOPBACK_API
 
     devices = AudioCapture.list_devices()
-    has_loopback = False
     system = platform.system()
 
-    for d in devices:
-        name = d["name"].lower()
-        if system == "Windows":
-            if "loopback" in name or "立体声混音" in name or "stereo mix" in name or "vb-cable" in name or "cable" in name:
-                has_loopback = True
-                break
-        elif system == "Darwin":
-            if "blackhole" in name or "soundflower" in name:
-                has_loopback = True
-                break
-        elif system == "Linux":
-            if "monitor" in name:
-                has_loopback = True
-                break
+    # 优先用后端给出的 isLoopback 标记（PyAudioWPatch 能准确判断），
+    # 名字子串匹配只作为回退 —— 'cable' 这类子串太宽松，会误判。
+    loopback_devices = [d for d in devices if d.get("isLoopback")]
+    has_loopback = bool(loopback_devices)
+
+    if not has_loopback:
+        for d in devices:
+            name = d["name"].lower()
+            if system == "Windows":
+                if "loopback" in name or "立体声混音" in name or "stereo mix" in name or "vb-cable" in name:
+                    has_loopback = True
+                    break
+            elif system == "Darwin":
+                if "blackhole" in name or "soundflower" in name:
+                    has_loopback = True
+                    break
+            elif system == "Linux":
+                if "monitor" in name:
+                    has_loopback = True
+                    break
 
     guides = {
         "Windows": {
-            "name": "VB-Cable",
-            "url": "https://vb-audio.com/Cable/",
-            "steps": [
-                "下载 VB-Cable 安装程序",
-                "右键以管理员身份运行",
-                "重启电脑",
-                "在声音设置中将 VB-Cable 设为默认播放设备",
-            ],
+            # PyAudioWPatch 已装且能枚举到回环设备时，完全不需要虚拟声卡
+            "name": "PyAudioWPatch（推荐）" if not _HAS_LOOPBACK_API else "无需额外安装",
+            "url": "https://github.com/s0d3s/PyAudioWPatch",
+            "steps": (
+                [
+                    "运行: pip install PyAudioWPatch",
+                    "安装后重启应用，即可直接采集系统声音，无需安装虚拟声卡",
+                    "（若仍不可用）确认系统「声音设置」里存在已启用的播放设备",
+                ]
+                if not _HAS_LOOPBACK_API
+                else [
+                    "当前已支持 WASAPI 回环采集，无需安装虚拟声卡",
+                    "直接在课程配置里选择「在线网课（系统音频）」即可",
+                ]
+            ),
         },
         "Darwin": {
             "name": "BlackHole",
@@ -486,11 +507,75 @@ async def check_loopback():
     return {
         "hasLoopback": has_loopback,
         "platform": system,
+        "audioBackend": AUDIO_BACKEND,
+        "supportsLoopbackApi": _HAS_LOOPBACK_API,
+        "loopbackDevice": loopback_devices[0]["name"] if loopback_devices else None,
         "guide": guides.get(system, guides["Linux"]),
     }
 
 
 # ============ 轮询 ASR（WebSocket 不可用时降级）============
+
+def _make_enqueue(course_id: str):
+    """构造消息入队函数（由 ASR 工作线程调用，必须线程安全）"""
+    def enqueue(msg_type: str, data: dict):
+        queue = asr_message_queues.get(course_id)
+        if queue is None:
+            return
+        queue.append({"type": msg_type, "data": data})
+        # 超限时从左侧丢弃。注意不能重新绑定字典里的对象，
+        # 否则仍在 append 的工作线程会写进没人读的孤儿 deque
+        while len(queue) > MAX_QUEUE_MESSAGES:
+            queue.popleft()
+    return enqueue
+
+
+def _make_term_handler(course_id: str, loop: asyncio.AbstractEventLoop):
+    """
+    构造术语回调
+
+    _handle_term 是 async def，而这个回调是在 ASR 的工作线程里被调用的
+    （asr/pipeline.py 的 _extract_terms 跑在 threading.Thread 中），
+    那个线程没有事件循环。
+
+    原实现写成 `lambda term: _handle_term(term, course_id)`：调用 async 函数
+    只得到一个协程对象，随即被丢弃，于是 db.upsert_vocabulary 永不执行 ——
+    ASR 提取到的术语从未入库，生词本永远是空的（运行时伴随
+    "coroutine '_handle_term' was never awaited" 警告）。
+
+    正确做法是把协程投递回主事件循环执行。
+    """
+    def on_term(term: dict):
+        try:
+            asyncio.run_coroutine_threadsafe(_handle_term(term, course_id), loop)
+        except RuntimeError as e:
+            # 事件循环已关闭（应用正在退出）
+            logger.debug(f"术语入库跳过（事件循环不可用）: {e}")
+        except Exception as e:
+            logger.error(f"术语入库投递失败: {e}")
+    return on_term
+
+
+async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
+    """
+    构造 ASR 管道
+
+    必须放到线程里执行：构造函数会初始化 VAD（ONNX 会话）与 Whisper 引擎，
+    都是阻塞操作。若直接写在 async 函数里，会占住事件循环，
+    导致 /api/health 等所有接口同时无响应 ——
+    现象就是「点开始听课，整个应用卡死」。
+    """
+    enqueue = _make_enqueue(course_id)
+    return await asyncio.to_thread(
+        ASRPipeline,
+        course_id=course_id,
+        course_config=_course_config_for_asr(course),
+        on_subtitle=lambda data: enqueue("subtitle", data),
+        on_interim=lambda text, words: enqueue("interim", {"text": text, "words": words}),
+        on_status=lambda status, msg: enqueue("asr_status", {"status": status, "message": msg}),
+        on_term_extracted=_make_term_handler(course_id, loop),
+    )
+
 
 @router.post("/asr/start")
 async def start_asr(course_id: str = Query(...)):
@@ -502,24 +587,18 @@ async def start_asr(course_id: str = Query(...)):
     if course_id in active_pipelines:
         return {"status": "already_running"}
 
-    # 初始化消息队列
-    asr_message_queues[course_id] = []
+    # 先建队列再建管道：管道构造过程中回调就可能被触发
+    # （Whisper 引擎在后台线程里加载模型并上报 progress）
+    asr_message_queues[course_id] = deque()
 
-    def enqueue(msg_type: str, data: dict):
-        if course_id in asr_message_queues:
-            asr_message_queues[course_id].append({"type": msg_type, "data": data})
-            # 限制队列长度
-            if len(asr_message_queues[course_id]) > 100:
-                asr_message_queues[course_id] = asr_message_queues[course_id][-50:]
+    loop = asyncio.get_running_loop()
+    try:
+        pipeline = await _build_pipeline(course_id, course, loop)
+    except Exception as e:
+        asr_message_queues.pop(course_id, None)
+        logger.error(f"ASR 管道构造失败: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"ASR 初始化失败: {e}")
 
-    pipeline = ASRPipeline(
-        course_id=course_id,
-        course_config=_course_config_for_asr(course),
-        on_subtitle=lambda data: enqueue("subtitle", data),
-        on_interim=lambda text, words: enqueue("interim", {"text": text, "words": words}),
-        on_status=lambda status, msg: enqueue("asr_status", {"status": status, "message": msg}),
-        on_term_extracted=lambda term: _handle_term(term, course_id),
-    )
     active_pipelines[course_id] = pipeline
 
     await pipeline.start()
@@ -530,11 +609,13 @@ async def start_asr(course_id: str = Query(...)):
 @router.post("/asr/stop")
 async def stop_asr(course_id: str = Query(...)):
     """停止 ASR 管道"""
-    if course_id in active_pipelines:
-        await active_pipelines[course_id].stop()
-        del active_pipelines[course_id]
-    if course_id in asr_message_queues:
-        del asr_message_queues[course_id]
+    pipeline = active_pipelines.pop(course_id, None)
+    if pipeline is not None:
+        try:
+            await pipeline.stop()
+        except Exception as e:
+            logger.error(f"停止 ASR 管道时出错: {e}")
+    asr_message_queues.pop(course_id, None)
     return {"status": "stopped"}
 
 
@@ -544,14 +625,30 @@ async def poll_asr(course_id: str = Query(...)):
     if course_id not in active_pipelines:
         return {"messages": [], "status": "not_running"}
 
-    queue = asr_message_queues.get(course_id, [])
-    messages = queue.copy()
-    queue.clear()
+    queue = asr_message_queues.get(course_id)
+    if queue is None:
+        return {"messages": [], "status": "running"}
 
-    return {
-        "messages": messages,
-        "status": "running",
-    }
+    # popleft 是原子操作，不会丢掉「取出瞬间刚到达」的消息
+    messages: list[dict] = []
+    while queue:
+        try:
+            messages.append(queue.popleft())
+        except IndexError:
+            break
+
+    # 顺带回传运行时健康度，便于前端/排障观察是否已进入降级状态：
+    # backlog 持续 >0 说明识别跟不上，mergedCalls >0 说明已在合并片段，
+    # droppedSegments >0 说明开始丢内容（需要换更小的模型或调大线程数）。
+    stats = None
+    pipeline = active_pipelines.get(course_id)
+    if pipeline is not None and hasattr(pipeline, "get_stats"):
+        try:
+            stats = pipeline.get_stats()
+        except Exception as e:
+            logger.debug(f"获取 ASR 运行统计失败: {e}")
+
+    return {"messages": messages, "status": "running", "stats": stats}
 
 
 # ============ WebSocket：实时 ASR（保留作为首选）============
@@ -570,16 +667,21 @@ async def ws_asr(websocket: WebSocket, course_id: str = Query(...)):
         await websocket.close()
         return
 
+    loop = asyncio.get_running_loop()
+
     if course_id in active_pipelines:
         pipeline = active_pipelines[course_id]
     else:
-        pipeline = ASRPipeline(
+        # 同样必须离开事件循环构造，理由见 _build_pipeline 的说明
+        pipeline = await asyncio.to_thread(
+            ASRPipeline,
             course_id=course_id,
             course_config=_course_config_for_asr(course),
             on_subtitle=lambda data: _safe_send(websocket, {"type": "subtitle", "data": data}),
             on_interim=lambda text, words: _safe_send(websocket, {"type": "interim", "data": {"text": text, "words": words}}),
             on_status=lambda status, msg: _safe_send(websocket, {"type": "asr_status", "data": {"status": status, "message": msg}}),
-            on_term_extracted=lambda term: _handle_term(term, course_id),
+            # 原为 lambda 包裹 async 函数，协程被丢弃 → 术语永不入库
+            on_term_extracted=_make_term_handler(course_id, loop),
         )
         active_pipelines[course_id] = pipeline
 

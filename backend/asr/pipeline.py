@@ -5,6 +5,7 @@ ASR 管道
 
 import logging
 import asyncio
+import os
 import time
 import threading
 from typing import Optional, Callable
@@ -70,8 +71,20 @@ class ASRPipeline:
             initial_prompt = ""
 
         # 初始化各组件
+        #
+        # 模型规格可配置：课程级 modelSize > 环境变量 TINGKEBANLV_WHISPER_MODEL > 默认值。
+        # 原实现硬编码 "small"，而实测 small 在 2~4 秒片段上 RTF > 1（跟不上实时），
+        # 详见 scripts/bench_matrix.py。
+        from asr.whisper_engine import DEFAULT_MODEL
+        model_size = (
+            course_config.get("modelSize")
+            or os.environ.get("TINGKEBANLV_WHISPER_MODEL")
+            or DEFAULT_MODEL
+        )
+        logger.info(f"Whisper 模型规格: {model_size}")
+
         self._whisper = WhisperEngine(
-            model_size="small",
+            model_size=model_size,
             device=DEVICE,
             compute_type=COMPUTE_TYPE,
             language=course_config.get("language", "auto"),
@@ -135,6 +148,26 @@ class ASRPipeline:
         """返回当前术语库信息（供 API 查询）"""
         return self._terminology
 
+    def get_stats(self) -> dict:
+        """
+        运行时健康度（供 /api/health 与排障）
+
+        vadBackend 尤其重要：若为 "energy" 说明 Silero 没加载成功，
+        分段质量已降级，此时字幕的断句会明显不如预期。
+        """
+        stats = {
+            "vadBackend": getattr(self._vad, "backend", "unknown"),
+            "vadModelLoaded": getattr(self._vad, "is_model_loaded", False),
+            "courseId": self.course_id,
+            "subtitleCount": self._subtitle_counter,
+            "discoveredTerms": len(self._discovered_terms),
+        }
+        try:
+            stats["whisper"] = self._whisper.get_stats()
+        except Exception as e:
+            stats["whisper"] = {"error": str(e)}
+        return stats
+
     def _wait_for_model(self):
         """等待模型加载完成后自动启动监听"""
         while self._whisper.is_loading and self._running:
@@ -152,8 +185,11 @@ class ASRPipeline:
 
     async def stop(self):
         """停止 ASR 管道"""
-        self._running = False
+        # 顺序很关键：必须先 flush VAD，再把 _running 置 False。
+        # 否则 _on_speech_segment 会因为 _running 已为假而直接 return，
+        # VAD 里还没提交的最后一段语音被静默丢掉 —— 每节课的结尾都会少一句字幕。
         self._vad.flush()
+        self._running = False
         self._capture.stop()
         self._whisper.stop()
         self.on_status("idle", "已停止")
