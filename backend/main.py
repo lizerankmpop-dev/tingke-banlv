@@ -249,6 +249,243 @@ def check_whisper() -> bool:
         return False
 
 
+# ============ 后端自检 ============
+# 场景：用户装完后「字幕不出来」，但没有能力翻日志、也描述不清现象。
+# 让他直接跑
+#     <安装目录>\resources\backend-server\tingkebanlv-server.exe --selftest
+# 就能得到一份各项是否通过的清单，复制粘贴即可定位。
+# 同时也用于打包后的冒烟验证（冻结包最容易漏的正是原生库与数据文件）。
+
+SELFTEST_FIXTURE = Path(__file__).resolve().parent / "tests" / "fixtures" / "jfk.wav"
+
+
+def _selftest_model_cached(model_size: str) -> bool:
+    cache_dir = Path(_model_root()) / f"models--Systran--faster-whisper-{model_size}"
+    snapshots = cache_dir / "snapshots"
+    if not snapshots.is_dir():
+        return False
+    for snapshot in snapshots.iterdir():
+        if not snapshot.is_dir():
+            continue
+        for bin_file in snapshot.glob("*.bin"):
+            try:
+                if bin_file.stat().st_size > 1024 * 1024:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _model_root() -> str:
+    if env_dir := os.environ.get("WHISPER_MODEL_DIR"):
+        return env_dir
+    if home := os.environ.get("TINGKEBANLV_HOME"):
+        return str(Path(home) / "whisper_models")
+    return str(Path.home() / ".tingkebanlv" / "whisper_models")
+
+
+def run_selftest() -> int:
+    import json
+
+    results: list[dict] = []
+
+    def check(name: str, fn, critical: bool = True):
+        try:
+            detail = fn()
+            ok = True
+        except Exception as exc:
+            ok = False
+            detail = f"{type(exc).__name__}: {exc}"
+        results.append({"name": name, "ok": ok, "critical": critical, "detail": str(detail)})
+        if ok:
+            print(f"[ OK ] {name}: {detail}")
+        else:
+            print(f"[{'FAIL' if critical else 'WARN'}] {name}: {detail}")
+        return ok
+
+    print("=" * 72)
+    print("听课伴侣后端自检")
+    print(f"  版本      : {APP_VERSION}")
+    print(f"  冻结模式  : {getattr(sys, 'frozen', False)}")
+    print(f"  可执行文件: {sys.executable}")
+    print(f"  数据目录  : {os.environ.get('TINGKEBANLV_HOME') or '(默认 ~/.tingkebanlv)'}")
+    print("=" * 72)
+
+    check("Python 运行时", lambda: sys.version.split()[0])
+
+    def _proxy_bypass():
+        # 主进程的就绪探测依赖 /api/ping 快速返回；一旦回环流量走了系统代理，
+        # 探测会被代理拖慢到超时，界面要等 90 秒才报「后端启动超时」。
+        bypass = os.environ.get("NO_PROXY", "")
+        if "127.0.0.1" not in bypass or "localhost" not in bypass:
+            raise RuntimeError(f"NO_PROXY 未包含回环地址: {bypass!r}")
+        return bypass
+
+    check("回环流量绕过系统代理", _proxy_bypass)
+
+    def _fastapi():
+        import fastapi
+        import uvicorn
+        return f"fastapi {fastapi.__version__} / uvicorn {uvicorn.__version__}"
+
+    check("FastAPI + uvicorn", _fastapi)
+
+    def _whisper():
+        import ctranslate2
+        import faster_whisper
+        return f"faster-whisper {faster_whisper.__version__} / ctranslate2 {ctranslate2.__version__}"
+
+    check("faster-whisper + ctranslate2（原生库）", _whisper)
+
+    def _onnx():
+        import onnxruntime
+        return f"onnxruntime {onnxruntime.__version__}"
+
+    check("onnxruntime（Silero VAD ONNX 后端）", _onnx)
+
+    def _audio():
+        from audio.capture import AUDIO_BACKEND
+        if AUDIO_BACKEND is None:
+            raise RuntimeError("未安装任何音频采集库")
+        return AUDIO_BACKEND
+
+    check("音频采集后端", _audio)
+
+    def _vocab():
+        from dictionary.terminology import load_basic_vocab
+        vocab = load_basic_vocab()
+        if not vocab:
+            raise RuntimeError("词表为空（basic_vocab.json 可能未随包携带）")
+        return f"{len(vocab)} 词"
+
+    check("内置词表", _vocab)
+
+    def _terms():
+        from dictionary.terminology import build_terminology
+        # 领域名用前端 CourseConfig.tsx 中的中文键，与真实调用保持一致
+        built = build_terminology(
+            domain="计算机", custom_terms=["backpropagation", "convolutional"]
+        )
+        return (
+            f"术语 {built['stats']['total']} 个，"
+            f"热词提示 {built['promptChars']} 字符"
+        )
+
+    check("术语热词库", _terms)
+
+    def _llm():
+        from llm.client import get_provider, is_available
+
+        provider = get_provider()
+        available = is_available()
+        if provider == "cloud":
+            if not available:
+                raise RuntimeError("云端 LLM 配置不完整，需设置 BASE / KEY / MODEL")
+            return "provider=cloud，配置完整"
+        return (
+            "provider=ollama，本地服务已就绪"
+            if available
+            else "provider=ollama，本地服务未运行（AI 讲解/答疑会自动跳过，不影响字幕）"
+        )
+
+    check("LLM（AI 讲解 / 答疑）", _llm, critical=False)
+
+    def _dist():
+        resolved = _resolve_dist_dir()
+        if resolved is None:
+            raise RuntimeError("未找到 index.html（仅开发模式可接受）")
+        return str(resolved)
+
+    check("前端构建产物", _dist, critical=False)
+
+    def _db():
+        import asyncio as _asyncio
+
+        async def _run():
+            await db.initialize()
+            await db.close()
+
+        _asyncio.run(_run())
+        return "数据库可读写"
+
+    check("数据库", _db)
+
+    from asr.whisper_engine import DEFAULT_MODEL
+
+    cached = _selftest_model_cached(DEFAULT_MODEL)
+
+    def _model_status():
+        return (
+            f"{DEFAULT_MODEL} 已缓存（{_model_root()}）"
+            if cached
+            else f"{DEFAULT_MODEL} 未缓存，首次启动需联网下载（目录 {_model_root()}）"
+        )
+
+    check("Whisper 模型缓存", _model_status, critical=False)
+
+    if cached and SELFTEST_FIXTURE.is_file():
+        def _transcribe():
+            import wave
+
+            import numpy as np
+            from faster_whisper import WhisperModel
+
+            with wave.open(str(SELFTEST_FIXTURE), "rb") as wav:
+                channels = wav.getnchannels()
+                width = wav.getsampwidth()
+                rate = wav.getframerate()
+                frames = wav.readframes(wav.getnframes())
+            if width != 2:
+                raise RuntimeError(f"自检音频位深非 16bit: {width * 8}")
+            pcm = np.frombuffer(frames, dtype=np.int16)
+            if channels > 1:
+                pcm = pcm.reshape(-1, channels).mean(axis=1).astype(np.int16)
+            audio = pcm.astype(np.float32) / 32768.0
+            if rate != 16000:
+                raise RuntimeError(f"自检音频采样率非 16k: {rate}")
+
+            from asr.whisper_engine import COMPUTE_TYPE, DEVICE
+
+            def _load(local_only: bool):
+                return WhisperModel(
+                    DEFAULT_MODEL,
+                    device=DEVICE,
+                    compute_type=COMPUTE_TYPE,
+                    num_workers=1,
+                    download_root=_model_root(),
+                    local_files_only=local_only,
+                )
+
+            note = ""
+            try:
+                # 先强制离线：缓存必须**真能被加载**才算通过。
+                # 这正是「快照报下载成功但留下 0 字节 model.bin」「缺 refs/main」
+                # 这类问题的分水岭 —— 只在联网时才成功的话，用户断网就崩。
+                model = _load(True)
+            except Exception as offline_exc:
+                print(f"       本地缓存无法直接加载（{type(offline_exc).__name__}: {offline_exc}）")
+                print("       尝试联网修复后重新加载…")
+                model = _load(False)
+                note = "（本地缓存不完整，已联网修复）"
+
+            segments, _info = model.transcribe(audio, language="en", beam_size=1)
+            text = " ".join(s.text.strip() for s in segments).strip()
+            if not text:
+                raise RuntimeError("识别结果为空")
+            return f"{len(audio) / 16000:.1f}s 音频 -> \"{text[:70]}\"{note}"
+
+        check("完整识别链路（真实音频）", _transcribe)
+    elif cached:
+        check("完整识别链路（真实音频）", lambda: f"自检音频缺失: {SELFTEST_FIXTURE}", critical=False)
+    else:
+        print("[SKIP] 完整识别链路（真实音频）: 模型未缓存，先联网下载后再自检")
+
+    failed = [r for r in results if not r["ok"] and r["critical"]]
+    print("=" * 72)
+    print(f"结论: {'全部通过' if not failed else f'{len(failed)} 项关键检查未通过'}")
+    print(json.dumps({"selftest": results, "passed": not failed}, ensure_ascii=False, indent=2))
+    return 1 if failed else 0
+
 
 # ============ 前端静态资源托管 ============
 # 必须放在所有 API 路由之后注册：Starlette 按注册顺序匹配，
@@ -264,6 +501,10 @@ else:
 
 if __name__ == "__main__":
     import uvicorn
+
+    # 自检模式：只验证冻结包完整性与模型可用性，不启动 HTTP 服务
+    if "--selftest" in sys.argv:
+        sys.exit(run_selftest())
 
     PORT = int(os.environ.get("TINGKEBANLV_PORT", "8765"))
     # 桌面应用只监听本机回环地址：绑 0.0.0.0 会把课程数据暴露给同一局域网的其他设备
