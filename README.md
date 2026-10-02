@@ -8,11 +8,38 @@
 ## 核心功能
 
 - 🎤 **实时语音识别** — 基于 Faster-Whisper，本地运行，无需联网
+- 🎯 **术语热词注入** — 领域术语表注入 ASR，专业词识别准确率显著提升
 - 🏫 **双模式支持** — 在线网课（系统音频捕获）/ 线下课堂（麦克风收音）
 - 📝 **逐词高亮字幕** — 精确到单词级别的时间戳同步，中英混合支持
-- 🖱️ **点击查词学习** — 点击字幕任意单词，即时显示释义
+- 🖱️ **点击查词学习** — 点击字幕任意单词，即时显示释义（词库优先，AI 兜底）
 - 🤖 **AI 术语提取** — Ollama 自动分析课程内容，提取专业词汇
+- 💡 **AI 深度讲解** — 结合课程语境解释"这个词在这里什么意思"
+- 📋 **课后摘要** — 一键生成课程摘要 / 知识点 / 生词复习清单
+- 💬 **对话式答疑** — 基于最近字幕上下文提问，"刚才那段没听懂"场景
 - 📚 **课程专属词典** — 每个课程独立管理词汇，支持生词本和搜索
+
+## 术语识别优化
+
+国外课程最大的障碍是专业术语听不懂、查不到。本项目对此做了针对性优化：
+
+**问题**：Whisper 对专业词识别很差 —— `convolution` 被听成 `convalution`，
+`eigenvalue` 被切成 `eigen value`，学生看到的字幕本身就是错的。
+
+**方案**：三层术语热词注入
+
+| 层级 | 来源 | 说明 |
+|---|---|---|
+| 1. 自定义术语 | 用户手填 | 课程核心词，识别优先级最高 |
+| 2. 课程已识别术语 | 运行中自动累积 | 本课实际出现的词，动态加入 |
+| 3. 领域术语表 | 内置 15 个领域 / 320+ 术语 | 覆盖计算机、医学、物理、经济等 |
+
+热词通过 Whisper 的 `initial_prompt` 注入，并随识别进程动态更新（无需重启监听）。
+
+**配套能力**：
+
+- **本地词表匹配**：内置 3300+ 词，字幕里的术语零延迟匹配入库，完全不依赖 LLM
+- **点击讲解分级**：词表命中直接返回（~0ms），未命中的词才调用 AI 讲解，省时省钱
+- **术语库可视化**：课程配置页实时预览"这节课会重点识别哪些词"、词库覆盖率
 
 ## 两种使用场景
 
@@ -32,10 +59,34 @@
 | ASR 引擎 | Faster-Whisper (small) |
 | 语音检测 | Silero VAD |
 | 音频捕获 | PyAudio（Loopback + Microphone） |
-| 术语提取 | Ollama + Qwen2.5 |
-| 本地词典 | ECDICT |
+| 术语提取 | Ollama + Qwen2.5（可切换云端 API） |
+| 术语热词 | 内置领域术语库 + 自定义术语 → Whisper initial_prompt |
+| 本地词典 | ECDICT + 内置词表（3300+ 词） |
 | 数据存储 | SQLite |
-| 后端 | Python (FastAPI + WebSocket) |
+| 后端 | Python (FastAPI + WebSocket/HTTP 轮询) |
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `TINGKEBANLV_LLM_PROVIDER` | `ollama` | LLM 提供方：`ollama` / `cloud` |
+| `TINGKEBANLV_OLLAMA_MODEL` | `qwen2.5:7b` | 本地模型名 |
+| `TINGKEBANLV_CLOUD_API_BASE` | — | 云端 API 地址，如 `https://api.deepseek.com/v1` |
+| `TINGKEBANLV_CLOUD_API_KEY` | — | 云端 API 密钥 |
+| `TINGKEBANLV_CLOUD_MODEL` | — | 云端模型名，如 `deepseek-chat` |
+| `TINGKEBANLV_TERM_PROMPT_MAX` | `800` | 术语热词最大字符数 |
+| `WHISPER_DEVICE` | 自动检测 | `cuda` / `cpu` |
+| `TINGKEBANLV_HOME` | `~/.tingkebanlv` | 数据与模型存储目录（日志落盘于此） |
+| `TINGKEBANLV_GPU_SANDBOX` | — | 设为 `1` 恢复 Chromium GPU 沙箱默认行为（排障用） |
+
+切换云端 LLM 示例：
+
+```bash
+set TINGKEBANLV_LLM_PROVIDER=cloud
+set TINGKEBANLV_CLOUD_API_BASE=https://api.deepseek.com/v1
+set TINGKEBANLV_CLOUD_API_KEY=sk-xxx
+set TINGKEBANLV_CLOUD_MODEL=deepseek-chat
+```
 
 ## 快速开始
 
@@ -75,6 +126,69 @@ ollama pull qwen2.5:7b
 npm run dev
 ```
 
+## 打包分发
+
+后端与前端产物由 Electron 主进程一并打包：后端源码放入 `resources/backend`，
+前端构建产物放入 `resources/dist`，运行时由 FastAPI 同源托管 `dist`，
+因此前端 `fetch('/api/...')` 无需代理即可工作。
+
+```bash
+cd frontend
+
+# 只出解压目录（快，便于自测）
+npx electron-builder --win --dir
+
+# 出 NSIS 安装包
+npx electron-builder --win
+```
+
+产物位于 `frontend/release/`：`win-unpacked/`（免安装）与 `tingkebanlv-<版本>-setup.exe`。
+
+### 打包环境两个常见阻塞点
+
+**1. `Cannot create symbolic link`（winCodeSign 解压失败）**
+
+electron-builder 会下载 `winCodeSign` 工具包，其中含两个 macOS 动态库的符号链接。
+Windows 下创建符号链接需要管理员权限或已开启「开发者模式」，否则解压报错中断构建。
+
+三选一：
+
+- 开启开发者模式：设置 → 隐私和安全性 → 开发者选项 → 开发人员模式
+- 以管理员身份运行构建命令
+- 无需管理员权限的做法 —— 手动预置缓存（只丢弃那两个 macOS 符号链接，Windows 用不到）：
+
+  ```bash
+  CACHE="$LOCALAPPDATA/electron-builder/Cache/winCodeSign"
+  Z7="frontend/node_modules/7zip-bin/win/x64/7za.exe"
+  "$Z7" x "$CACHE/$(ls $CACHE | grep '\.7z$' | head -1)" \
+        "-o$CACHE/winCodeSign-2.6.0" -snl -y
+  ```
+
+  解压后确认 `rcedit-x64.exe` 与 `windows-10/x64/signtool.exe` 存在即可。
+
+**2. GitHub Release 下载超时 / 502**
+
+`nsis`、`nsis-resources`、`winCodeSign` 均从 GitHub Releases 下载，
+国内网络常不可达。走镜像即可（electron-builder 原生支持）：
+
+```bash
+export ELECTRON_BUILDER_BINARIES_MIRROR="https://gh-proxy.com/https://github.com/electron-userland/electron-builder-binaries/releases/download/"
+```
+
+### 运行时环境适配（无需配置，自动生效）
+
+打包后的应用会在启动时做两件事，避免在受限环境下白屏或闪退：
+
+- 关闭 Chromium **GPU 沙箱**。部分虚拟机 / 远程桌面 / 企业安全策略环境下，
+  GPU 进程会以 `0xC0000005` 崩溃并抛出 `FATAL: GPU process isn't usable`，
+  导致应用在界面出现前直接退出。
+- **首屏看门狗**。同类环境下渲染器沙箱也可能失效，表现为后端与静态资源都正常，
+  但渲染器进程卡死、页面永久白屏且无任何报错。若界面 12 秒内未完成加载，
+  应用会自行以 `--no-sandbox` 重启一次（约 20 秒内呈现界面），并记录到日志。
+
+运行日志（含后端输出）位于 `<TINGKEBANLV_HOME>/logs/electron.log`，
+打包后没有 stdout，排障请直接看这个文件。
+
 ## 项目结构
 
 ```
@@ -93,11 +207,12 @@ tingke-banlv/
 │   └── electron/          # Electron 主进程
 ├── backend/               # Python 后端
 │   ├── api/               # FastAPI 路由 + WebSocket
-│   ├── asr/               # ASR 管道 + Whisper 引擎
+│   ├── asr/               # ASR 管道 + Whisper 引擎（含术语热词注入）
 │   ├── audio/             # 音频捕获（Loopback + 麦克风）+ VAD
-│   ├── llm/               # Ollama 术语提取
-│   ├── dictionary/        # 本地词典 (ECDICT)
-│   └── database/          # SQLite 数据管理
+│   ├── llm/               # LLM 层：统一客户端 + 提词/讲解/摘要/答疑
+│   ├── dictionary/        # 本地词典 + 术语库（terminology.py）+ 内置词表
+│   ├── database/          # SQLite 数据管理
+│   └── tests/             # 集成测试
 └── scripts/               # 工具脚本
 ```
 

@@ -10,3 +10,10 @@ ecdict.db
 
 # 本地保留的重复项目副本（不入库，避免仓库内两份代码）
 tingke-banlv/
+
+# electron-builder 构建产物（win-unpacked + 安装包，体积可达数百 MB）
+release/
+frontend/release/
+
+# 词表扩充过程的批次临时文件备份（内容已合并进 basic_vocab.json）
+backend/dictionary/_backup_batches/
