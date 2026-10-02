@@ -53,7 +53,30 @@ os.makedirs(_MODEL_DIR, exist_ok=True)
 _configure_hf_environment(_MODEL_DIR)
 
 # 模型配置
-DEFAULT_MODEL = "small"  # tiny, base, small, medium, large-v3
+# 默认 base 而非 small：实测在 32 核机器、4 秒片段下
+#   small 需 RTF 1.438（跟不上实时），base 为 0.482（跟得上）
+# 术语热词注入已能补回一部分专业词准确率，故优先保证实时性。
+DEFAULT_MODEL = os.environ.get("TINGKEBANLV_WHISPER_MODEL", "base")
+
+
+def _detect_cpu_threads() -> int:
+    """
+    选择 ctranslate2 的 CPU 线程数
+
+    原实现硬编码 4，在 32 核机器上只用了 1/8 算力。实测（small 模型 / 8 秒片段）：
+        4 线程 → RTF 0.738
+        8 线程 → RTF 0.584
+       16 线程 → RTF 0.493
+    收益随线程数递减，且过多线程会与其他环节抢 CPU，故上限取 8。
+    """
+    env_threads = os.environ.get("TINGKEBANLV_WHISPER_THREADS")
+    if env_threads:
+        try:
+            return max(1, int(env_threads))
+        except ValueError:
+            logger.warning(f"无法解析 TINGKEBANLV_WHISPER_THREADS={env_threads}，改用自动探测")
+    logical = os.cpu_count() or 4
+    return max(2, min(8, logical // 2))
 
 
 def _detect_device() -> str:
@@ -97,9 +120,15 @@ DEVICE = _detect_device()
 COMPUTE_TYPE = _detect_compute_type(DEVICE)
 
 # 实时处理配置
-MIN_SEGMENT_DURATION = 0.5   # 最短识别片段（秒）
-MAX_BUFFER_DURATION = 15.0   # 最大缓冲时长（秒）
-OVERLAP_DURATION = 0.2       # 片段重叠时长（秒）
+#
+# MIN_SEGMENT_DURATION / MAX_BUFFER_DURATION / OVERLAP_DURATION 已移除：
+# 分段由 audio/vad.py 负责，识别侧不再自己攒缓冲。那三个常量原先从未被真正使用
+# （MAX_BUFFER_DURATION 的「最大缓冲」从未生效），留着只会误导后来的人。
+
+# 待识别队列上限（背压）
+# 正常跟得上时队列始终只有 1 个任务；只有在识别落后时才会积压，
+# 消费者会把积压片段合并成一次调用，所以这个上限只用于兜底防内存失控。
+MAX_PENDING_JOBS = int(os.environ.get("TINGKEBANLV_MAX_PENDING_JOBS", "8"))
 
 
 @dataclass
@@ -134,11 +163,13 @@ class WhisperEngine:
         on_partial: Optional[Callable[[str, list[WordTimestamp]], None]] = None,
         on_progress: Optional[Callable[[str, float], None]] = None,
         initial_prompt: Optional[str] = None,
+        cpu_threads: Optional[int] = None,
     ):
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
         self.language = language
+        self.cpu_threads = cpu_threads or _detect_cpu_threads()
         self.on_partial = on_partial
         self.on_progress = on_progress
         # 术语热词先验：给 Whisper 一段领域术语文本，显著提升专业词拼写准确率
@@ -150,13 +181,24 @@ class WhisperEngine:
         self._model = None
         self._loading = False
         self._lock = threading.Lock()
-        self._audio_buffer: deque[np.ndarray] = deque()
-        self._buffer_duration = 0.0
-        self._last_segment_end = 0.0
         self._total_duration = 0.0
         self._running = False
-        self._pending_segments: list[np.ndarray] = []
-        self._process_thread: Optional[threading.Thread] = None
+
+        # ---- 识别任务队列（背压所在）----
+        # 原实现每来一段音频就裸起一个线程去 transcribe，既无队列上限也无串行化：
+        # 一旦识别速度跟不上音频速度（实测 small 模型在 2~4 秒片段上 RTF>1），
+        # 线程会无界堆积 → CPU 被抢死、字幕乱序、内存持续上涨直至 OOM。
+        # 现在改为「单消费者 + 有界队列」：
+        #   - 正常情况下队列里只有 1 个任务，字幕照常即时产出
+        #   - 跟不上时任务会积压，消费者把积压片段**合并成一次调用**
+        #     （单次调用有约 4 秒固定开销，合并远优于丢弃）
+        self._jobs: deque[tuple[np.ndarray, float, float]] = deque()
+        self._jobs_cv = threading.Condition()
+        self._stop_worker = threading.Event()
+        self._worker: Optional[threading.Thread] = None
+        self._busy = False             # 是否正在做一次识别（供 flush 判断）
+        self._merged_jobs = 0          # 合并过几次（用于观测是否在降级）
+        self._dropped_jobs = 0
 
         # 后台异步加载模型（不阻塞事件循环）
         self._loading = True
@@ -281,8 +323,10 @@ class WhisperEngine:
                 self.model_size,
                 device=self.device,
                 compute_type=ct,
-                num_workers=2,
-                cpu_threads=4,
+                # num_workers>1 会创建多份模型副本（每份数百 MB 内存），
+                # 那是为批量离线转写准备的；流式场景一次只处理一段，用 1 即可
+                num_workers=1,
+                cpu_threads=self.cpu_threads,
                 download_root=_MODEL_DIR,
             )
 
@@ -298,38 +342,105 @@ class WhisperEngine:
 
     def add_audio(self, audio: np.ndarray):
         """
-        添加音频数据到缓冲区
+        提交一段音频用于识别
+
         audio: float32 numpy array, 采样率 16000
+        由上游 VAD 切出的独立语音片段，自带起止时间。
         """
-        with self._lock:
-            self._audio_buffer.append(audio.copy())
-            self._buffer_duration += len(audio) / 16000.0
-            self._total_duration += len(audio) / 16000.0
-
-            # 缓冲区达到阈值，触发识别
-            if self._buffer_duration >= MIN_SEGMENT_DURATION:
-                self._trigger_recognition()
-
-    def _trigger_recognition(self):
-        """触发异步识别"""
-        if not self._model:
-            logger.error("模型未加载，无法识别")
+        if audio is None or len(audio) == 0:
             return
 
-        # 取出缓冲的音频
-        audio = np.concatenate(list(self._audio_buffer))
-        self._audio_buffer.clear()
-        segment_start = max(0, self._total_duration - self._buffer_duration)
-        duration = self._buffer_duration
-        self._buffer_duration = 0.0
+        duration = len(audio) / 16000.0
+        with self._lock:
+            segment_start = self._total_duration
+            self._total_duration += duration
 
-        # 在新线程中执行识别（避免阻塞音频流）
-        t = threading.Thread(
-            target=self._transcribe,
-            args=(audio, segment_start, duration),
-            daemon=True,
+        with self._jobs_cv:
+            self._jobs.append((audio.copy(), segment_start, duration))
+            # 背压上限：极端情况下（长时间跟不上）也不让队列无限增长。
+            # 丢弃最旧的片段而不是最新的 —— 越新的内容对用户越有价值。
+            while len(self._jobs) > MAX_PENDING_JOBS:
+                self._jobs.popleft()
+                self._dropped_jobs += 1
+                if self._dropped_jobs % 5 == 1:
+                    logger.warning(
+                        f"识别积压严重，已丢弃 {self._dropped_jobs} 个片段 "
+                        f"（当前模型 {self.model_size}，可考虑换更小的模型）"
+                    )
+            self._jobs_cv.notify()
+
+        self._ensure_worker()
+
+    def _ensure_worker(self):
+        """惰性启动唯一的识别消费者线程"""
+        if self._worker is not None and self._worker.is_alive():
+            return
+        self._stop_worker.clear()
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker.start()
+
+    def _worker_loop(self):
+        """
+        唯一的识别消费者
+
+        取出当前所有待处理片段；多于一个时合并成一次调用。
+        合并是有意的降级策略：每次 transcribe 有约 4 秒固定开销
+        （Whisper 按 30 秒窗口处理，短输入会被补齐），
+        把两段 4 秒合成一次 8 秒调用，比串行两次调用快得多。
+        """
+        while not self._stop_worker.is_set():
+            with self._jobs_cv:
+                while not self._jobs and not self._stop_worker.is_set():
+                    self._jobs_cv.wait(0.2)
+                if self._stop_worker.is_set():
+                    return
+                if not self._model:
+                    # 模型还没加载完：保留队列，等下一轮
+                    self._jobs_cv.wait(0.5)
+                    continue
+                jobs = list(self._jobs)
+                self._jobs.clear()
+
+            if len(jobs) > 1:
+                self._merged_jobs += 1
+                logger.info(f"识别落后，合并 {len(jobs)} 个片段为一次调用（第 {self._merged_jobs} 次）")
+
+            audio, start, duration = self._merge_jobs(jobs)
+            with self._jobs_cv:
+                self._busy = True
+                self._jobs_cv.notify_all()
+            try:
+                self._transcribe(audio, start, duration)
+            finally:
+                with self._jobs_cv:
+                    self._busy = False
+                    self._jobs_cv.notify_all()
+
+    @staticmethod
+    def _merge_jobs(jobs: list) -> tuple:
+        """
+        把多个片段合并成一段音频
+
+        片段之间按时间轴补零，保证 Whisper 输出的时间戳仍对应真实时间，
+        否则字幕时间会整体前移、与课件进度对不上。
+        """
+        if len(jobs) == 1:
+            return jobs[0]
+
+        parts: list[np.ndarray] = []
+        cursor = jobs[0][1]
+        for audio, start, duration in jobs:
+            gap = start - cursor
+            if gap > 0.05:
+                parts.append(np.zeros(int(gap * 16000), dtype=np.float32))
+            parts.append(audio)
+            cursor = start + duration
+
+        merged = np.concatenate(parts)
+        total = sum(d for _, _, d in jobs) + sum(
+            max(0.0, jobs[i][1] - (jobs[i - 1][1] + jobs[i - 1][2])) for i in range(1, len(jobs))
         )
-        t.start()
+        return merged, jobs[0][1], total
 
     def _transcribe(self, audio: np.ndarray, segment_start: float, duration: float):
         """执行语音识别"""
@@ -395,10 +506,23 @@ class WhisperEngine:
         except Exception as e:
             logger.error(f"语音识别错误: {e}")
 
-    def flush(self):
-        """等待所有待处理任务完成"""
-        # 简化实现：等待一小段时间
-        time.sleep(0.5)
+    def flush(self, timeout: float = 8.0):
+        """
+        等待队列中的识别任务处理完
+
+        原实现只是 sleep(0.5)，无论队列里还有多少任务都会「假装等完了」，
+        停止听课时就可能丢掉最后几段字幕。
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._jobs_cv:
+                if not self._jobs and not self._busy:
+                    return
+                self._jobs_cv.wait(0.1)
+        with self._jobs_cv:
+            remaining = len(self._jobs)
+        if remaining:
+            logger.warning(f"flush 超时，仍有 {remaining} 个片段未识别")
 
     def set_initial_prompt(self, prompt: str):
         """
@@ -430,9 +554,15 @@ class WhisperEngine:
         return " ".join(parts)[:1000]
 
     def stop(self):
-        """停止引擎"""
+        """停止引擎：先把手头积压的片段识别完，再收掉消费者线程"""
         self._running = False
-        self.flush()
+        self.flush(timeout=10.0)
+        self._stop_worker.set()
+        with self._jobs_cv:
+            self._jobs.clear()
+            self._jobs_cv.notify_all()
+        if self._worker is not None:
+            self._worker.join(timeout=3)
 
     @property
     def is_loaded(self) -> bool:
@@ -441,3 +571,27 @@ class WhisperEngine:
     @property
     def is_loading(self) -> bool:
         return self._loading
+
+    def get_stats(self) -> dict:
+        """
+        运行时统计（供 /api/health 与排障）
+
+        重点看 backlog 与 merged：
+          - backlog 持续 > 0 → 识别跟不上音频速度
+          - merged > 0       → 已经进入「合并片段」的降级状态，字幕会更粗
+          - dropped > 0      → 已开始丢内容，必须减小模型或调大 cpu_threads
+        """
+        with self._jobs_cv:
+            backlog = len(self._jobs)
+            busy = self._busy
+        return {
+            "model": self.model_size,
+            "device": self.device,
+            "computeType": self.compute_type,
+            "cpuThreads": self.cpu_threads,
+            "backlog": backlog,
+            "busy": busy,
+            "mergedCalls": self._merged_jobs,
+            "droppedSegments": self._dropped_jobs,
+            "audioSeconds": round(self._total_duration, 1),
+        }
