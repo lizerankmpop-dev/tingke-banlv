@@ -115,27 +115,53 @@ function getBackendDir() {
 }
 
 /**
- * 解析可用的 Python 启动方式
+ * 前端构建产物目录
+ *
+ * 打包后由后端同源托管，后端需要知道 dist 在哪。源码模式下后端能自己从
+ * `__file__` 推出来，但冻结成 exe 后 `__file__` 指向 _internal 内部，
+ * 推不出 resourcesPath —— 由主进程显式告知最稳妥。
+ */
+function resolveDistDir() {
+  if (process.env.TINGKEBANLV_DIST_DIR) return process.env.TINGKEBANLV_DIST_DIR;
+  if (app.isPackaged) {
+    const packaged = path.join(process.resourcesPath, 'dist');
+    if (fs.existsSync(path.join(packaged, 'index.html'))) return packaged;
+  }
+  return null;
+}
+
+/**
+ * 解析可用的后端启动方式
  *
  * 关键：Windows 上不存在 python3 命令，原代码 spawn('python3') 会直接 ENOENT。
  * 这里不仅探测命令是否存在，还验证它真的能 import fastapi，
  * 避免选到一个空壳解释器（如未装依赖的全局 Python）。
+ *
+ * 返回对象的 frozen 字段表示「已冻结的独立后端」，它不接受脚本路径参数，
+ * 启动方式与解释器模式不同（见 startBackendProcess）。
  */
 function resolvePythonCommand() {
   const backendDir = getBackendDir();
 
   // 1) 打包后的独立可执行文件优先
+  //    这是安装包在真实用户机器上**唯一**可靠的路径：目标机器没有 Python，
+  //    也没有 fastapi/uvicorn，下面第 4 步的探测必然全部失败。
   if (app.isPackaged) {
-    const exeName = process.platform === 'win32' ? 'tingkebanlv-server.exe' : 'tingkebanlv-server';
-    const bundled = path.join(process.resourcesPath, 'backend-server', exeName);
-    if (fs.existsSync(bundled)) {
-      return { command: bundled, args: [], display: bundled };
+    const candidates = [
+      path.join(process.resourcesPath, 'backend-server', 'tingkebanlv-server.exe'),
+      path.join(process.resourcesPath, 'backend-server', 'tingkebanlv-server'),
+    ];
+    for (const bundled of candidates) {
+      if (fs.existsSync(bundled)) {
+        return { command: bundled, args: [], display: bundled, frozen: true };
+      }
     }
+    logLine('[backend] 未找到冻结后端（resources/backend-server），回退到 Python 探测');
   }
 
   // 2) 环境变量指定
   if (process.env.TINGKEBANLV_PYTHON) {
-    return { command: process.env.TINGKEBANLV_PYTHON, args: [], display: process.env.TINGKEBANLV_PYTHON };
+    return { command: process.env.TINGKEBANLV_PYTHON, args: [], display: process.env.TINGKEBANLV_PYTHON, frozen: false };
   }
 
   // 3) 项目自带 venv
@@ -143,7 +169,7 @@ function resolvePythonCommand() {
     ? path.join(backendDir, '..', '..', '安装空间', 'venv', 'Scripts', 'python.exe')
     : path.join(backendDir, '..', '..', '安装空间', 'venv', 'bin', 'python');
   if (fs.existsSync(venvPython)) {
-    return { command: venvPython, args: [], display: venvPython };
+    return { command: venvPython, args: [], display: venvPython, frozen: false };
   }
 
   // 4) 系统解释器候选（顺序即优先级）
@@ -166,7 +192,7 @@ function resolvePythonCommand() {
         [...candidate.args, '-c', 'import fastapi, uvicorn'],
         { stdio: 'ignore', timeout: 15000 }
       );
-      if (probe.status === 0) return candidate;
+      if (probe.status === 0) return { ...candidate, frozen: false };
     } catch (_) {
       // 该候选不可用，继续探测下一个
     }
@@ -196,10 +222,25 @@ function findFreePort() {
 
 // ============ 后端健康检查 ============
 
+/**
+ * 探测后端是否已能接受请求
+ *
+ * 刻意用 /api/ping 而不是 /api/health：
+ *   /api/health 会做真实探测（曾包含一次外部 LLM 请求），在受限网络下
+ *   单次耗时可达 2 秒以上，超过本函数的超时阈值 —— 于是每次探测都判定失败，
+ *   界面永远等不到就绪，90 秒后弹「后端启动超时」。
+ *   /api/ping 不碰数据库、不碰外部服务，恒定毫秒级返回。
+ *
+ * 超时也从 2s 放宽到 5s：后端首次导入 ctranslate2/onnxruntime 时偶有卡顿，
+ * 没必要把「慢」误判成「没起来」。
+ */
+const READY_PATH = '/api/ping';
+const READY_TIMEOUT_MS = 5000;
+
 function probeHealth(port) {
   return new Promise((resolve) => {
     const req = http.get(
-      { host: '127.0.0.1', port, path: '/api/health', timeout: 2000 },
+      { host: '127.0.0.1', port, path: READY_PATH, timeout: READY_TIMEOUT_MS },
       (res) => {
         res.resume();
         resolve(res.statusCode === 200);
@@ -215,13 +256,29 @@ function probeHealth(port) {
 
 /** 轮询等待后端就绪；后端起不来时抛错，由调用方弹窗告知用户 */
 async function waitForBackend(port, timeoutMs = HEALTH_TIMEOUT_MS) {
-  const deadline = Date.now() + timeoutMs;
+  const started = Date.now();
+  const deadline = started + timeoutMs;
+  let attempts = 0;
+  let nextNoticeAt = 15000;
+
   while (Date.now() < deadline) {
     if (isQuitting) throw new Error('应用正在退出');
     if (!backendProcess || backendProcess.exitCode !== null) {
       throw new Error('后端进程已退出');
     }
     if (await probeHealth(port)) return;
+
+    attempts += 1;
+    // 长时间等不到就绪时定期留痕：否则用户只能看到「启动超时」，
+    // 完全不知道卡在哪一步（实践中正是这条日志定位到 /api/health 超时问题）
+    const elapsed = Date.now() - started;
+    if (elapsed >= nextNoticeAt) {
+      logLine(
+        `[backend] 等待就绪 ${Math.round(elapsed / 1000)}s：` +
+        `${READY_PATH} 已探测 ${attempts} 次仍未返回 200`
+      );
+      nextNoticeAt += 15000;
+    }
     await new Promise((r) => setTimeout(r, HEALTH_INTERVAL_MS));
   }
   throw new Error(`后端启动超时（${Math.round(timeoutMs / 1000)} 秒）`);
@@ -231,15 +288,24 @@ async function waitForBackend(port, timeoutMs = HEALTH_TIMEOUT_MS) {
 
 function startBackendProcess(port, python) {
   const backendDir = getBackendDir();
+  const distDir = resolveDistDir();
 
-  backendProcess = spawn(python.command, [...python.args, 'main.py'], {
-    cwd: backendDir,
+  // 冻结后的 exe 把入口脚本编译进自身，**不能再传 main.py**：
+  // 那会被当成参数交给 PyInstaller 引导器，行为未定义。
+  // 工作目录也改为 exe 所在目录，避免依赖 resources/backend 是否存在。
+  const args = python.frozen ? [...python.args] : [...python.args, 'main.py'];
+  const cwd = python.frozen ? path.dirname(python.command) : backendDir;
+
+  backendProcess = spawn(python.command, args, {
+    cwd,
     env: {
       ...process.env,
       PYTHONUNBUFFERED: '1',
+      PYTHONIOENCODING: 'utf-8', // 冻结后日志含中文，显式指定避免 GBK 编码错误
       TINGKEBANLV_PORT: String(port),
       TINGKEBANLV_HOST: '127.0.0.1',
       TINGKEBANLV_RELOAD: '0', // 打包/桌面运行一律关闭热重载
+      ...(distDir ? { TINGKEBANLV_DIST_DIR: distDir } : {}),
     },
     // 非 Windows 建独立进程组，退出时才能整组信号终止
     detached: process.platform !== 'win32',
@@ -309,13 +375,16 @@ async function launchBackend() {
   const python = resolvePythonCommand();
   if (!python) {
     throw new Error(
-      '未找到可用的 Python 环境。\n\n' +
-      '请安装 Python 3.10+ 并执行：pip install -r backend/requirements.txt\n' +
+      '未找到可用的后端。\n\n' +
+      '【安装版】请确认安装目录 resources\\backend-server 是否存在且完整\n' +
+      '（部分杀毒软件会隔离其中的原生库 .dll）。\n\n' +
+      '【开发模式】请安装 Python 3.10+ 并执行：\n' +
+      'pip install -r backend/requirements.txt\n' +
       '或设置环境变量 TINGKEBANLV_PYTHON 指定解释器路径。'
     );
   }
   logLine(`[backend] 后端目录: ${getBackendDir()}`);
-  logLine(`[backend] 使用解释器: ${python.display}`);
+  logLine(`[backend] 启动方式: ${python.frozen ? '冻结 exe' : 'Python 解释器'} -> ${python.display}`);
 
   // 端口竞态最多重试 3 次
   let lastError = null;

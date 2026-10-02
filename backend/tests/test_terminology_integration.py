@@ -5,11 +5,36 @@
 验证：术语库构建 / 自定义术语优先级 / preview 端点 / 识别优化统计。
 """
 
-import io
 import json
 import sys
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
+def _ensure_utf8_stdout() -> None:
+    """
+    让本文件的打印在 GBK 控制台下也能显示中文
+
+    原实现是 `sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")`。
+    这会**丢弃原来那层包装**：新包装持有同一个底层缓冲区，旧包装一旦被回收，
+    它会连带关掉共享的缓冲区 —— 而 pytest 的捕获流正是这样一层包装，
+    于是测试收尾时 `tmpfile.seek(0)` 抛 "I/O operation on closed file"，
+    整个 pytest 会话 INTERNALERROR（只在多文件一起跑时稳定复现）。
+
+    正确做法是就地 reconfigure，不替换对象；且只处理进程自己的输出流 ——
+    pytest / Jupyter 替换过的流一律不碰。
+    """
+    stream = sys.stdout
+    if stream is None or stream is not getattr(sys, "__stdout__", None):
+        return
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
+_ensure_utf8_stdout()
 
 from fastapi.testclient import TestClient
 from main import app
