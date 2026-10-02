@@ -87,6 +87,7 @@
 | `HF_ENDPOINT` | `https://hf-mirror.com` | 模型下载镜像 |
 | `TINGKEBANLV_HOME` | `~/.tingkebanlv` | 数据与模型存储目录（日志落盘于此） |
 | `WHISPER_MODEL_DIR` | `<TINGKEBANLV_HOME>/whisper_models` | 模型缓存目录 |
+| `TINGKEBANLV_SEED_MODEL_DIR` | 自动推断 | 内置模型种子目录（由主进程传入，覆盖自动推断） |
 | `TINGKEBANLV_GPU_SANDBOX` | — | 设为 `1` 恢复 Chromium GPU 沙箱默认行为（排障用） |
 | `TINGKEBANLV_PYTHON` | 自动探测 | 指定后端 Python 解释器（打包排障用） |
 
@@ -204,6 +205,7 @@ python bench_call_cost.py <wav> /path/to/model_dir 8 5
 |------|------|------|
 | `resources/backend-server/` | PyInstaller 冻结的后端（自带解释器与依赖） | 安装版的**唯一**启动路径 |
 | `resources/backend/` | 后端源码 | 开发/调试兜底（配合 `TINGKEBANLV_PYTHON`） |
+| `resources/whisper_models/` | 内置 base 模型种子（含 `manifest.json`） | 首启播种到数据目录，**断网即可用** |
 | `resources/dist/` | 前端构建产物 | 由 FastAPI 同源托管，前端 `fetch('/api/...')` 无需代理 |
 
 ### 为什么必须冻结后端
@@ -213,23 +215,53 @@ python bench_call_cost.py <wav> /path/to/model_dir 8 5
 自带解释器、原生库与数据文件的独立可执行文件。
 
 ```bash
-# 1) 先冻结后端（须在装有 backend/requirements.txt 的 venv 中执行）
+# 0) 生成内置模型种子（仅首次 / 换模型时执行；产物 packaging/seed/ 是 gitignore 项）
+#    源目录可以是已下载好的 faster-whisper base 模型，或 HF 缓存目录
+python scripts/prepare_seed_model.py --source <模型目录> --size base
+#    产物：packaging/seed/whisper_models/（约 141MB，含 manifest.json + sha256）
+
+# 1) 再冻结后端（须在装有 backend/requirements.txt 的 venv 中执行）
 cd frontend && npm run backend:build
 #    等价于：
 #    python -m PyInstaller ../packaging/backend_server.spec --noconfirm \
 #        --distpath ../packaging/out --workpath ../packaging/build
 #    产物：packaging/out/backend-server/tingkebanlv-server.exe（约 267MB）
 
-# 2) 再打 Electron 包
+# 2) 最后打 Electron 包
 npx electron-builder --win --dir   # 只出解压目录（快，便于自测）
 npx electron-builder --win         # 出 NSIS 安装包
 ```
+
+> 顺序不能反，且**种子缺失必须拦下来**。`npm run package:win` 会把三步串起来并先跑
+> `npm run preflight:seed`：种子不存在时直接非零退出，避免打出一个「体积少 141MB、
+> 装完首启仍要联网下载」的安装包——这种失败在打包日志里几乎看不出来。
 
 产物位于 `frontend/release/`：`win-unpacked/`（免安装）与 `tingkebanlv-<版本>-setup.exe`。
 
 冻结时特意**排除 torch**（否则 +2GB，而流式转写跑在 CPU + int8 上）与
 **hf_xet**（镜像站不代理它的 CAS 服务，代码里已用 `HF_HUB_DISABLE_XET=1` 关闭）。
-Whisper 模型权重也不随包分发，运行时下载到 `~/.tingkebanlv/whisper_models`。
+
+### 内置模型的分发与自愈
+
+模型**随包分发**（`resources/whisper_models/`），但不在原地使用，理由有两条：
+程序目录可能只读、重装即被覆盖；后续想单独更新模型不该让用户重装整个应用。
+
+因此首启会把它**播种**到数据目录，两处职责分明：
+
+| 位置 | 角色 | 可写 |
+|------|------|------|
+| `<安装目录>/resources/whisper_models/` | 只读种子（真理源） | 否 |
+| `<TINGKEBANLV_HOME>/whisper_models/` | 工作副本（faster-whisper 实际加载这里） | 是 |
+
+播种逻辑见 `backend/asr/model_bootstrap.py`：`ensure_model()` 先校验工作副本，
+完整就直接用（`verified`），缺失或损坏就从种子重播（`seeded` / `repaired`），
+**全程不联网**。校验用 `manifest.json` 里的 sha256；`--selftest` 会走深度校验，
+日常启动只比文件大小（毫秒级）。校验通过后落 `.seed-integrity-<size>.json` 标记，
+避免每次启动重算 141MB 的哈希。
+
+只有内置的 base 会随包分发。用户手动导入的 small/medium 没有清单，
+校验自动退化为「文件存在且 `model.bin` > 1MB」——这个下界是必要的，
+镜像站 + hf-xet 组合曾出现「报下载成功却留下 0 字节 `model.bin`」。
 
 ### 后端自检
 
@@ -240,9 +272,10 @@ Whisper 模型权重也不随包分发，运行时下载到 `~/.tingkebanlv/whis
 "<安装目录>/resources/backend-server/tingkebanlv-server.exe" --selftest
 ```
 
-它会依次检查 Python 运行时、faster-whisper/ctranslate2、onnxruntime、
-音频采集后端、内置词表、术语库、前端产物、数据库、模型缓存，
-并在模型已缓存时**用真实音频跑一次完整识别**（先强制离线加载，
+它会依次检查 Python 运行时、回环绕过代理、faster-whisper/ctranslate2、onnxruntime、
+音频采集后端、内置词表、术语库、前端产物、数据库、**内置模型种子**、
+**模型完整性（sha256，损坏自动修复）**、模型缓存，
+并在模型可用时**用真实音频跑一次完整识别**（先强制离线加载，
 再允许联网修复），最后输出一段可直接粘贴的 JSON 结论，退出码 0/1。
 
 ### 打包环境两个常见阻塞点

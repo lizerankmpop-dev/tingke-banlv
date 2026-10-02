@@ -3,7 +3,8 @@
  *
  * 职责：
  *   1. 动态分配空闲端口，拉起 Python 后端（开发用系统 Python，打包用 PyInstaller 产物）
- *   2. 轮询 /api/health 等待后端就绪，避免前端在服务未起时开始请求
+ *   2. 轮询 /api/ping 等待后端就绪，避免前端在服务未起时开始请求
+ *      （刻意不用 /api/health：它带外部探测，受限网络下单次可达 2 秒以上）
  *   3. 加载界面（开发走 Vite dev server，打包走 http://127.0.0.1:PORT —— 由后端同源托管前端）
  *   4. 退出时清理整棵后端进程树（Windows 下 uvicorn 子进程必须用 taskkill /T）
  *
@@ -14,6 +15,11 @@
  *   TINGKEBANLV_HOME            数据目录（决定日志落点，默认 ~/.tingkebanlv）
  *   TINGKEBANLV_GPU_SANDBOX=1   恢复 Chromium GPU 沙箱默认行为（排障用）
  *   VITE_DEV_SERVER_URL         存在则进入开发模式加载该地址
+ *
+ * 随包分发的资源（均在 process.resourcesPath 下，不进 asar）：
+ *   backend/          后端源码（源码模式回退用）
+ *   backend-server/   冻结好的独立后端 exe（真实用户机唯一可靠入口）
+ *   whisper_models/   内置 base 模型种子，首启播种到 TINGKEBANLV_HOME
  *
  * 兼容模式（自动触发，无需配置）：
  *   若界面在 12 秒内未渲染完成，判定为 Chromium 沙箱被系统安全策略拦截，
@@ -126,6 +132,25 @@ function resolveDistDir() {
   if (app.isPackaged) {
     const packaged = path.join(process.resourcesPath, 'dist');
     if (fs.existsSync(path.join(packaged, 'index.html'))) return packaged;
+  }
+  return null;
+}
+
+/**
+ * 内置模型种子目录
+ *
+ * 安装包把 base 模型放在 resources/whisper_models（extraResources，不进 asar），
+ * 后端首次启动时把它播种到 TINGKEBANLV_HOME/whisper_models —— 即「程序本体只读、
+ * 模型数据可写」，这样后续单独更新模型不必让用户重装整个应用。
+ *
+ * 后端自己也能从 exe 位置反推出该目录（见 asr/model_bootstrap.py），
+ * 但显式传递更稳妥：冻结后 sys.executable 的推导依赖目录层级未被改动。
+ */
+function resolveSeedModelDir() {
+  if (process.env.TINGKEBANLV_SEED_MODEL_DIR) return process.env.TINGKEBANLV_SEED_MODEL_DIR;
+  if (app.isPackaged) {
+    const packaged = path.join(process.resourcesPath, 'whisper_models');
+    if (fs.existsSync(path.join(packaged, 'manifest.json'))) return packaged;
   }
   return null;
 }
@@ -289,6 +314,12 @@ async function waitForBackend(port, timeoutMs = HEALTH_TIMEOUT_MS) {
 function startBackendProcess(port, python) {
   const backendDir = getBackendDir();
   const distDir = resolveDistDir();
+  const seedModelDir = resolveSeedModelDir();
+  if (seedModelDir) {
+    logLine(`[backend] 内置模型种子: ${seedModelDir}`);
+  } else if (app.isPackaged) {
+    logLine('[backend] 未找到内置模型种子（resources/whisper_models），首启将需要联网下载模型');
+  }
 
   // 冻结后的 exe 把入口脚本编译进自身，**不能再传 main.py**：
   // 那会被当成参数交给 PyInstaller 引导器，行为未定义。
@@ -306,6 +337,7 @@ function startBackendProcess(port, python) {
       TINGKEBANLV_HOST: '127.0.0.1',
       TINGKEBANLV_RELOAD: '0', // 打包/桌面运行一律关闭热重载
       ...(distDir ? { TINGKEBANLV_DIST_DIR: distDir } : {}),
+      ...(seedModelDir ? { TINGKEBANLV_SEED_MODEL_DIR: seedModelDir } : {}),
     },
     // 非 Windows 建独立进程组，退出时才能整组信号终止
     detached: process.platform !== 'win32',

@@ -410,15 +410,37 @@ def run_selftest() -> int:
 
     check("数据库", _db)
 
+    from asr.model_bootstrap import check_installed, ensure_model, seed_available
     from asr.whisper_engine import DEFAULT_MODEL
+
+    def _seed():
+        info = seed_available()
+        if not info["available"]:
+            raise RuntimeError(info["detail"])
+        return info["detail"]
+
+    # 安装版必须内置模型，缺了就是打包错误；开发模式没生成种子属正常
+    check("内置模型种子", _seed, critical=bool(getattr(sys, "frozen", False)))
+
+    def _ensure():
+        # 契约是 result["ok"]，不是 action 字符串：
+        # 播种失败时 action 可能是 "verify-failed"/"no-seed"/"error"，
+        # 只判 "unavailable" 会把「播种后 sha256 仍不通」误报成通过。
+        result = ensure_model(DEFAULT_MODEL, deep_check=True)
+        if not result["ok"]:
+            raise RuntimeError(f"{result['action']}：{result['detail']}")
+        return f"{result['action']}：{result['detail']}"
+
+    check("模型完整性（sha256，损坏自动修复）", _ensure)
 
     cached = _selftest_model_cached(DEFAULT_MODEL)
 
     def _model_status():
+        detail = check_installed(DEFAULT_MODEL, deep=True)
         return (
-            f"{DEFAULT_MODEL} 已缓存（{_model_root()}）"
-            if cached
-            else f"{DEFAULT_MODEL} 未缓存，首次启动需联网下载（目录 {_model_root()}）"
+            f"{DEFAULT_MODEL} 已缓存且校验通过（{_model_root()}）"
+            if detail["ok"]
+            else f"{DEFAULT_MODEL} 不可用：{'; '.join(detail['problems']) or detail['reason']}"
         )
 
     check("Whisper 模型缓存", _model_status, critical=False)

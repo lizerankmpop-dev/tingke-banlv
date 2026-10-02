@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "backend:build": "python -m PyInstaller ../packaging/backend_server.spec --noconfirm --distpath ../packaging/out --workpath ../packaging/build",
-    "electron:build": "npm run build && electron-builder --win"
+    "preflight:seed": "node scripts/preflight-seed.cjs",
+    "package:win": "npm run preflight:seed && npm run build && npm run backend:build && electron-builder --win",
+    "electron:build": "npm run preflight:seed && npm run build && electron-builder --win"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -62,6 +64,15 @@
           "**/*",
           "!**/__pycache__/**",
           "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "../packaging/seed/whisper_models",
+        "to": "whisper_models",
+        "filter": [
+          "**/*",
+          "!**/.DS_Store",
+          "!**/blobs/**"
         ]
       },
       {

@@ -14,15 +14,9 @@ from pathlib import Path
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from asr.model_bootstrap import check_installed, ensure_model, model_root
 
-# 模型下载目录：优先环境变量，默认 ~/.tingkebanlv/whisper_models
-def _get_model_dir() -> str:
-    if env_dir := os.environ.get("WHISPER_MODEL_DIR"):
-        return env_dir
-    if home := os.environ.get("TINGKEBANLV_HOME"):
-        return str(Path(home) / "whisper_models")
-    return str(Path.home() / ".tingkebanlv" / "whisper_models")
+logger = logging.getLogger(__name__)
 
 
 def _configure_hf_environment(model_dir: str):
@@ -48,7 +42,7 @@ def _configure_hf_environment(model_dir: str):
     os.environ.setdefault("HF_HOME", model_dir)
 
 
-_MODEL_DIR = _get_model_dir()
+_MODEL_DIR = str(model_root())
 os.makedirs(_MODEL_DIR, exist_ok=True)
 _configure_hf_environment(_MODEL_DIR)
 
@@ -213,30 +207,18 @@ class WhisperEngine:
 
     def _is_model_cached(self) -> bool:
         """
-        检查模型是否已缓存
+        检查本地是否已有可用模型
+
+        校验逻辑集中在 asr/model_bootstrap.check_installed，这里只做转发：
+        两处各写一份「什么算缓存可用」迟早会漂移，而它们漂移的后果是
+        「安装包说内置了模型、加载时却以为没有又去下载」。
 
         刻意校验文件**大小**而不只是「是否存在」：
         在「HF 镜像 + hf-xet」组合下 snapshot_download 会一边报告下载成功、
         一边留下 0 字节的 model.bin。只判断存在性会把这种损坏缓存当成可用，
         之后每次启动都在加载阶段抛 "model.bin is incomplete"。
         """
-        cache_dir = Path(_MODEL_DIR) / f"models--Systran--faster-whisper-{self.model_size}"
-        if not cache_dir.exists():
-            return False
-        snapshots = cache_dir / "snapshots"
-        if not snapshots.exists():
-            return False
-        for snapshot in snapshots.iterdir():
-            if not snapshot.is_dir():
-                continue
-            for bin_file in snapshot.glob("*.bin"):
-                try:
-                    # 真实模型至少几十 MB，1MB 阈值足以识别 0 字节/截断文件
-                    if bin_file.stat().st_size > 1024 * 1024:
-                        return True
-                except OSError:
-                    continue
-        return False
+        return bool(check_installed(self.model_size)["ok"])
 
     def _monitor_download(self, stop_event: threading.Event):
         """监控下载进度，通过缓存目录大小估算百分比"""
@@ -278,7 +260,17 @@ class WhisperEngine:
             # 启用高速下载
             os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
-            if not self._is_model_cached():
+            # 先看安装包内置的模型种子：
+            # 首启即可离线使用，且能自动修复损坏的缓存（不联网）
+            bootstrap = ensure_model(self.model_size)
+            if bootstrap["action"] in ("seeded", "repaired"):
+                logger.info(f"已从内置模型播种: {bootstrap['detail']}")
+            elif not bootstrap["ok"]:
+                logger.info(f"内置模型不可用: {bootstrap['detail']}")
+
+            cached = self._is_model_cached()
+
+            if not cached:
                 # 需要下载
                 self._report_progress("downloading", 0)
                 logger.info(f"模型 {self.model_size} 未缓存，开始下载...")
@@ -319,16 +311,7 @@ class WhisperEngine:
             if self.device == "cpu" and ct == "float16":
                 ct = "int8"
 
-            self._model = WhisperModel(
-                self.model_size,
-                device=self.device,
-                compute_type=ct,
-                # num_workers>1 会创建多份模型副本（每份数百 MB 内存），
-                # 那是为批量离线转写准备的；流式场景一次只处理一段，用 1 即可
-                num_workers=1,
-                cpu_threads=self.cpu_threads,
-                download_root=_MODEL_DIR,
-            )
+            self._model = self._instantiate_model(WhisperModel, ct, cached)
 
             self._report_progress("ready", 100)
             logger.info("Faster-Whisper 模型加载完成")
@@ -339,6 +322,42 @@ class WhisperEngine:
             self._report_progress("error", 0)
         finally:
             self._loading = False
+
+    def _instantiate_model(self, whisper_model_cls, compute_type: str, cached: bool):
+        """
+        真正构造 WhisperModel
+
+        cached=True 时**强制离线加载**（local_files_only=True）：
+        安装包内置了 base 模型，用户首启可能完全没网 —— 此时
+        faster-whisper 默认会去 HF 校验元数据，网络不通就直接失败，
+        等于把「内置模型」这个卖点浪费了。
+        只有离线加载真的报错（例如缓存被改坏）时才回退到联网，
+        让它有机会自己修复。
+        """
+        common = dict(
+            device=self.device,
+            compute_type=compute_type,
+            # num_workers>1 会创建多份模型副本（每份数百 MB 内存），
+            # 那是为批量离线转写准备的；流式场景一次只处理一段，用 1 即可
+            num_workers=1,
+            cpu_threads=self.cpu_threads,
+            download_root=_MODEL_DIR,
+        )
+
+        if not cached:
+            return whisper_model_cls(self.model_size, **common)
+
+        try:
+            return whisper_model_cls(self.model_size, local_files_only=True, **common)
+        except Exception as exc:
+            logger.warning(
+                f"离线加载模型失败（{type(exc).__name__}: {exc}），回退联网加载以尝试修复缓存"
+            )
+            # 再给一次机会：从内置种子修复后重试
+            repaired = ensure_model(self.model_size, deep_check=True)
+            if repaired["action"] in ("seeded", "repaired"):
+                logger.info(f"已用内置模型修复缓存: {repaired['detail']}")
+            return whisper_model_cls(self.model_size, **common)
 
     def add_audio(self, audio: np.ndarray):
         """

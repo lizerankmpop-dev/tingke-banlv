@@ -21,4 +21,8 @@ backend/dictionary/_backup_batches/
 # PyInstaller 冻结后端的产物与中间目录（packaging/out/backend-server 约 200MB）
 packaging/out/
 packaging/build/
+
+# 内置模型种子（约 141MB 二进制，由 scripts/prepare_seed_model.py 生成，
+# 不入库；构建前需先执行该脚本）
+packaging/seed/
 *.spec.bak
