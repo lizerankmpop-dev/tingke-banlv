@@ -72,6 +72,46 @@ class AskRequest(BaseModel):
     courseId: str
 
 
+class PreviewTerminologyRequest(BaseModel):
+    domain: str = ""
+    customTerms: list[str] = []
+
+
+def _parse_custom_terms(course: dict) -> list[str]:
+    """
+    统一解析课程的自定义术语字段
+
+    背景：db._row_to_dict 会把 custom_terms 改名为 customTerms 并反序列化，
+    但历史代码有的读 custom_terms（已不存在）、有的读原始 JSON 字符串，
+    导致自定义术语实际被静默丢弃。这里统一收口。
+    """
+    value = course.get("customTerms")
+    if value is None:
+        value = course.get("custom_terms") or []
+
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, list):
+        return []
+
+    # 过滤空串与非字符串，避免污染 prompt
+    return [str(t).strip() for t in value if isinstance(t, str) and str(t).strip()]
+
+
+def _course_config_for_asr(course: dict) -> dict:
+    """构建 ASR 管道所需的课程配置（供轮询与 WebSocket 两条路径复用）"""
+    return {
+        "domain": course.get("domain", ""),
+        "custom_terms": _parse_custom_terms(course),
+        "name": course.get("name", ""),
+        "courseType": course.get("courseType", "online"),
+        "language": course.get("language", "auto"),
+    }
+
+
 # ============ 课程 API ============
 
 @router.get("/courses")
@@ -101,6 +141,11 @@ async def update_course(course_id: str, req: UpdateCourseRequest):
     result = await db.update_course(course_id, req.model_dump(exclude_none=True))
     if not result:
         raise HTTPException(status_code=404, detail="课程不存在")
+
+    # 自定义术语变更 → 热更新正在运行的 ASR 管道热词（无需重启监听）
+    if req.customTerms is not None and course_id in active_pipelines:
+        active_pipelines[course_id].update_terminology(req.customTerms)
+
     return result
 
 
@@ -292,12 +337,7 @@ async def ai_ask(req: AskRequest):
     context = " ".join(sub.get("text", "") for sub in reversed(subtitles))
 
     # 自定义术语（兼容 str/list 两种存储形态）
-    custom_terms = course.get("custom_terms", [])
-    if isinstance(custom_terms, str):
-        try:
-            custom_terms = json.loads(custom_terms)
-        except json.JSONDecodeError:
-            custom_terms = []
+    custom_terms = _parse_custom_terms(course)
 
     answer = await asyncio.to_thread(
         chat_qa.answer,
@@ -315,6 +355,76 @@ async def ai_ask(req: AskRequest):
         }
 
     return {"available": True, "answer": answer}
+
+
+# ============ 术语库 API ============
+
+@router.get("/courses/{course_id}/terminology")
+async def get_terminology(course_id: str):
+    """
+    课程术语库总览
+
+    返回三层术语（自定义 / 课程已识别 / 领域标准）+ 各自的释义覆盖情况，
+    供前端展示"本课会重点识别哪些词"，也用于诊断识别优化是否生效。
+    """
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    # 自定义术语：_row_to_dict 已把字段名转为 customTerms，但值是 JSON 字符串，需反序列化
+    custom_terms = _parse_custom_terms(course)
+
+    # 已识别术语：直接从词汇表取（这些词一定在课堂里出现过）
+    vocabulary = await db.get_vocabulary(course_id)
+    discovered = [v.get("word", "") for v in vocabulary if v.get("word")]
+
+    from dictionary.terminology import build_terminology
+    result = build_terminology(
+        domain=course.get("domain", ""),
+        custom_terms=custom_terms,
+        discovered_terms=discovered,
+    )
+
+    # 补充运行中管道的信息（若正在监听，热词是运行时的最新状态）
+    runtime = None
+    if course_id in active_pipelines:
+        try:
+            runtime = active_pipelines[course_id].get_terminology().get("stats")
+        except Exception:
+            runtime = None
+
+    return {
+        **result,
+        "courseVocabulary": len(vocabulary),
+        "runtime": runtime,
+    }
+
+
+@router.get("/terminology/domains")
+async def list_terminology_domains():
+    """列出内置术语库覆盖的领域及其术语数量（供课程创建时的领域选择参考）"""
+    from dictionary.terminology import DOMAIN_TERMS
+    return {
+        "domains": [
+            {"name": name, "termCount": len(terms)}
+            for name, terms in sorted(DOMAIN_TERMS.items(), key=lambda kv: -len(kv[1]))
+        ]
+    }
+
+
+@router.post("/terminology/preview")
+async def preview_terminology(req: PreviewTerminologyRequest):
+    """
+    术语库预览（不落库，纯计算）
+
+    用于课程配置页实时展示：切换领域 / 增删自定义术语时，
+    立即看到识别优化会覆盖哪些词、词库能直接给出释义的比例。
+    """
+    from dictionary.terminology import build_terminology
+    return build_terminology(
+        domain=req.domain,
+        custom_terms=req.customTerms,
+    )
 
 
 # ============ 音频设备检测 ============
@@ -404,13 +514,7 @@ async def start_asr(course_id: str = Query(...)):
 
     pipeline = ASRPipeline(
         course_id=course_id,
-        course_config={
-            "domain": course.get("domain", ""),
-            "custom_terms": json.loads(course.get("custom_terms", "[]")) if isinstance(course.get("custom_terms"), str) else course.get("custom_terms", []),
-            "name": course.get("name", ""),
-            "courseType": course.get("courseType", "online"),
-            "language": course.get("language", "auto"),
-        },
+        course_config=_course_config_for_asr(course),
         on_subtitle=lambda data: enqueue("subtitle", data),
         on_interim=lambda text, words: enqueue("interim", {"text": text, "words": words}),
         on_status=lambda status, msg: enqueue("asr_status", {"status": status, "message": msg}),
@@ -471,13 +575,7 @@ async def ws_asr(websocket: WebSocket, course_id: str = Query(...)):
     else:
         pipeline = ASRPipeline(
             course_id=course_id,
-            course_config={
-                "domain": course.get("domain", ""),
-                "custom_terms": json.loads(course.get("custom_terms", "[]")) if isinstance(course.get("custom_terms"), str) else course.get("custom_terms", []),
-                "name": course.get("name", ""),
-                "courseType": course.get("courseType", "online"),
-                "language": course.get("language", "auto"),
-            },
+            course_config=_course_config_for_asr(course),
             on_subtitle=lambda data: _safe_send(websocket, {"type": "subtitle", "data": data}),
             on_interim=lambda text, words: _safe_send(websocket, {"type": "interim", "data": {"text": text, "words": words}}),
             on_status=lambda status, msg: _safe_send(websocket, {"type": "asr_status", "data": {"status": status, "message": msg}}),

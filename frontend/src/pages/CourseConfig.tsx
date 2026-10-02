@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/useAppStore'
 import { useCourseStore } from '../stores/useCourseStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
-import { ArrowLeft, Play, Settings, BookOpen, Mic, Monitor, School, AlertTriangle, Languages } from 'lucide-react'
+import { ArrowLeft, Play, Settings, BookOpen, Mic, Monitor, School, AlertTriangle, Languages, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
 
 const DOMAINS = ['计算机科学', '医学', '生物学', '物理学', '数学', '化学', '法律', '经济学', '哲学', '历史', '文学', '其他']
 const LANGUAGES = [
@@ -22,6 +22,178 @@ interface LoopbackGuide {
   name: string
   url: string
   steps: string[]
+}
+
+interface TermEntry {
+  term: string
+  source: 'custom' | 'course' | 'domain'
+  inVocab: boolean
+  translation: string
+  definition: string
+}
+
+interface TermStats {
+  total: number
+  inVocab: number
+  custom: number
+  domain: number
+  coverage: number
+}
+
+/**
+ * 术语库预览
+ *
+ * 让用户在启动监听前就看到"这节课会重点识别哪些词"，
+ * 并实时反映自定义术语的增删 —— 把识别优化从"看不见的黑盒"变成可见的反馈。
+ */
+function TerminologyPreview({ domain, customTerms }: { domain: string; customTerms: string[] }) {
+  const [terms, setTerms] = useState<TermEntry[]>([])
+  const [stats, setStats] = useState<TermStats | null>(null)
+  const [promptChars, setPromptChars] = useState(0)
+  const [expanded, setExpanded] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  // 自定义术语变化后防抖 400ms 再请求，避免逐字符打字时频繁调用
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setLoading(true)
+      fetch('/api/terminology/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain, customTerms }),
+      })
+        .then(r => r.json())
+        .then(data => {
+          setTerms(data.terms || [])
+          setStats(data.stats || null)
+          setPromptChars(data.promptChars || 0)
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false))
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [domain, customTerms.join(',')])
+
+  if (!stats || stats.total === 0) return null
+
+  const customCount = stats.custom
+  const display = expanded ? terms : terms.slice(0, 8)
+
+  return (
+    <div style={termStyles.panel}>
+      <div style={termStyles.header}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Sparkles size={13} color="#00cec9" />
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+            识别优化已启用
+          </span>
+          {
+            loading &&
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>更新中…</span>
+          }
+        </div>
+        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          {stats.total} 个术语 · 词库覆盖 {Math.round(stats.coverage * 100)}%
+        </span>
+      </div>
+
+      <p style={termStyles.hint}>
+        {customCount > 0 && `${customCount} 个自定义术语优先识别；`}
+        系统已载入该领域术语表，将从字幕中自动匹配并加入生词本
+      </p>
+
+      <div style={termStyles.chips}>
+        {display.map(t => (
+          <span
+            key={t.term}
+            title={t.translation || t.definition || '点击字幕时由 AI 讲解'}
+            style={{
+              ...termStyles.chip,
+              ...(t.source === 'custom' ? termStyles.chipCustom : {}),
+            }}
+          >
+            {t.term}
+            {t.inVocab && t.translation
+              ? <span style={termStyles.chipTrans}>{t.translation}</span>
+              : <span style={termStyles.chipNoTrans}>AI</span>}
+          </span>
+        ))}
+      </div>
+
+      {terms.length > 8 && (
+        <button onClick={() => setExpanded(!expanded)} style={termStyles.toggle}>
+          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          {expanded ? '收起' : `展开全部 ${terms.length} 个`}
+        </button>
+      )}
+
+      <p style={termStyles.footer}>
+        术语先验 {promptChars} 字符 · 用于提升 Whisper 对专业词的识别准确率
+      </p>
+    </div>
+  )
+}
+
+const termStyles: Record<string, React.CSSProperties> = {
+  panel: {
+    marginTop: 14,
+    padding: '12px 14px',
+    borderRadius: 8,
+    background: 'rgba(0, 206, 201, 0.06)',
+    border: '1px solid rgba(0, 206, 201, 0.22)',
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  hint: {
+    fontSize: 11,
+    color: 'var(--text-secondary)',
+    lineHeight: 1.5,
+    margin: '0 0 8px',
+  },
+  chips: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  chip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '3px 8px',
+    borderRadius: 4,
+    fontSize: 11,
+    background: 'var(--bg-tertiary)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border-color)',
+  },
+  chipCustom: {
+    borderColor: 'rgba(0, 206, 201, 0.55)',
+    background: 'rgba(0, 206, 201, 0.12)',
+  },
+  chipTrans: { color: 'var(--text-secondary)', fontSize: 10 },
+  chipNoTrans: { color: '#00cec9', fontSize: 9, fontWeight: 700 },
+  toggle: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 8,
+    padding: 0,
+    background: 'none',
+    border: 'none',
+    color: '#00cec9',
+    fontSize: 11,
+    cursor: 'pointer',
+  },
+  footer: {
+    fontSize: 10,
+    color: 'var(--text-secondary)',
+    margin: '8px 0 0',
+    opacity: 0.75,
+  },
 }
 
 export default function CourseConfig() {
@@ -151,6 +323,11 @@ export default function CourseConfig() {
             placeholder="输入本课程的专业术语，用逗号分隔，如：gradient descent, 反向传播, 特征向量"
             style={{ ...styles.input, minHeight: 72, resize: 'vertical' }}
             rows={3}
+          />
+
+          <TerminologyPreview
+            domain={domain}
+            customTerms={customTerms.split(/[,，]/).map(t => t.trim()).filter(Boolean)}
           />
         </div>
 

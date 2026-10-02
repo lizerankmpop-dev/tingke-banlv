@@ -109,6 +109,7 @@ class WhisperEngine:
         language: str = "auto",
         on_partial: Optional[Callable[[str, list[WordTimestamp]], None]] = None,
         on_progress: Optional[Callable[[str, float], None]] = None,
+        initial_prompt: Optional[str] = None,
     ):
         self.model_size = model_size
         self.device = device
@@ -116,6 +117,11 @@ class WhisperEngine:
         self.language = language
         self.on_partial = on_partial
         self.on_progress = on_progress
+        # 术语热词先验：给 Whisper 一段领域术语文本，显著提升专业词拼写准确率
+        self.initial_prompt = (initial_prompt or "").strip() or None
+
+        # 多轮识别共享的"上一段文本"，让跨片段的术语拼写保持连贯
+        self._last_text: Optional[str] = None
 
         self._model = None
         self._loading = False
@@ -290,7 +296,8 @@ class WhisperEngine:
                 vad_parameters=dict(
                     min_silence_duration_ms=200,
                 ),
-                initial_prompt=None,          # 可注入课程术语
+                # 术语热词注入：领域术语 + 课程自定义术语
+                initial_prompt=self._build_prompt(),
                 condition_on_previous_text=True,
                 no_speech_threshold=0.4,
             )
@@ -322,6 +329,10 @@ class WhisperEngine:
                 if self.on_partial:
                     self.on_partial(segment_data.text, words)
 
+                # 记录本段文本，供下一轮识别作为连贯性提示
+                if segment_data.text:
+                    self._last_text = segment_data.text
+
             elapsed = time.time() - start_time
             rtf = elapsed / max(duration, 0.01)
             logger.debug(f"识别完成: {duration:.1f}s 音频 → {elapsed:.1f}s 处理 (RTF={rtf:.2f})")
@@ -333,6 +344,35 @@ class WhisperEngine:
         """等待所有待处理任务完成"""
         # 简化实现：等待一小段时间
         time.sleep(0.5)
+
+    def set_initial_prompt(self, prompt: str):
+        """
+        运行时更新术语热词（用户中途添加自定义术语时可热更新，无需重启管道）
+
+        注意：只在下一轮识别生效，不影响正在进行中的识别。
+        """
+        new_prompt = (prompt or "").strip() or None
+        if new_prompt != self.initial_prompt:
+            self.initial_prompt = new_prompt
+            logger.info(f"术语热词已更新 ({len(new_prompt or '')} 字符)")
+
+    def _build_prompt(self) -> Optional[str]:
+        """
+        组合 initial_prompt：术语热词 + 上一段识别文本
+
+        Whisper 的 initial_prompt 只有一段，所以这里做拼接；
+        上一段文本放在后面且截断，避免它把术语先验挤出去。
+        """
+        parts = []
+        if self.initial_prompt:
+            parts.append(self.initial_prompt)
+        if self._last_text:
+            # 只取尾部，保持最近语境；再长会挤占音频上下文
+            parts.append(self._last_text[-200:])
+
+        if not parts:
+            return None
+        return " ".join(parts)[:1000]
 
     def stop(self):
         """停止引擎"""

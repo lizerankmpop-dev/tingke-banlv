@@ -65,6 +65,17 @@ class TermExtractor:
         self.model = model
         self._available: Optional[bool] = None
 
+    def is_available_cached(self) -> bool:
+        """
+        查 LLM 是否可用（结果缓存，避免每条字幕都探测一次）
+
+        注意：探测结果一经确定为 False 会保持到进程重启；
+        若用户在运行中才启动 Ollama，重启后端即可恢复。
+        """
+        if self._available is None:
+            self._available = llm_available()
+        return self._available
+
     def extract_terms(
         self,
         text: str,
@@ -88,9 +99,7 @@ class TermExtractor:
             return []
 
         # 检查 LLM 可用性（结果缓存）
-        if self._available is None:
-            self._available = llm_available()
-        if not self._available:
+        if not self.is_available_cached():
             logger.warning("LLM 不可用，跳过术语提取")
             return []
 

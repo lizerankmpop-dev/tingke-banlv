@@ -12486,5 +12486,2733 @@
   "lymphatic system": {
     "translation": "淋巴系统",
     "definition": "fluid drainage network"
+  },
+  "moreover": {
+    "translation": "此外",
+    "definition": "as an additional point"
+  },
+  "furthermore": {
+    "translation": "而且",
+    "definition": "in addition to that"
+  },
+  "additionally": {
+    "translation": "另外",
+    "definition": "as something extra"
+  },
+  "in addition": {
+    "translation": "此外",
+    "definition": "as an extra factor"
+  },
+  "besides": {
+    "translation": "除此之外",
+    "definition": "in addition to mentioned"
+  },
+  "also": {
+    "translation": "也",
+    "definition": "in addition equally"
+  },
+  "likewise": {
+    "translation": "同样地",
+    "definition": "in the same way"
+  },
+  "similarly": {
+    "translation": "类似地",
+    "definition": "in a like manner"
+  },
+  "equally": {
+    "translation": "同样地",
+    "definition": "in equal measure"
+  },
+  "correspondingly": {
+    "translation": "相应地",
+    "definition": "in matching proportion"
+  },
+  "however": {
+    "translation": "然而",
+    "definition": "introducing contrast"
+  },
+  "nevertheless": {
+    "translation": "尽管如此",
+    "definition": "despite what was said"
+  },
+  "nonetheless": {
+    "translation": "仍然",
+    "definition": "even so despite it"
+  },
+  "yet": {
+    "translation": "然而",
+    "definition": "but at same time"
+  },
+  "still": {
+    "translation": "仍然",
+    "definition": "despite preceding point"
+  },
+  "although": {
+    "translation": "虽然",
+    "definition": "in spite of fact"
+  },
+  "though": {
+    "translation": "虽然",
+    "definition": "despite being true"
+  },
+  "even though": {
+    "translation": "即使",
+    "definition": "despite the fact that"
+  },
+  "whereas": {
+    "translation": "鉴于/然而",
+    "definition": "in contrast to fact"
+  },
+  "while": {
+    "translation": "虽然/当…时",
+    "definition": "during same time or contrast"
+  },
+  "whereas by contrast": {
+    "translation": "相比之下",
+    "definition": "opposite situation shown"
+  },
+  "in contrast": {
+    "translation": "相比之下",
+    "definition": "showing sharp difference"
+  },
+  "on the contrary": {
+    "translation": "恰恰相反",
+    "definition": "opposite is true"
+  },
+  "conversely": {
+    "translation": "反过来",
+    "definition": "in opposite manner"
+  },
+  "instead": {
+    "translation": "反而",
+    "definition": "as alternative choice"
+  },
+  "alternatively": {
+    "translation": "或者",
+    "definition": "offering another option"
+  },
+  "rather": {
+    "translation": "相当",
+    "definition": "to some extent"
+  },
+  "otherwise": {
+    "translation": "否则",
+    "definition": "in different circumstances"
+  },
+  "therefore": {
+    "translation": "因此",
+    "definition": "for that reason"
+  },
+  "thus": {
+    "translation": "因此",
+    "definition": "as a consequence"
+  },
+  "hence": {
+    "translation": "因此",
+    "definition": "as a logical result"
+  },
+  "consequently": {
+    "translation": "因此",
+    "definition": "as direct result"
+  },
+  "accordingly": {
+    "translation": "因此/相应地",
+    "definition": "in fitting manner"
+  },
+  "as a result": {
+    "translation": "结果",
+    "definition": "because of this"
+  },
+  "for this reason": {
+    "translation": "出于这个原因",
+    "definition": "due to stated cause"
+  },
+  "it follows that": {
+    "translation": "由此得出",
+    "definition": "conclusion logically comes"
+  },
+  "in conclusion": {
+    "translation": "总之",
+    "definition": "summarizing at end"
+  },
+  "to summarize": {
+    "translation": "总结一下",
+    "definition": "giving brief recap"
+  },
+  "to sum up": {
+    "translation": "总而言之",
+    "definition": "adding everything together"
+  },
+  "in short": {
+    "translation": "简言之",
+    "definition": "briefly stated"
+  },
+  "in brief": {
+    "translation": "简而言之",
+    "definition": "in few words"
+  },
+  "overall": {
+    "translation": "总体上",
+    "definition": "taking everything in view"
+  },
+  "on the whole": {
+    "translation": "大体上",
+    "definition": "generally considering all"
+  },
+  "by and large": {
+    "translation": "总体而言",
+    "definition": "in general terms"
+  },
+  "generally speaking": {
+    "translation": "一般来说",
+    "definition": "usually true statement"
+  },
+  "in general": {
+    "translation": "通常",
+    "definition": "as general rule"
+  },
+  "as a rule": {
+    "translation": "通常",
+    "definition": "normally the case"
+  },
+  "for the most part": {
+    "translation": "多半",
+    "definition": "mostly usually true"
+  },
+  "essentially": {
+    "translation": "本质上",
+    "definition": "at core fundamentally"
+  },
+  "basically": {
+    "translation": "基本上",
+    "definition": "fundamentally simply"
+  },
+  "fundamentally": {
+    "translation": "根本地",
+    "definition": "at deepest level"
+  },
+  "in essence": {
+    "translation": "实质上",
+    "definition": "at heart of matter"
+  },
+  "in effect": {
+    "translation": "实际上",
+    "definition": "in practical result"
+  },
+  "virtually": {
+    "translation": "几乎",
+    "definition": "nearly all cases"
+  },
+  "practically": {
+    "translation": "实际上",
+    "definition": "in real terms almost"
+  },
+  "in practice": {
+    "translation": "在实践中",
+    "definition": "as actually done"
+  },
+  "in theory": {
+    "translation": "理论上",
+    "definition": "as idealized model"
+  },
+  "in principle": {
+    "translation": "原则上",
+    "definition": "as general idea"
+  },
+  "to some extent": {
+    "translation": "在一定程度上",
+    "definition": "partly somewhat"
+  },
+  "to a certain degree": {
+    "translation": "某种程度上",
+    "definition": "partly limited"
+  },
+  "to a large extent": {
+    "translation": "在很大程度上",
+    "definition": "mostly greatly"
+  },
+  "to some degree": {
+    "translation": "某种程度上",
+    "definition": "somewhat partly"
+  },
+  "partly": {
+    "translation": "部分地",
+    "definition": "to partial extent"
+  },
+  "largely": {
+    "translation": "主要地",
+    "definition": "mostly mainly"
+  },
+  "mainly": {
+    "translation": "主要地",
+    "definition": "chiefly primarily"
+  },
+  "primarily": {
+    "translation": "首要地",
+    "definition": "first in importance"
+  },
+  "chiefly": {
+    "translation": "主要地",
+    "definition": "above all mainly"
+  },
+  "principally": {
+    "translation": "主要地",
+    "definition": "for the main part"
+  },
+  "predominantly": {
+    "translation": "主要地",
+    "definition": "mostly dominantly"
+  },
+  "notably": {
+    "translation": "值得注意的是",
+    "definition": "important to note"
+  },
+  "especially": {
+    "translation": "特别是",
+    "definition": "more than others"
+  },
+  "particularly": {
+    "translation": "尤其",
+    "definition": "to special degree"
+  },
+  "specifically": {
+    "translation": "具体地",
+    "definition": "in exact terms"
+  },
+  "in particular": {
+    "translation": "特别是",
+    "definition": "especially singled out"
+  },
+  "namely": {
+    "translation": "即",
+    "definition": "that is to say"
+  },
+  "that is to say": {
+    "translation": "也就是说",
+    "definition": "clarifying meaning"
+  },
+  "in other words": {
+    "translation": "换句话说",
+    "definition": "restating differently"
+  },
+  "put differently": {
+    "translation": "换个说法",
+    "definition": "expressed another way"
+  },
+  "to put it simply": {
+    "translation": "简单地说",
+    "definition": "in easy terms"
+  },
+  "to put it another way": {
+    "translation": "换个角度说",
+    "definition": "restated differently"
+  },
+  "i.e.": {
+    "translation": "即",
+    "definition": "that is abbreviation"
+  },
+  "e.g.": {
+    "translation": "例如",
+    "definition": "for example abbreviation"
+  },
+  "for instance": {
+    "translation": "例如",
+    "definition": "as an example"
+  },
+  "such as": {
+    "translation": "诸如",
+    "definition": "like these examples"
+  },
+  "including": {
+    "translation": "包括",
+    "definition": "having as part"
+  },
+  "among others": {
+    "translation": "其中等",
+    "definition": "one of several"
+  },
+  "etc.": {
+    "translation": "等等",
+    "definition": "and so on"
+  },
+  "and so on": {
+    "translation": "等等",
+    "definition": "continuing similarly"
+  },
+  "and so forth": {
+    "translation": "如此等等",
+    "definition": "and the rest"
+  },
+  "first of all": {
+    "translation": "首先",
+    "definition": "before anything else"
+  },
+  "to begin with": {
+    "translation": "首先",
+    "definition": "starting with this"
+  },
+  "firstly": {
+    "translation": "第一",
+    "definition": "first in order"
+  },
+  "secondly": {
+    "translation": "第二",
+    "definition": "second in order"
+  },
+  "thirdly": {
+    "translation": "第三",
+    "definition": "third in order"
+  },
+  "finally": {
+    "translation": "最后",
+    "definition": "after everything else"
+  },
+  "lastly": {
+    "translation": "最后",
+    "definition": "in final position"
+  },
+  "subsequently": {
+    "translation": "随后",
+    "definition": "afterward following"
+  },
+  "eventually": {
+    "translation": "最终",
+    "definition": "in the end finally"
+  },
+  "ultimately": {
+    "translation": "归根结底",
+    "definition": "at final level"
+  },
+  "meanwhile": {
+    "translation": "与此同时",
+    "definition": "during same time"
+  },
+  "in the meantime": {
+    "translation": "在此期间",
+    "definition": "while waiting"
+  },
+  "at the same time": {
+    "translation": "同时",
+    "definition": "simultaneously"
+  },
+  "simultaneously": {
+    "translation": "同时地",
+    "definition": "at exact same moment"
+  },
+  "previously": {
+    "translation": "此前",
+    "definition": "before this time"
+  },
+  "prior to": {
+    "translation": "在…之前",
+    "definition": "before stated event"
+  },
+  "afterwards": {
+    "translation": "之后",
+    "definition": "at later time"
+  },
+  "thereafter": {
+    "translation": "此后",
+    "definition": "from that time on"
+  },
+  "hitherto": {
+    "translation": "迄今",
+    "definition": "until this point"
+  },
+  "as yet": {
+    "translation": "至今",
+    "definition": "up until now"
+  },
+  "so far": {
+    "translation": "到目前为止",
+    "definition": "until present point"
+  },
+  "thus far": {
+    "translation": "迄今为止",
+    "definition": "up to this point"
+  },
+  "from now on": {
+    "translation": "从现在起",
+    "definition": "starting this moment"
+  },
+  "henceforth": {
+    "translation": "自此以后",
+    "definition": "from this time forward"
+  },
+  "nowadays": {
+    "translation": "如今",
+    "definition": "at present period"
+  },
+  "currently": {
+    "translation": "当前",
+    "definition": "at this present time"
+  },
+  "recently": {
+    "translation": "最近",
+    "definition": "not long ago time"
+  },
+  "lately": {
+    "translation": "近来",
+    "definition": "in recent period"
+  },
+  "formerly": {
+    "translation": "以前",
+    "definition": "in earlier time"
+  },
+  "originally": {
+    "translation": "最初",
+    "definition": "at first beginning"
+  },
+  "initially": {
+    "translation": "起初",
+    "definition": "at the beginning"
+  },
+  "gradually": {
+    "translation": "逐渐地",
+    "definition": "slowly over time"
+  },
+  "steadily": {
+    "translation": "稳步地",
+    "definition": "at consistent rate"
+  },
+  "increasingly": {
+    "translation": "日益",
+    "definition": "more and more"
+  },
+  "progressively": {
+    "translation": "渐进地",
+    "definition": "step by step advance"
+  },
+  "rapidly": {
+    "translation": "迅速地",
+    "definition": "with great speed"
+  },
+  "drastically": {
+    "translation": "大幅度地",
+    "definition": "in extreme measure"
+  },
+  "significantly": {
+    "translation": "显著地",
+    "definition": "in important amount"
+  },
+  "markedly": {
+    "translation": "明显地",
+    "definition": "in noticeable way"
+  },
+  "noticeably": {
+    "translation": "引人注目地",
+    "definition": "in visible degree"
+  },
+  "slightly": {
+    "translation": "略微",
+    "definition": "by small amount"
+  },
+  "marginally": {
+    "translation": "稍微",
+    "definition": "by tiny amount"
+  },
+  "somewhat": {
+    "translation": "有点",
+    "definition": "to moderate degree"
+  },
+  "fairly": {
+    "translation": "相当",
+    "definition": "to fair degree"
+  },
+  "quite": {
+    "translation": "相当",
+    "definition": "to noticeable degree"
+  },
+  "pretty much": {
+    "translation": "差不多",
+    "definition": "almost entirely"
+  },
+  "more or less": {
+    "translation": "或多或少",
+    "definition": "approximately somewhat"
+  },
+  "approximately": {
+    "translation": "大约",
+    "definition": "close to exact value"
+  },
+  "roughly": {
+    "translation": "粗略地",
+    "definition": "without exact detail"
+  },
+  "about": {
+    "translation": "大约",
+    "definition": "near to number"
+  },
+  "around": {
+    "translation": "左右",
+    "definition": "approximately near"
+  },
+  "precisely": {
+    "translation": "精确地",
+    "definition": "in exact manner"
+  },
+  "exactly": {
+    "translation": "确切地",
+    "definition": "with no difference"
+  },
+  "accurately": {
+    "translation": "准确地",
+    "definition": "with correctness"
+  },
+  "correctly": {
+    "translation": "正确地",
+    "definition": "in right manner"
+  },
+  "properly": {
+    "translation": "适当地",
+    "definition": "in correct way"
+  },
+  "appropriately": {
+    "translation": "恰当地",
+    "definition": "in suitable manner"
+  },
+  "presumably": {
+    "translation": "想必",
+    "definition": "as reasonably supposed"
+  },
+  "probably": {
+    "translation": "很可能",
+    "definition": "likely to happen"
+  },
+  "likely": {
+    "translation": "可能的",
+    "definition": "probable expected"
+  },
+  "possibly": {
+    "translation": "可能地",
+    "definition": "perhaps might happen"
+  },
+  "perhaps": {
+    "translation": "也许",
+    "definition": "possibly may be"
+  },
+  "maybe": {
+    "translation": "也许",
+    "definition": "perhaps it could"
+  },
+  "apparently": {
+    "translation": "显然",
+    "definition": "as seems evident"
+  },
+  "evidently": {
+    "translation": "可见",
+    "definition": "as shown plainly"
+  },
+  "obviously": {
+    "translation": "显然",
+    "definition": "easily seen true"
+  },
+  "clearly": {
+    "translation": "清楚地",
+    "definition": "in evident manner"
+  },
+  "undoubtedly": {
+    "translation": "毫无疑问",
+    "definition": "certainly true"
+  },
+  "certainly": {
+    "translation": "当然",
+    "definition": "with certainty"
+  },
+  "definitely": {
+    "translation": "肯定",
+    "definition": "without question"
+  },
+  "absolutely": {
+    "translation": "绝对地",
+    "definition": "completely totally"
+  },
+  "indeed": {
+    "translation": "确实",
+    "definition": "confirming truth"
+  },
+  "truly": {
+    "translation": "真正地",
+    "definition": "in truth really"
+  },
+  "genuinely": {
+    "translation": "真正地",
+    "definition": "sincerely authentic"
+  },
+  "arguably": {
+    "translation": "可以说",
+    "definition": "can reasonably claim"
+  },
+  "importantly": {
+    "translation": "重要的是",
+    "definition": "in significant way"
+  },
+  "interestingly": {
+    "translation": "有趣的是",
+    "definition": "in interesting manner"
+  },
+  "surprisingly": {
+    "translation": "令人惊讶的是",
+    "definition": "unexpectedly so"
+  },
+  "fortunately": {
+    "translation": "幸运的是",
+    "definition": "by good luck"
+  },
+  "unfortunately": {
+    "translation": "不幸的是",
+    "definition": "sadly regrettably"
+  },
+  "ironically": {
+    "translation": "讽刺的是",
+    "definition": "in ironic manner"
+  },
+  "paradoxically": {
+    "translation": "矛盾地",
+    "definition": "in contradictory way"
+  },
+  "strangely": {
+    "translation": "奇怪地",
+    "definition": "in odd manner"
+  },
+  "curiously": {
+    "translation": "奇怪地",
+    "definition": "arousing curiosity"
+  },
+  "admittedly": {
+    "translation": "诚然",
+    "definition": "must be admitted"
+  },
+  "granted": {
+    "translation": "固然",
+    "definition": "accepting the point"
+  },
+  "of course": {
+    "translation": "当然",
+    "definition": "naturally obviously"
+  },
+  "naturally": {
+    "translation": "自然地",
+    "definition": "as expected normally"
+  },
+  "needless to say": {
+    "translation": "不用说",
+    "definition": "obviously true"
+  },
+  "as we shall see": {
+    "translation": "我们将看到",
+    "definition": "point coming later"
+  },
+  "as mentioned earlier": {
+    "translation": "如前所述",
+    "definition": "referring back"
+  },
+  "as noted above": {
+    "translation": "如上所述",
+    "definition": "pointed out before"
+  },
+  "as we have seen": {
+    "translation": "如我们所见",
+    "definition": "already shown earlier"
+  },
+  "returning to the point": {
+    "translation": "回到要点",
+    "definition": "back to main topic"
+  },
+  "getting back to": {
+    "translation": "回到",
+    "definition": "resuming earlier subject"
+  },
+  "let me clarify": {
+    "translation": "让我澄清",
+    "definition": "speaker explaining point"
+  },
+  "keep in mind": {
+    "translation": "记住",
+    "definition": "remember this fact"
+  },
+  "bear in mind": {
+    "translation": "牢记",
+    "definition": "hold in consideration"
+  },
+  "note that": {
+    "translation": "注意",
+    "definition": "pay attention to"
+  },
+  "it is worth noting": {
+    "translation": "值得注意的是",
+    "definition": "deserving attention"
+  },
+  "it should be noted": {
+    "translation": "应当指出",
+    "definition": "important to mention"
+  },
+  "in other respects": {
+    "translation": "在其他方面",
+    "definition": "other aspects aside"
+  },
+  "with respect to": {
+    "translation": "关于",
+    "definition": "concerning this matter"
+  },
+  "with regard to": {
+    "translation": "就…而言",
+    "definition": "relating to subject"
+  },
+  "regarding": {
+    "translation": "关于",
+    "definition": "concerning topic"
+  },
+  "concerning": {
+    "translation": "关于",
+    "definition": "relating to matter"
+  },
+  "as for": {
+    "translation": "至于",
+    "definition": "turning to topic"
+  },
+  "in terms of": {
+    "translation": "就…而言",
+    "definition": "expressed by measure"
+  },
+  "in relation to": {
+    "translation": "相对于",
+    "definition": "connected with subject"
+  },
+  "in comparison with": {
+    "translation": "与…相比",
+    "definition": "measured against other"
+  },
+  "compared to": {
+    "translation": "与…相比",
+    "definition": "judged against reference"
+  },
+  "relative to": {
+    "translation": "相对于",
+    "definition": "in relation to base"
+  },
+  "as opposed to": {
+    "translation": "与…相对",
+    "definition": "in contrast against"
+  },
+  "rather than": {
+    "translation": "而不是",
+    "definition": "instead of choosing"
+  },
+  "instead of": {
+    "translation": "代替",
+    "definition": "in place of something"
+  },
+  "apart from": {
+    "translation": "除…之外",
+    "definition": "besides separately from"
+  },
+  "aside from": {
+    "translation": "除…以外",
+    "definition": "excluding or besides"
+  },
+  "except for": {
+    "translation": "除了",
+    "definition": "not including this"
+  },
+  "owing to": {
+    "translation": "由于",
+    "definition": "because of cause"
+  },
+  "due to": {
+    "translation": "由于",
+    "definition": "caused by factor"
+  },
+  "thanks to": {
+    "translation": "多亏了",
+    "definition": "because of good factor"
+  },
+  "as a consequence of": {
+    "translation": "由于…的结果",
+    "definition": "resulting from cause"
+  },
+  "by means of": {
+    "translation": "借助",
+    "definition": "through use of method"
+  },
+  "by virtue of": {
+    "translation": "凭借",
+    "definition": "because of quality"
+  },
+  "on the basis of": {
+    "translation": "基于",
+    "definition": "using as foundation"
+  },
+  "in light of": {
+    "translation": "鉴于",
+    "definition": "considering information"
+  },
+  "given that": {
+    "translation": "鉴于",
+    "definition": "taking as premise"
+  },
+  "provided that": {
+    "translation": "只要",
+    "definition": "on condition that"
+  },
+  "assuming that": {
+    "translation": "假设",
+    "definition": "taking as assumption"
+  },
+  "insofar as": {
+    "translation": "在…范围内",
+    "definition": "to the extent that"
+  },
+  "inasmuch as": {
+    "translation": "由于",
+    "definition": "in view of the fact"
+  },
+  "provided": {
+    "translation": "倘若",
+    "definition": "if condition holds"
+  },
+  "unless": {
+    "translation": "除非",
+    "definition": "except if condition"
+  },
+  "otherwise stated": {
+    "translation": "另有说明",
+    "definition": "differently phrased"
+  },
+  "broadly speaking": {
+    "translation": "广义地说",
+    "definition": "in general terms"
+  },
+  "strictly speaking": {
+    "translation": "严格说来",
+    "definition": "by exact definition"
+  },
+  "technically": {
+    "translation": "严格意义上",
+    "definition": "by technical definition"
+  },
+  "loosely speaking": {
+    "translation": "宽泛地说",
+    "definition": "imprecisely stated"
+  },
+  "stochastic": {
+    "translation": "随机的",
+    "definition": "Involving randomness or probability"
+  },
+  "orthogonality": {
+    "translation": "正交性",
+    "definition": "The property of being statistically or geometrically independent"
+  },
+  "canonical": {
+    "translation": "规范的",
+    "definition": "Following an accepted standard or the simplest standard form"
+  },
+  "degenerate": {
+    "translation": "退化的",
+    "definition": "A case where a general structure collapses to a simpler special form"
+  },
+  "unbounded": {
+    "translation": "无界的",
+    "definition": "Not limited by any finite bound"
+  },
+  "sparse": {
+    "translation": "稀疏的",
+    "definition": "Containing mostly zero or empty values"
+  },
+  "dense": {
+    "translation": "稠密的",
+    "definition": "Containing few zero values or covering space closely"
+  },
+  "contiguous": {
+    "translation": "连续的",
+    "definition": "Adjacent in sequence without gaps"
+  },
+  "recursive": {
+    "translation": "递归的",
+    "definition": "Defined in terms of itself, with a base case"
+  },
+  "iterative": {
+    "translation": "迭代的",
+    "definition": "Repeating a process to refine a result gradually"
+  },
+  "cumulative": {
+    "translation": "累积的",
+    "definition": "Increasing by successive additions"
+  },
+  "suboptimal": {
+    "translation": "次优的",
+    "definition": "Less than the best possible"
+  },
+  "amortized": {
+    "translation": "摊还的",
+    "definition": "Averaged over a sequence of operations rather than a single one"
+  },
+  "concurrent": {
+    "translation": "并发的",
+    "definition": "Happening at the same time, potentially interfering"
+  },
+  "sequential": {
+    "translation": "顺序的",
+    "definition": "Occurring in a specific order, one after another"
+  },
+  "hierarchical": {
+    "translation": "分层的",
+    "definition": "Arranged in a ranked or nested structure"
+  },
+  "modular": {
+    "translation": "模块化的",
+    "definition": "Composed of separate, interchangeable components"
+  },
+  "scalable": {
+    "translation": "可扩展的",
+    "definition": "Able to handle growth in size or load without redesign"
+  },
+  "prerequisite": {
+    "translation": "前提条件",
+    "definition": "Something required as a prior condition"
+  },
+  "postulate": {
+    "translation": "假设",
+    "definition": "A fundamental assumption taken as true"
+  },
+  "dichotomy": {
+    "translation": "二分法",
+    "definition": "A division into two sharply contrasting parts"
+  },
+  "nomenclature": {
+    "translation": "命名法",
+    "definition": "The system of names used in a particular field"
+  },
+  "bottleneck": {
+    "translation": "瓶颈",
+    "definition": "A point of congestion that limits overall performance"
+  },
+  "degree of freedom": {
+    "translation": "自由度",
+    "definition": "An independent parameter that can vary without violating constraints"
+  },
+  "matrix multiplication": {
+    "translation": "矩阵乘法",
+    "definition": "The operation combining two matrices to produce a third"
+  },
+  "singular": {
+    "translation": "奇异的",
+    "definition": "Lacking an inverse; having zero determinant"
+  },
+  "jacobian": {
+    "translation": "雅可比矩阵",
+    "definition": "The matrix of all first-order partial derivatives of a vector function"
+  },
+  "hessian": {
+    "translation": "海森矩阵",
+    "definition": "The square matrix of second-order partial derivatives"
+  },
+  "taylor series": {
+    "translation": "泰勒级数",
+    "definition": "An expansion of a function as an infinite sum of derivative terms"
+  },
+  "integrable": {
+    "translation": "可积的",
+    "definition": "Having a well-defined integral"
+  },
+  "monotonicity": {
+    "translation": "单调性",
+    "definition": "The property of consistently increasing or decreasing"
+  },
+  "inflection point": {
+    "translation": "拐点",
+    "definition": "A point where a curve changes from concave to convex or vice versa"
+  },
+  "stationary point": {
+    "translation": "驻点",
+    "definition": "A point where the derivative of a function is zero"
+  },
+  "saddle point": {
+    "translation": "鞍点",
+    "definition": "A stationary point that is a minimum in one direction and maximum in another"
+  },
+  "lagrange multiplier": {
+    "translation": "拉格朗日乘子",
+    "definition": "A method for finding extrema subject to equality constraints"
+  },
+  "lagrangian": {
+    "translation": "拉格朗日量",
+    "definition": "A function combining the objective and constraints in optimization"
+  },
+  "dual problem": {
+    "translation": "对偶问题",
+    "definition": "A reformulation of an optimization problem offering alternative solutions"
+  },
+  "primal": {
+    "translation": "原始的",
+    "definition": "The original optimization problem before transformation"
+  },
+  "cost function": {
+    "translation": "代价函数",
+    "definition": "A function measuring the error or expense of a solution"
+  },
+  "stochastic gradient descent": {
+    "translation": "随机梯度下降",
+    "definition": "Gradient descent using a random subset of data per step"
+  },
+  "cross validation": {
+    "translation": "交叉验证",
+    "definition": "A technique for assessing models by partitioning data into folds"
+  },
+  "bias variance tradeoff": {
+    "translation": "偏差方差权衡",
+    "definition": "The balance between a model's systematic error and its sensitivity to data"
+  },
+  "principal component": {
+    "translation": "主成分",
+    "definition": "A direction of maximum variance in the data"
+  },
+  "discount factor": {
+    "translation": "折扣因子",
+    "definition": "A parameter weighting future rewards relative to immediate ones"
+  },
+  "markov decision process": {
+    "translation": "马尔可夫决策过程",
+    "definition": "A framework for sequential decision-making under uncertainty"
+  },
+  "state space": {
+    "translation": "状态空间",
+    "definition": "The set of all possible states a system can occupy"
+  },
+  "transition probability": {
+    "translation": "转移概率",
+    "definition": "The probability of moving from one state to another"
+  },
+  "maximum likelihood": {
+    "translation": "最大似然",
+    "definition": "Estimating parameters by maximizing the probability of observed data"
+  },
+  "p value": {
+    "translation": "p 值",
+    "definition": "The probability of observing results as extreme, assuming the null hypothesis"
+  },
+  "type one error": {
+    "translation": "第一类错误",
+    "definition": "Rejecting a true null hypothesis"
+  },
+  "type two error": {
+    "translation": "第二类错误",
+    "definition": "Failing to reject a false null hypothesis"
+  },
+  "sample size": {
+    "translation": "样本量",
+    "definition": "The number of observations in a study"
+  },
+  "unbiased": {
+    "translation": "无偏的",
+    "definition": "Having an expected value equal to the true parameter"
+  },
+  "gaussian": {
+    "translation": "高斯的",
+    "definition": "Relating to the normal distribution"
+  },
+  "poisson": {
+    "translation": "泊松分布",
+    "definition": "The distribution of counts of rare events in a fixed interval"
+  },
+  "robust statistics": {
+    "translation": "稳健统计",
+    "definition": "Methods insensitive to outliers and distributional assumptions"
+  },
+  "resampling": {
+    "translation": "重采样",
+    "definition": "Drawing repeated samples from data to estimate variability"
+  },
+  "permutation test": {
+    "translation": "置换检验",
+    "definition": "A test comparing groups by randomly reassigning labels"
+  },
+  "monte carlo": {
+    "translation": "蒙特卡洛",
+    "definition": "Using random sampling to estimate numerical results"
+  },
+  "markov chain": {
+    "translation": "马尔可夫链",
+    "definition": "A sequence where the next state depends only on the current one"
+  },
+  "stationarity": {
+    "translation": "平稳性",
+    "definition": "The property of statistical properties remaining constant over time"
+  },
+  "moving average": {
+    "translation": "移动平均",
+    "definition": "An average computed over a sliding window of data"
+  },
+  "autoregressive": {
+    "translation": "自回归的",
+    "definition": "A model where a value depends on its own previous values"
+  },
+  "taxonomic": {
+    "translation": "分类学的",
+    "definition": "Relating to the classification of organisms or concepts"
+  },
+  "correlation does not imply causation": {
+    "translation": "相关不等于因果",
+    "definition": "Two variables moving together does not mean one causes the other"
+  },
+  "confounding": {
+    "translation": "混杂的",
+    "definition": "An extraneous variable influencing both cause and effect"
+  },
+  "double blind": {
+    "translation": "双盲的",
+    "definition": "A study where neither participants nor researchers know the assignment"
+  },
+  "randomized": {
+    "translation": "随机化的",
+    "definition": "Assigned to groups by chance to avoid bias"
+  },
+  "cross sectional": {
+    "translation": "横截面的",
+    "definition": "Observing a population at a single point in time"
+  },
+  "operationalize": {
+    "translation": "操作化",
+    "definition": "Defining a concept in terms of measurable operations"
+  },
+  "peer review": {
+    "translation": "同行评审",
+    "definition": "Evaluation of scholarly work by independent experts"
+  },
+  "literature review": {
+    "translation": "文献综述",
+    "definition": "A survey and synthesis of existing research on a topic"
+  },
+  "citation": {
+    "translation": "引用",
+    "definition": "A reference to a source of information"
+  },
+  "et al": {
+    "translation": "等人",
+    "definition": "And others; used in citations for additional authors"
+  },
+  "appendix": {
+    "translation": "附录",
+    "definition": "Supplementary material at the end of a document"
+  },
+  "footnote": {
+    "translation": "脚注",
+    "definition": "A note at the bottom of a page providing extra information"
+  },
+  "manuscript": {
+    "translation": "手稿",
+    "definition": "An author's original text submitted for publication"
+  },
+  "preprint": {
+    "translation": "预印本",
+    "definition": "A manuscript posted publicly before peer review"
+  },
+  "journal": {
+    "translation": "期刊",
+    "definition": "A periodical publishing scholarly articles"
+  },
+  "conference proceedings": {
+    "translation": "会议论文集",
+    "definition": "A collection of papers presented at an academic conference"
+  },
+  "impact factor": {
+    "translation": "影响因子",
+    "definition": "A metric reflecting the average citations of a journal's articles"
+  },
+  "grant": {
+    "translation": "科研经费",
+    "definition": "Funding awarded to support research"
+  },
+  "proposal": {
+    "translation": "研究计划",
+    "definition": "A document outlining planned research and its rationale"
+  },
+  "ethics committee": {
+    "translation": "伦理委员会",
+    "definition": "A body reviewing research for ethical compliance"
+  },
+  "anonymity": {
+    "translation": "匿名性",
+    "definition": "The condition of withholding participants' identities"
+  },
+  "confidentiality": {
+    "translation": "保密性",
+    "definition": "Protecting information from unauthorized disclosure"
+  },
+  "data set": {
+    "translation": "数据集",
+    "definition": "A collection of related data organized for analysis"
+  },
+  "metadata": {
+    "translation": "元数据",
+    "definition": "Data that describes other data"
+  },
+  "ablation study": {
+    "translation": "消融实验",
+    "definition": "Testing a system by removing components to measure their contribution"
+  },
+  "state of the art": {
+    "translation": "最先进水平",
+    "definition": "The highest level of achievement currently reached"
+  },
+  "deployment": {
+    "translation": "部署",
+    "definition": "Releasing a system into production use"
+  },
+  "production": {
+    "translation": "生产环境",
+    "definition": "The live environment serving real users"
+  },
+  "staging": {
+    "translation": "预发布环境",
+    "definition": "A testing environment mirroring production"
+  },
+  "regression test": {
+    "translation": "回归测试",
+    "definition": "Testing that changes did not break existing functionality"
+  },
+  "refactoring": {
+    "translation": "重构",
+    "definition": "Restructuring code without changing its external behavior"
+  },
+  "technical debt": {
+    "translation": "技术债",
+    "definition": "Future cost incurred by choosing quick solutions now"
+  },
+  "virtual machine": {
+    "translation": "虚拟机",
+    "definition": "A software emulation of a physical computer"
+  },
+  "microservice": {
+    "translation": "微服务",
+    "definition": "A small independently deployable service in an architecture"
+  },
+  "cache invalidation": {
+    "translation": "缓存失效",
+    "definition": "Removing or updating stale cached data"
+  },
+  "database index": {
+    "translation": "数据库索引",
+    "definition": "A data structure speeding up retrieval in a database"
+  },
+  "primary key": {
+    "translation": "主键",
+    "definition": "A column uniquely identifying each row in a table"
+  },
+  "foreign key": {
+    "translation": "外键",
+    "definition": "A column referencing the primary key of another table"
+  },
+  "partition tolerance": {
+    "translation": "分区容错性",
+    "definition": "A system's ability to function despite network partitions"
+  },
+  "eventual consistency": {
+    "translation": "最终一致性",
+    "definition": "A model where replicas converge to the same state over time"
+  },
+  "concurrency control": {
+    "translation": "并发控制",
+    "definition": "Mechanisms ensuring correct results with simultaneous operations"
+  },
+  "livelock": {
+    "translation": "活锁",
+    "definition": "A state where processes actively respond but make no progress"
+  },
+  "starvation": {
+    "translation": "饥饿",
+    "definition": "A situation where a process is indefinitely denied resources"
+  },
+  "critical section": {
+    "translation": "临界区",
+    "definition": "Code that must not be executed concurrently by multiple threads"
+  },
+  "context switch": {
+    "translation": "上下文切换",
+    "definition": "Saving and restoring state when switching between tasks"
+  },
+  "scheduling": {
+    "translation": "调度",
+    "definition": "Deciding the order and timing of task execution"
+  },
+  "interrupt": {
+    "translation": "中断",
+    "definition": "A signal causing the processor to pause and handle an event"
+  },
+  "system call": {
+    "translation": "系统调用",
+    "definition": "A program's request for a service from the operating system"
+  },
+  "paging": {
+    "translation": "分页",
+    "definition": "Managing memory in fixed-size blocks"
+  },
+  "thrashing": {
+    "translation": "抖动",
+    "definition": "Excessive paging degrading system performance"
+  },
+  "inode": {
+    "translation": "索引节点",
+    "definition": "A data structure storing metadata about a file"
+  },
+  "garbage collection": {
+    "translation": "垃圾回收",
+    "definition": "Automatic reclaiming of memory no longer in use"
+  },
+  "stack overflow": {
+    "translation": "栈溢出",
+    "definition": "Exceeding the call stack limit, usually from deep recursion"
+  },
+  "recursion depth": {
+    "translation": "递归深度",
+    "definition": "The number of nested recursive calls"
+  },
+  "tail recursion": {
+    "translation": "尾递归",
+    "definition": "Recursion where the call is the last operation, allowing optimization"
+  },
+  "dynamic programming": {
+    "translation": "动态规划",
+    "definition": "Solving problems by combining solutions to overlapping subproblems"
+  },
+  "greedy algorithm": {
+    "translation": "贪心算法",
+    "definition": "Making locally optimal choices hoping to reach a global optimum"
+  },
+  "divide and conquer": {
+    "translation": "分治法",
+    "definition": "Breaking a problem into independent subproblems and combining results"
+  },
+  "branch and bound": {
+    "translation": "分支限界法",
+    "definition": "Pruning search space using bounds on optimal solutions"
+  },
+  "heuristic search": {
+    "translation": "启发式搜索",
+    "definition": "Search guided by an estimate of distance to the goal"
+  },
+  "graph traversal": {
+    "translation": "图遍历",
+    "definition": "Systematically visiting all vertices of a graph"
+  },
+  "breadth first": {
+    "translation": "广度优先",
+    "definition": "Exploring all neighbors before going deeper"
+  },
+  "depth first": {
+    "translation": "深度优先",
+    "definition": "Exploring as far as possible before backtracking"
+  },
+  "shortest path": {
+    "translation": "最短路径",
+    "definition": "The path between two vertices with minimum total weight"
+  },
+  "minimum spanning tree": {
+    "translation": "最小生成树",
+    "definition": "A tree connecting all vertices with minimum total edge weight"
+  },
+  "topological sort": {
+    "translation": "拓扑排序",
+    "definition": "Ordering vertices so all edges point forward"
+  },
+  "strongly connected": {
+    "translation": "强连通的",
+    "definition": "Having a path between every ordered pair of vertices"
+  },
+  "adjacency matrix": {
+    "translation": "邻接矩阵",
+    "definition": "A matrix representing which vertices of a graph are adjacent"
+  },
+  "adjacency list": {
+    "translation": "邻接表",
+    "definition": "A list representation of a graph's edges"
+  },
+  "directed acyclic graph": {
+    "translation": "有向无环图",
+    "definition": "A directed graph with no cycles"
+  },
+  "hash collision": {
+    "translation": "哈希冲突",
+    "definition": "Two different inputs producing the same hash value"
+  },
+  "hash table": {
+    "translation": "哈希表",
+    "definition": "A data structure mapping keys to values via hashing"
+  },
+  "load factor": {
+    "translation": "负载因子",
+    "definition": "The ratio of stored elements to available buckets"
+  },
+  "binary search": {
+    "translation": "二分查找",
+    "definition": "Searching a sorted array by repeatedly halving the range"
+  },
+  "binary search tree": {
+    "translation": "二叉搜索树",
+    "definition": "A tree where left children are smaller and right are larger"
+  },
+  "balanced tree": {
+    "translation": "平衡树",
+    "definition": "A tree maintaining logarithmic height"
+  },
+  "red black tree": {
+    "translation": "红黑树",
+    "definition": "A self-balancing binary search tree with color properties"
+  },
+  "b tree": {
+    "translation": "B 树",
+    "definition": "A self-balancing tree optimized for disk access"
+  },
+  "priority queue": {
+    "translation": "优先队列",
+    "definition": "A queue where elements are served by priority"
+  },
+  "abstract data type": {
+    "translation": "抽象数据类型",
+    "definition": "A data type defined by its operations, not its implementation"
+  },
+  "dependency injection": {
+    "translation": "依赖注入",
+    "definition": "Supplying an object's dependencies from outside rather than creating them"
+  },
+  "design pattern": {
+    "translation": "设计模式",
+    "definition": "A reusable solution to a common software design problem"
+  },
+  "singleton": {
+    "translation": "单例模式",
+    "definition": "A pattern restricting a class to a single instance"
+  },
+  "factory": {
+    "translation": "工厂模式",
+    "definition": "A pattern delegating object creation to subclasses or a method"
+  },
+  "observer": {
+    "translation": "观察者模式",
+    "definition": "A pattern where objects notify dependents of state changes"
+  },
+  "singleton pattern": {
+    "translation": "单例模式",
+    "definition": "Ensuring a class has exactly one instance with global access"
+  },
+  "thread safe": {
+    "translation": "线程安全的",
+    "definition": "Correctly handling concurrent access from multiple threads"
+  },
+  "type inference": {
+    "translation": "类型推断",
+    "definition": "Automatically deducing types without explicit annotations"
+  },
+  "compilation": {
+    "translation": "编译",
+    "definition": "Translating source code into machine or intermediate code"
+  },
+  "just in time": {
+    "translation": "即时编译",
+    "definition": "Compiling code at runtime for performance"
+  },
+  "parser": {
+    "translation": "解析器",
+    "definition": "A component analyzing the syntactic structure of input"
+  },
+  "lexer": {
+    "translation": "词法分析器",
+    "definition": "A component converting characters into tokens"
+  },
+  "abstract syntax tree": {
+    "translation": "抽象语法树",
+    "definition": "A tree representation of the syntactic structure of code"
+  },
+  "closure": {
+    "translation": "闭包",
+    "definition": "A function capturing variables from its enclosing scope"
+  },
+  "higher order function": {
+    "translation": "高阶函数",
+    "definition": "A function taking or returning other functions"
+  },
+  "lambda": {
+    "translation": "匿名函数",
+    "definition": "A function defined without a name"
+  },
+  "asynchronous": {
+    "translation": "异步的",
+    "definition": "Not blocking execution while waiting for a result"
+  },
+  "synchronous": {
+    "translation": "同步的",
+    "definition": "Blocking until an operation completes"
+  },
+  "api": {
+    "translation": "应用程序接口",
+    "definition": "A defined interface for software components to interact"
+  },
+  "endpoint": {
+    "translation": "端点",
+    "definition": "A specific URL where an API can be accessed"
+  },
+  "json": {
+    "translation": "JSON",
+    "definition": "A lightweight human-readable data interchange format"
+  },
+  "handshake": {
+    "translation": "握手",
+    "definition": "An initial exchange establishing a connection"
+  },
+  "payload": {
+    "translation": "有效载荷",
+    "definition": "The actual data carried in a transmission"
+  },
+  "header": {
+    "translation": "报文头",
+    "definition": "Metadata preceding the body of a message"
+  },
+  "key exchange": {
+    "translation": "密钥交换",
+    "definition": "A method for two parties to establish a shared secret"
+  },
+  "dissertation": {
+    "translation": "博士论文",
+    "definition": "A substantial piece of original research for a doctoral degree"
+  },
+  "monograph": {
+    "translation": "专著",
+    "definition": "A detailed scholarly book on a single subject"
+  },
+  "anthology": {
+    "translation": "文集",
+    "definition": "A collection of literary works or essays"
+  },
+  "treatise": {
+    "translation": "论著",
+    "definition": "A formal and systematic written exposition of a subject"
+  },
+  "semantics analysis": {
+    "translation": "语义分析",
+    "definition": "Examining the meaning of language or data"
+  },
+  "pragmatics": {
+    "translation": "语用学",
+    "definition": "The study of language use in context"
+  },
+  "phonetics": {
+    "translation": "语音学",
+    "definition": "The study of speech sounds and their production"
+  },
+  "phonology": {
+    "translation": "音系学",
+    "definition": "The study of how sounds function within a language"
+  },
+  "morphology": {
+    "translation": "形态学",
+    "definition": "The study of word structure and formation"
+  },
+  "etymology": {
+    "translation": "词源学",
+    "definition": "The study of the origin and history of words"
+  },
+  "lexicon": {
+    "translation": "词汇",
+    "definition": "The complete vocabulary of a language or field"
+  },
+  "orthography": {
+    "translation": "正字法",
+    "definition": "The conventional spelling system of a language"
+  },
+  "discourse": {
+    "translation": "话语",
+    "definition": "Written or spoken communication considered in context"
+  },
+  "analogy": {
+    "translation": "类比",
+    "definition": "A comparison drawn between two things to explain or clarify"
+  },
+  "subtext": {
+    "translation": "潜台词",
+    "definition": "The underlying meaning beneath the surface of a text"
+  },
+  "aesthetic": {
+    "translation": "美学的",
+    "definition": "Concerned with beauty or the appreciation of art"
+  },
+  "avant garde": {
+    "translation": "先锋派",
+    "definition": "Experimental art pushing the boundaries of convention"
+  },
+  "baroque": {
+    "translation": "巴洛克风格",
+    "definition": "A highly ornate style of art, architecture, and music"
+  },
+  "normative": {
+    "translation": "规范的",
+    "definition": "Establishing or relating to standards of correctness"
+  },
+  "relativism": {
+    "translation": "相对主义",
+    "definition": "The view that knowledge and truth depend on perspective"
+  },
+  "cogent": {
+    "translation": "有说服力的",
+    "definition": "Compelling and convincing in argument"
+  },
+  "congruent": {
+    "translation": "一致的",
+    "definition": "In agreement or harmony with something else"
+  },
+  "nuance": {
+    "translation": "细微差别",
+    "definition": "A subtle distinction or variation"
+  },
+  "connotation": {
+    "translation": "内涵",
+    "definition": "An idea suggested by a word beyond its literal meaning"
+  },
+  "denotation": {
+    "translation": "字面意义",
+    "definition": "The literal or primary meaning of a word"
+  },
+  "taxonomy of": {
+    "translation": "分类体系",
+    "definition": "A systematic classification of a domain"
+  },
+  "order of magnitude": {
+    "translation": "数量级",
+    "definition": "A scale of values differing by a factor of ten"
+  },
+  "logarithmic": {
+    "translation": "对数的",
+    "definition": "Growing at a rate inversely proportional to the value"
+  },
+  "proportional": {
+    "translation": "成正比的",
+    "definition": "Changing at a constant ratio to another quantity"
+  },
+  "prime": {
+    "translation": "质数",
+    "definition": "A natural number greater than one with no divisors other than one and itself"
+  },
+  "divisor": {
+    "translation": "除数",
+    "definition": "A number dividing another without remainder"
+  },
+  "congruence": {
+    "translation": "同余",
+    "definition": "A relation where two numbers have the same remainder"
+  },
+  "induction proof": {
+    "translation": "归纳证明",
+    "definition": "Proving a statement for all naturals by base case and inductive step"
+  },
+  "cartesian product": {
+    "translation": "笛卡尔积",
+    "definition": "The set of all ordered pairs from two sets"
+  },
+  "equivalence relation": {
+    "translation": "等价关系",
+    "definition": "A relation that is reflexive, symmetric, and transitive"
+  },
+  "partial order": {
+    "translation": "偏序",
+    "definition": "A relation that is reflexive, antisymmetric, and transitive"
+  },
+  "homomorphism": {
+    "translation": "同态",
+    "definition": "A structure-preserving map between algebraic structures"
+  },
+  "topological space": {
+    "translation": "拓扑空间",
+    "definition": "A set with a collection of open subsets satisfying axioms"
+  },
+  "compactness": {
+    "translation": "紧致性",
+    "definition": "The property that every open cover has a finite subcover"
+  },
+  "connectedness": {
+    "translation": "连通性",
+    "definition": "The property of not being separable into disjoint open sets"
+  },
+  "cauchy sequence": {
+    "translation": "柯西序列",
+    "definition": "A sequence whose terms become arbitrarily close together"
+  },
+  "complete space": {
+    "translation": "完备空间",
+    "definition": "A metric space where every Cauchy sequence converges"
+  },
+  "hilbert space": {
+    "translation": "希尔伯特空间",
+    "definition": "A complete inner product space"
+  },
+  "banach space": {
+    "translation": "巴拿赫空间",
+    "definition": "A complete normed vector space"
+  },
+  "fourier transform": {
+    "translation": "傅里叶变换",
+    "definition": "A transform decomposing a function into frequencies"
+  },
+  "laplace transform": {
+    "translation": "拉普拉斯变换",
+    "definition": "An integral transform useful for solving differential equations"
+  },
+  "numerical analysis": {
+    "translation": "数值分析",
+    "definition": "The study of algorithms for approximating mathematical problems"
+  },
+  "discretization": {
+    "translation": "离散化",
+    "definition": "Converting continuous models into discrete approximations"
+  },
+  "convergence criterion": {
+    "translation": "收敛准则",
+    "definition": "A condition determining when an iterative method stops"
+  },
+  "deterministic model": {
+    "translation": "确定性模型",
+    "definition": "A model with no randomness in its outputs"
+  },
+  "state variable": {
+    "translation": "状态变量",
+    "definition": "A variable describing the condition of a system"
+  },
+  "feedback loop": {
+    "translation": "反馈回路",
+    "definition": "A path where a system's output influences its input"
+  },
+  "frequency response": {
+    "translation": "频率响应",
+    "definition": "How a system responds to different input frequencies"
+  },
+  "transfer function": {
+    "translation": "传递函数",
+    "definition": "The ratio of output to input in the Laplace domain"
+  },
+  "servo": {
+    "translation": "伺服",
+    "definition": "A mechanism providing precise control of position or velocity"
+  },
+  "pid controller": {
+    "translation": "PID 控制器",
+    "definition": "A control loop combining proportional, integral, and derivative terms"
+  },
+  "setpoint": {
+    "translation": "设定值",
+    "definition": "The desired value a control system aims to maintain"
+  },
+  "response time": {
+    "translation": "响应时间",
+    "definition": "The time taken to react to a stimulus"
+  },
+  "error margin": {
+    "translation": "误差裕度",
+    "definition": "The allowable deviation from a target value"
+  },
+  "dimensional analysis": {
+    "translation": "量纲分析",
+    "definition": "Using units to check equations and derive relationships"
+  },
+  "si unit": {
+    "translation": "国际单位制",
+    "definition": "The standard system of measurement units"
+  },
+  "derived unit": {
+    "translation": "导出单位",
+    "definition": "A unit formed by combining base units"
+  },
+  "reynolds number": {
+    "translation": "雷诺数",
+    "definition": "A dimensionless quantity predicting flow regimes"
+  },
+  "bernoulli": {
+    "translation": "伯努利",
+    "definition": "Relating fluid pressure and velocity along a streamline"
+  },
+  "hydrostatic": {
+    "translation": "流体静力的",
+    "definition": "Relating to fluids at rest"
+  },
+  "thermal expansion": {
+    "translation": "热膨胀",
+    "definition": "The tendency of matter to change volume with temperature"
+  },
+  "reversible process": {
+    "translation": "可逆过程",
+    "definition": "An idealized process that can be reversed without loss"
+  },
+  "irreversible": {
+    "translation": "不可逆的",
+    "definition": "A process that cannot be reversed without external work"
+  },
+  "second law": {
+    "translation": "热力学第二定律",
+    "definition": "The principle that entropy of an isolated system never decreases"
+  },
+  "carnot cycle": {
+    "translation": "卡诺循环",
+    "definition": "An idealized thermodynamic cycle with maximum efficiency"
+  },
+  "gauss law": {
+    "translation": "高斯定律",
+    "definition": "Relating electric flux through a surface to enclosed charge"
+  },
+  "faraday law": {
+    "translation": "法拉第定律",
+    "definition": "Relating changing magnetic flux to induced electromotive force"
+  },
+  "ohm law": {
+    "translation": "欧姆定律",
+    "definition": "Relating voltage, current, and resistance"
+  },
+  "rectifier": {
+    "translation": "整流器",
+    "definition": "A device converting alternating current to direct current"
+  },
+  "planck constant": {
+    "translation": "普朗克常数",
+    "definition": "The fundamental constant relating energy and frequency"
+  },
+  "spin": {
+    "translation": "自旋",
+    "definition": "An intrinsic form of angular momentum in particles"
+  },
+  "half life": {
+    "translation": "半衰期",
+    "definition": "The time for half a radioactive substance to decay"
+  },
+  "binding energy": {
+    "translation": "结合能",
+    "definition": "The energy required to disassemble a nucleus"
+  },
+  "inertial frame": {
+    "translation": "惯性参考系",
+    "definition": "A frame where Newton's laws hold without fictitious forces"
+  },
+  "doppler effect": {
+    "translation": "多普勒效应",
+    "definition": "The change in observed frequency due to relative motion"
+  },
+  "refractive index": {
+    "translation": "折射率",
+    "definition": "The ratio of light speed in vacuum to that in a medium"
+  },
+  "coherent light": {
+    "translation": "相干光",
+    "definition": "Light waves with a constant phase relationship"
+  },
+  "endoplasmic reticulum": {
+    "translation": "内质网",
+    "definition": "A membrane network involved in protein and lipid synthesis"
+  },
+  "golgi apparatus": {
+    "translation": "高尔基体",
+    "definition": "The organelle modifying and packaging proteins"
+  },
+  "lysosome": {
+    "translation": "溶酶体",
+    "definition": "An organelle containing digestive enzymes"
+  },
+  "dna": {
+    "translation": "脱氧核糖核酸",
+    "definition": "The molecule carrying genetic instructions"
+  },
+  "rna": {
+    "translation": "核糖核酸",
+    "definition": "A molecule involved in coding, decoding, and expressing genes"
+  },
+  "analgesic": {
+    "translation": "镇痛药",
+    "definition": "A drug relieving pain"
+  },
+  "dose": {
+    "translation": "剂量",
+    "definition": "The quantity of a therapeutic agent administered"
+  },
+  "prescription": {
+    "translation": "处方",
+    "definition": "A physician's written order for medication"
+  },
+  "comorbidity": {
+    "translation": "合并症",
+    "definition": "The presence of additional conditions alongside a primary one"
+  },
+  "atherosclerosis": {
+    "translation": "动脉粥样硬化",
+    "definition": "Hardening of arteries due to plaque buildup"
+  },
+  "respiratory": {
+    "translation": "呼吸的",
+    "definition": "Relating to breathing and the lungs"
+  },
+  "cognitive": {
+    "translation": "认知的",
+    "definition": "Relating to thinking, learning, and understanding"
+  },
+  "dementia": {
+    "translation": "痴呆",
+    "definition": "A decline in cognitive function affecting daily life"
+  },
+  "psychiatric": {
+    "translation": "精神病学的",
+    "definition": "Relating to mental disorders"
+  },
+  "radiography": {
+    "translation": "放射摄影",
+    "definition": "Imaging using X-rays"
+  },
+  "magnetic resonance": {
+    "translation": "磁共振",
+    "definition": "Imaging using magnetic fields and radio waves"
+  },
+  "endoscopy": {
+    "translation": "内窥镜检查",
+    "definition": "Visual examination of internal structures using a flexible tube"
+  },
+  "aggregate demand": {
+    "translation": "总需求",
+    "definition": "The total demand for goods and services in an economy"
+  },
+  "aggregate supply": {
+    "translation": "总供给",
+    "definition": "The total supply of goods and services in an economy"
+  },
+  "supply and demand": {
+    "translation": "供给与需求",
+    "definition": "The relationship determining prices in a market"
+  },
+  "comparative advantage": {
+    "translation": "比较优势",
+    "definition": "The ability to produce at lower opportunity cost"
+  },
+  "absolute advantage": {
+    "translation": "绝对优势",
+    "definition": "The ability to produce more with the same resources"
+  },
+  "market failure": {
+    "translation": "市场失灵",
+    "definition": "A situation where markets allocate resources inefficiently"
+  },
+  "public good": {
+    "translation": "公共物品",
+    "definition": "A good that is non-excludable and non-rivalrous"
+  },
+  "asymmetric information": {
+    "translation": "信息不对称",
+    "definition": "A situation where parties have unequal information"
+  },
+  "moral hazard": {
+    "translation": "道德风险",
+    "definition": "Taking greater risks because costs are borne by others"
+  },
+  "adverse selection": {
+    "translation": "逆向选择",
+    "definition": "A market distortion where quality suffers due to information gaps"
+  },
+  "gini coefficient": {
+    "translation": "基尼系数",
+    "definition": "A measure of income inequality"
+  },
+  "labor force": {
+    "translation": "劳动力",
+    "definition": "The population available for work"
+  },
+  "discounted cash flow": {
+    "translation": "现金流折现",
+    "definition": "Valuing an asset by discounting future cash flows"
+  },
+  "net present value": {
+    "translation": "净现值",
+    "definition": "The difference between present value of inflows and outflows"
+  },
+  "internal rate of return": {
+    "translation": "内部收益率",
+    "definition": "The discount rate making net present value zero"
+  },
+  "bull market": {
+    "translation": "牛市",
+    "definition": "A market characterized by rising prices"
+  },
+  "bear market": {
+    "translation": "熊市",
+    "definition": "A market characterized by falling prices"
+  },
+  "market capitalization": {
+    "translation": "市值",
+    "definition": "The total value of a company's shares"
+  },
+  "beta coefficient": {
+    "translation": "贝塔系数",
+    "definition": "A measure of an asset's volatility relative to the market"
+  },
+  "credit default swap": {
+    "translation": "信用违约互换",
+    "definition": "A contract transferring credit risk"
+  },
+  "expense": {
+    "translation": "费用",
+    "definition": "Costs incurred in generating revenue"
+  },
+  "return on investment": {
+    "translation": "投资回报率",
+    "definition": "The gain from an investment relative to its cost"
+  },
+  "break even": {
+    "translation": "盈亏平衡",
+    "definition": "The point where total revenue equals total cost"
+  },
+  "market segmentation": {
+    "translation": "市场细分",
+    "definition": "Dividing a market into distinct consumer groups"
+  },
+  "swot analysis": {
+    "translation": "SWOT 分析",
+    "definition": "Evaluating strengths, weaknesses, opportunities, and threats"
+  },
+  "breach of contract": {
+    "translation": "违约",
+    "definition": "Failure to fulfill a contractual obligation"
+  },
+  "legislation": {
+    "translation": "立法",
+    "definition": "Laws enacted by a governing body"
+  },
+  "mitigation": {
+    "translation": "减缓",
+    "definition": "Actions reducing the severity of something"
+  },
+  "watershed": {
+    "translation": "流域",
+    "definition": "An area draining into a common body of water"
+  },
+  "aquifer": {
+    "translation": "含水层",
+    "definition": "An underground layer holding groundwater"
+  },
+  "lithosphere": {
+    "translation": "岩石圈",
+    "definition": "The rigid outer layer of a planet"
+  },
+  "tectonic": {
+    "translation": "构造的",
+    "definition": "Relating to the structure of the earth's crust"
+  },
+  "seismic": {
+    "translation": "地震的",
+    "definition": "Relating to earthquakes or earth vibration"
+  },
+  "magnitude scale": {
+    "translation": "震级",
+    "definition": "A measure of earthquake energy"
+  },
+  "albedo": {
+    "translation": "反照率",
+    "definition": "The proportion of light reflected by a surface"
+  },
+  "radiative forcing": {
+    "translation": "辐射强迫",
+    "definition": "The change in energy balance caused by a factor"
+  },
+  "climate model": {
+    "translation": "气候模型",
+    "definition": "A mathematical simulation of the climate system"
+  },
+  "paleoclimate": {
+    "translation": "古气候",
+    "definition": "The climate of periods before instrumental records"
+  },
+  "aphelion": {
+    "translation": "远日点",
+    "definition": "The point in an orbit farthest from the sun"
+  },
+  "perihelion": {
+    "translation": "近日点",
+    "definition": "The point in an orbit closest to the sun"
+  },
+  "eclipse": {
+    "translation": "食",
+    "definition": "The obscuring of one celestial body by another"
+  },
+  "stellar": {
+    "translation": "恒星的",
+    "definition": "Relating to stars"
+  },
+  "hubble constant": {
+    "translation": "哈勃常数",
+    "definition": "The rate of expansion of the universe"
+  },
+  "event horizon": {
+    "translation": "事件视界",
+    "definition": "The boundary beyond which escape is impossible"
+  },
+  "lecture": {
+    "translation": "讲座",
+    "definition": "An educational talk given to an audience or class"
+  },
+  "seminar": {
+    "translation": "研讨会",
+    "definition": "A class or meeting for discussion of a subject"
+  },
+  "tutorial": {
+    "translation": "辅导课",
+    "definition": "A small-group teaching session with practical guidance"
+  },
+  "workshop": {
+    "translation": "工作坊",
+    "definition": "A practical session focused on a specific skill"
+  },
+  "assignment": {
+    "translation": "作业",
+    "definition": "A task given to students as part of their studies"
+  },
+  "deadline": {
+    "translation": "截止日期",
+    "definition": "The latest time by which something must be completed"
+  },
+  "exam": {
+    "translation": "考试",
+    "definition": "A formal test of knowledge or ability"
+  },
+  "quiz": {
+    "translation": "小测验",
+    "definition": "A short informal test"
+  },
+  "grade": {
+    "translation": "成绩",
+    "definition": "A mark indicating the quality of work"
+  },
+  "credits": {
+    "translation": "学分",
+    "definition": "Units measuring completion of coursework"
+  },
+  "prerequisite course": {
+    "translation": "先修课程",
+    "definition": "A course required before taking another"
+  },
+  "office hours": {
+    "translation": "答疑时间",
+    "definition": "Scheduled times when instructors are available to students"
+  },
+  "handout": {
+    "translation": "讲义",
+    "definition": "Printed material distributed to students"
+  },
+  "textbook": {
+    "translation": "教科书",
+    "definition": "A book used as a standard source of study"
+  },
+  "reading list": {
+    "translation": "参考书目",
+    "definition": "A list of materials to be read for a course"
+  },
+  "results": {
+    "translation": "结果",
+    "definition": "The outcomes obtained from a study or experiment"
+  },
+  "discussion section": {
+    "translation": "讨论部分",
+    "definition": "The part interpreting results and their meaning"
+  },
+  "future work": {
+    "translation": "未来工作",
+    "definition": "Directions suggested for further research"
+  },
+  "contribution": {
+    "translation": "贡献",
+    "definition": "The novel addition a study makes to knowledge"
+  },
+  "subtraction": {
+    "translation": "减法",
+    "definition": "The operation of taking one quantity from another"
+  },
+  "multiplication": {
+    "translation": "乘法",
+    "definition": "The operation of repeated addition"
+  },
+  "division": {
+    "translation": "除法",
+    "definition": "The operation of splitting into equal parts"
+  },
+  "decimal": {
+    "translation": "小数",
+    "definition": "A number expressed in base ten with a decimal point"
+  },
+  "equation": {
+    "translation": "方程",
+    "definition": "A statement that two expressions are equal"
+  },
+  "formula": {
+    "translation": "公式",
+    "definition": "A mathematical relationship expressed symbolically"
+  },
+  "derivation": {
+    "translation": "推导",
+    "definition": "The process of obtaining a result from first principles"
+  },
+  "upper bound": {
+    "translation": "上界",
+    "definition": "A value no element of a set exceeds"
+  },
+  "lower bound": {
+    "translation": "下界",
+    "definition": "A value no element of a set falls below"
+  },
+  "matter": {
+    "translation": "物质",
+    "definition": "Anything with mass and occupying space"
+  },
+  "force": {
+    "translation": "力",
+    "definition": "An interaction changing an object's motion"
+  },
+  "reaction": {
+    "translation": "反应",
+    "definition": "A process where substances are transformed"
+  },
+  "neutralization": {
+    "translation": "中和",
+    "definition": "A reaction between an acid and a base forming salt and water"
+  },
+  "redox": {
+    "translation": "氧化还原",
+    "definition": "A reaction involving simultaneous oxidation and reduction"
+  },
+  "molar mass": {
+    "translation": "摩尔质量",
+    "definition": "The mass of one mole of a substance"
+  },
+  "crystallization": {
+    "translation": "结晶",
+    "definition": "Formation of a solid with ordered structure from solution"
+  },
+  "activation energy": {
+    "translation": "活化能",
+    "definition": "The minimum energy required for a reaction to occur"
+  },
+  "gibbs free energy": {
+    "translation": "吉布斯自由能",
+    "definition": "A quantity determining reaction spontaneity"
+  },
+  "bar chart": {
+    "translation": "柱状图",
+    "definition": "A chart using bars to compare categories"
+  },
+  "line graph": {
+    "translation": "折线图",
+    "definition": "A chart connecting data points with lines"
+  },
+  "pie chart": {
+    "translation": "饼图",
+    "definition": "A circular chart showing proportions"
+  },
+  "cumulative frequency": {
+    "translation": "累积频数",
+    "definition": "The running total of frequencies"
+  },
+  "previous": {
+    "translation": "先前的",
+    "definition": "Existing or occurring before in time"
+  },
+  "duration": {
+    "translation": "持续时间",
+    "definition": "The length of time something continues"
+  },
+  "transient state": {
+    "translation": "瞬态",
+    "definition": "A temporary condition during transition"
+  },
+  "instantaneous": {
+    "translation": "瞬时的",
+    "definition": "Occurring at a single moment"
+  },
+  "mediate": {
+    "translation": "中介",
+    "definition": "To bring about a result through an intervening variable"
+  },
+  "confound": {
+    "translation": "混杂因素",
+    "definition": "A variable distorting the relationship between others"
+  },
+  "randomized experiment": {
+    "translation": "随机实验",
+    "definition": "A study assigning treatments randomly"
+  },
+  "natural experiment": {
+    "translation": "自然实验",
+    "definition": "A study using naturally occurring variation"
+  },
+  "robustness": {
+    "translation": "稳健性",
+    "definition": "The property of being insensitive to small changes"
+  },
+  "sensitivity": {
+    "translation": "敏感性",
+    "definition": "The degree to which results depend on assumptions"
+  },
+  "exogenous": {
+    "translation": "外生的",
+    "definition": "Determined outside the model"
+  },
+  "cross section": {
+    "translation": "横截面",
+    "definition": "Data observed at a single point in time"
+  },
+  "fixed effect": {
+    "translation": "固定效应",
+    "definition": "A model term capturing unobserved unit-specific factors"
+  },
+  "random effect": {
+    "translation": "随机效应",
+    "definition": "A model term treating unit differences as random"
+  },
+  "autocorrelated errors": {
+    "translation": "自相关误差",
+    "definition": "Errors correlated across observations"
+  },
+  "goodness of fit": {
+    "translation": "拟合优度",
+    "definition": "How well a model matches observed data"
+  },
+  "residual sum of squares": {
+    "translation": "残差平方和",
+    "definition": "The sum of squared differences between observed and fitted values"
+  },
+  "r squared": {
+    "translation": "决定系数",
+    "definition": "The proportion of variance explained by a model"
+  },
+  "adjusted r squared": {
+    "translation": "调整决定系数",
+    "definition": "A version of R² penalizing additional predictors"
+  },
+  "aic": {
+    "translation": "赤池信息量",
+    "definition": "A criterion balancing model fit and complexity"
+  },
+  "bic": {
+    "translation": "贝叶斯信息量",
+    "definition": "A criterion for model selection with a stronger complexity penalty"
+  },
+  "overdispersion": {
+    "translation": "过度离散",
+    "definition": "Greater variance than assumed by a model"
+  },
+  "link function": {
+    "translation": "连接函数",
+    "definition": "A function relating the mean response to predictors"
+  },
+  "odds ratio": {
+    "translation": "优势比",
+    "definition": "The ratio of odds of an event in two groups"
+  },
+  "hazard function": {
+    "translation": "风险函数",
+    "definition": "The instantaneous rate of an event occurring"
+  },
+  "kaplan meier": {
+    "translation": "卡普兰-迈耶估计",
+    "definition": "A nonparametric estimator of survival functions"
+  },
+  "feature selection": {
+    "translation": "特征选择",
+    "definition": "Choosing the most relevant input variables"
+  },
+  "feature extraction": {
+    "translation": "特征提取",
+    "definition": "Deriving informative variables from raw data"
+  },
+  "normalization of data": {
+    "translation": "数据归一化",
+    "definition": "Scaling values to a common range"
+  },
+  "one hot encoding": {
+    "translation": "独热编码",
+    "definition": "Representing categories as binary vectors"
+  },
+  "data leakage": {
+    "translation": "数据泄漏",
+    "definition": "Information from test data improperly influencing training"
+  },
+  "class imbalance": {
+    "translation": "类别不平衡",
+    "definition": "A dataset where classes occur at very different rates"
+  },
+  "f1 score": {
+    "translation": "F1 分数",
+    "definition": "The harmonic mean of precision and recall"
+  },
+  "confusion matrix": {
+    "translation": "混淆矩阵",
+    "definition": "A table summarizing classification results"
+  },
+  "roc curve": {
+    "translation": "ROC 曲线",
+    "definition": "A plot of true positive rate against false positive rate"
+  },
+  "auc": {
+    "translation": "曲线下面积",
+    "definition": "A summary measure of classifier performance"
+  },
+  "overall accuracy": {
+    "translation": "总体准确率",
+    "definition": "The proportion of all predictions that are correct"
+  },
+  "error rate": {
+    "translation": "错误率",
+    "definition": "The proportion of predictions that are incorrect"
+  },
+  "mean squared error": {
+    "translation": "均方误差",
+    "definition": "The average of squared prediction errors"
+  },
+  "root mean squared error": {
+    "translation": "均方根误差",
+    "definition": "The square root of mean squared error"
+  },
+  "mean absolute error": {
+    "translation": "平均绝对误差",
+    "definition": "The average of absolute prediction errors"
+  },
+  "cross entropy": {
+    "translation": "交叉熵",
+    "definition": "A loss function measuring difference between distributions"
+  },
+  "perplexity": {
+    "translation": "困惑度",
+    "definition": "A measure of how well a model predicts a sample"
+  },
+  "grid search": {
+    "translation": "网格搜索",
+    "definition": "Exhaustive search over hyperparameter combinations"
+  },
+  "random search": {
+    "translation": "随机搜索",
+    "definition": "Sampling hyperparameters randomly"
+  },
+  "early stopping": {
+    "translation": "早停",
+    "definition": "Halting training when validation performance stops improving"
+  },
+  "model selection": {
+    "translation": "模型选择",
+    "definition": "Choosing among candidate models"
+  },
+  "ensemble": {
+    "translation": "集成",
+    "definition": "Combining multiple models for better performance"
+  },
+  "bagging": {
+    "translation": "装袋",
+    "definition": "Training models on bootstrap samples and averaging"
+  },
+  "boosting": {
+    "translation": "提升",
+    "definition": "Sequentially training models to correct prior errors"
+  },
+  "random forest": {
+    "translation": "随机森林",
+    "definition": "An ensemble of decision trees"
+  },
+  "decision tree": {
+    "translation": "决策树",
+    "definition": "A model partitioning data by sequential splits"
+  },
+  "support vector machine": {
+    "translation": "支持向量机",
+    "definition": "A classifier finding the maximum margin hyperplane"
+  },
+  "kernel trick": {
+    "translation": "核技巧",
+    "definition": "Computing inner products in high-dimensional spaces implicitly"
+  },
+  "convolutional": {
+    "translation": "卷积的",
+    "definition": "Relating to layers applying convolution filters"
+  },
+  "recurrent": {
+    "translation": "循环的",
+    "definition": "Relating to networks with connections over time"
+  },
+  "batch normalization": {
+    "translation": "批归一化",
+    "definition": "Normalizing layer inputs across a batch"
+  },
+  "language model": {
+    "translation": "语言模型",
+    "definition": "A model assigning probabilities to sequences of words"
+  },
+  "fine tuning": {
+    "translation": "微调",
+    "definition": "Adapting a pretrained model to a specific task"
+  },
+  "zero shot": {
+    "translation": "零样本",
+    "definition": "Performing a task without task-specific training examples"
+  },
+  "few shot": {
+    "translation": "少样本",
+    "definition": "Performing a task with only a few examples"
+  },
+  "prompt engineering": {
+    "translation": "提示工程",
+    "definition": "Designing inputs to guide model outputs"
+  },
+  "backward pass": {
+    "translation": "反向传递",
+    "definition": "The phase computing gradients in training"
+  },
+  "forward pass": {
+    "translation": "前向传递",
+    "definition": "The phase computing outputs from inputs"
+  },
+  "batch size": {
+    "translation": "批大小",
+    "definition": "The number of samples processed per update"
+  },
+  "learning rate schedule": {
+    "translation": "学习率调度",
+    "definition": "A rule adjusting the learning rate during training"
+  },
+  "weight decay": {
+    "translation": "权重衰减",
+    "definition": "A regularization technique penalizing large weights"
+  },
+  "vanishing gradient": {
+    "translation": "梯度消失",
+    "definition": "Gradients becoming too small to update early layers"
+  },
+  "exploding gradient": {
+    "translation": "梯度爆炸",
+    "definition": "Gradients becoming too large and destabilizing training"
+  },
+  "parameter space": {
+    "translation": "参数空间",
+    "definition": "The space of all possible model parameters"
+  },
+  "latent space": {
+    "translation": "潜在空间",
+    "definition": "A learned low-dimensional representation space"
+  },
+  "adversarial": {
+    "translation": "对抗的",
+    "definition": "Relating to models competing against each other"
+  },
+  "agents": {
+    "translation": "智能体",
+    "definition": "Autonomous entities acting in an environment"
+  },
+  "value function": {
+    "translation": "价值函数",
+    "definition": "A function estimating expected return from a state"
+  },
+  "q learning": {
+    "translation": "Q 学习",
+    "definition": "A method learning action values without a model"
+  },
+  "temporal difference": {
+    "translation": "时序差分",
+    "definition": "A method learning from bootstrapped value estimates"
+  },
+  "actor critic": {
+    "translation": "演员-评论家",
+    "definition": "A method combining policy and value learning"
+  },
+  "on policy": {
+    "translation": "同策略",
+    "definition": "Learning using data from the current policy"
+  },
+  "off policy": {
+    "translation": "异策略",
+    "definition": "Learning using data from a different policy"
+  },
+  "credit assignment": {
+    "translation": "信用分配",
+    "definition": "Determining which actions contributed to a reward"
+  },
+  "simulation environment": {
+    "translation": "仿真环境",
+    "definition": "A modeled setting for training or testing agents"
+  },
+  "entity": {
+    "translation": "实体",
+    "definition": "A distinct object or concept in a domain"
+  },
+  "relation": {
+    "translation": "关系",
+    "definition": "An association between entities"
+  },
+  "triple": {
+    "translation": "三元组",
+    "definition": "A subject-predicate-object statement"
+  },
+  "inference engine": {
+    "translation": "推理引擎",
+    "definition": "A system deriving conclusions from knowledge"
+  },
+  "rule based": {
+    "translation": "基于规则的",
+    "definition": "Relying on explicit if-then rules"
+  },
+  "search space": {
+    "translation": "搜索空间",
+    "definition": "The set of all possible solutions"
+  },
+  "constraint satisfaction": {
+    "translation": "约束满足",
+    "definition": "Finding assignments satisfying all constraints"
+  },
+  "planning": {
+    "translation": "规划",
+    "definition": "Choosing a sequence of actions to achieve a goal"
+  },
+  "part of speech": {
+    "translation": "词性",
+    "definition": "The grammatical category of a word"
+  },
+  "text summarization": {
+    "translation": "文本摘要",
+    "definition": "Producing a concise version of a document"
+  },
+  "information retrieval": {
+    "translation": "信息检索",
+    "definition": "Finding relevant documents for a query"
+  },
+  "corpus linguistics": {
+    "translation": "语料库语言学",
+    "definition": "Linguistic study using large text collections"
+  },
+  "annotation scheme": {
+    "translation": "标注体系",
+    "definition": "A defined set of labels for annotating data"
+  },
+  "inter annotator agreement": {
+    "translation": "标注者间一致性",
+    "definition": "The degree to which annotators label data the same way"
+  },
+  "dependency parsing": {
+    "translation": "依存句法分析",
+    "definition": "Analyzing grammatical relations between words"
+  },
+  "term frequency": {
+    "translation": "词频",
+    "definition": "How often a term appears in a document"
+  },
+  "inverse document frequency": {
+    "translation": "逆文档频率",
+    "definition": "A weighting that downplays terms appearing in many documents"
+  },
+  "n gram": {
+    "translation": "N 元组",
+    "definition": "A contiguous sequence of n items from text"
+  },
+  "semantic similarity": {
+    "translation": "语义相似度",
+    "definition": "How close two texts are in meaning"
+  },
+  "retrieval augmented": {
+    "translation": "检索增强的",
+    "definition": "Combining retrieval with generation to improve accuracy"
+  },
+  "vector search": {
+    "translation": "向量检索",
+    "definition": "Finding nearest neighbors in embedding space"
   }
 }

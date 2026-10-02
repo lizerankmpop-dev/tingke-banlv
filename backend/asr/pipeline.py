@@ -48,6 +48,26 @@ class ASRPipeline:
         self._subtitle_counter = 0
         self._last_term_extraction = 0.0
         self._accumulated_text: list[str] = []
+        self._discovered_terms: list[str] = []  # 本课程运行时已识别的术语（动态加入热词）
+
+        # 构建术语热词（自定义术语 + 领域术语 + 词表短语）
+        # 作用：让 Whisper 把 "convolution" 拼对，而不是听成 "convalution"
+        try:
+            from dictionary.terminology import build_terminology
+            self._terminology = build_terminology(
+                domain=course_config.get("domain", ""),
+                custom_terms=course_config.get("custom_terms", []),
+            )
+            initial_prompt = self._terminology["prompt"]
+            if initial_prompt:
+                logger.info(
+                    f"术语热词已启用: {self._terminology['stats']['total']} 个术语, "
+                    f"{self._terminology['promptChars']} 字符"
+                )
+        except Exception as e:
+            logger.warning(f"术语热词构建失败，将不使用 initial_prompt: {e}")
+            self._terminology = {"prompt": "", "stats": {"total": 0}}
+            initial_prompt = ""
 
         # 初始化各组件
         self._whisper = WhisperEngine(
@@ -61,6 +81,7 @@ class ASRPipeline:
                 f"模型{'下载' if stage == 'downloading' else '加载'}中... {pct:.0f}%" if pct < 100 and stage != "error"
                 else ("模型就绪" if stage == "ready" else "模型加载失败")
             ),
+            initial_prompt=initial_prompt,
         )
 
         self._vad = VoiceActivityDetector(
@@ -91,6 +112,28 @@ class ASRPipeline:
                 return
 
         self._start_listening()
+
+    def update_terminology(self, custom_terms: Optional[list[str]] = None):
+        """
+        热更新术语热词（用户在课程里新增自定义术语后调用，无需重启管道）
+        """
+        try:
+            from dictionary.terminology import build_terminology
+            new_custom = custom_terms if custom_terms is not None else self.course_config.get("custom_terms", [])
+            term = build_terminology(
+                domain=self.course_config.get("domain", ""),
+                custom_terms=new_custom,
+                discovered_terms=self._discovered_terms,
+            )
+            self._terminology = term
+            self._whisper.set_initial_prompt(term["prompt"])
+            logger.info(f"术语热词已热更新: {term['stats']['total']} 个术语")
+        except Exception as e:
+            logger.error(f"术语热词热更新失败: {e}")
+
+    def get_terminology(self) -> dict:
+        """返回当前术语库信息（供 API 查询）"""
+        return self._terminology
 
     def _wait_for_model(self):
         """等待模型加载完成后自动启动监听"""
@@ -205,15 +248,50 @@ class ASRPipeline:
         t.start()
 
     def _extract_terms(self, text: str):
-        """使用 Ollama LLM 提取专业术语"""
+        """
+        术语提取（双通道）
+
+        通道 1（始终生效）：本地词表匹配 —— 从字幕里找出命中 basic_vocab.json 的术语。
+            不依赖任何外部服务，保证"AI 不可用时也有术语可用"。
+
+        通道 2（可选）：LLM 提取 —— 补充词表里没有的、本课特有的新术语。
+        """
+        # ---- 通道 1：本地词表匹配 ----
+        try:
+            from dictionary.terminology import match_terms_in_text
+            matched = match_terms_in_text(text)
+
+            new_terms = []
+            for m in matched:
+                self.on_term_extracted({
+                    "word": m["word"],
+                    "translation": m["translation"],
+                    "definition": m["definition"],
+                    "domain": self.course_config.get("domain", ""),
+                    "context_sentence": m.get("context_sentence", ""),
+                    "source_subtitle_id": "",
+                    "origin": "local_vocab",
+                })
+                if m["word"] not in self._discovered_terms:
+                    self._discovered_terms.append(m["word"])
+                    new_terms.append(m["word"])
+
+            if matched:
+                logger.info(f"本地词表命中 {len(matched)} 个术语")
+
+            # 命中新术语 → 热更新 Whisper 热词，下一轮识别更准
+            if new_terms:
+                self.update_terminology()
+        except Exception as e:
+            logger.error(f"本地词表术语匹配失败: {e}")
+
+        # ---- 通道 2：LLM 提取 ----
         try:
             from llm.extractor import TermExtractor
             extractor = TermExtractor()
 
-            # Ollama 不可用时通知前端，不再静默失败
-            if not extractor._check_ollama():
-                logger.warning("Ollama 不可用，跳过术语提取")
-                self.on_status("listening", "AI术语提取未启用（需安装Ollama）")
+            if not extractor.is_available_cached():
+                logger.debug("LLM 不可用，跳过 AI 术语提取")
                 return
 
             terms = extractor.extract_terms(
@@ -223,14 +301,21 @@ class ASRPipeline:
                 custom_terms=self.course_config.get("custom_terms", []),
             )
 
+            added = False
             for term in terms:
+                term["origin"] = "ai"
                 self.on_term_extracted(term)
+                w = term.get("word", "")
+                if w and w not in self._discovered_terms:
+                    self._discovered_terms.append(w)
+                    added = True
 
             if terms:
-                logger.info(f"提取了 {len(terms)} 个术语")
+                logger.info(f"AI 提取了 {len(terms)} 个术语")
+            if added:
+                self.update_terminology()
 
         except ImportError:
-            logger.debug("LLM 提取器不可用，跳过术语提取")
-            self.on_status("listening", "AI术语提取模块未安装")
+            logger.debug("LLM 提取器不可用，跳过 AI 术语提取")
         except Exception as e:
-            logger.error(f"术语提取失败: {e}")
+            logger.error(f"AI 术语提取失败: {e}")

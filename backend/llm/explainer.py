@@ -63,8 +63,13 @@ class WordExplainer:
         """
         生成单词的上下文讲解
 
+        流程：
+            1. 查缓存
+            2. 查内置词表（3000+ 词，命中即返回，零延迟零成本）
+            3. 词表未命中 → 调用 LLM 生成语境讲解
+
         Returns:
-            {translation, meaning_in_context, example, related[]} 或 None（不可用/失败）
+            {translation, meaning_in_context, example, related[], source} 或 None
         """
         word = word.strip()
         if not word:
@@ -75,6 +80,21 @@ class WordExplainer:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
+        # ---- 本地词表优先：命中就不调 LLM ----
+        from dictionary.terminology import lookup_vocab
+        local = lookup_vocab(word)
+        if local:
+            result = {
+                "translation": local.get("translation", ""),
+                "meaning_in_context": local.get("definition", ""),
+                "example": "",
+                "related": [],
+                "source": "local_vocab",
+            }
+            self._cache[cache_key] = result
+            return result
+
+        # ---- 词表未命中 → LLM ----
         # 检查 LLM 可用性（结果缓存）
         if self._available is None:
             self._available = llm_available()
@@ -107,6 +127,7 @@ class WordExplainer:
 
             result = self._parse_response(content)
             if result:
+                result["source"] = "ai"
                 # 限制缓存大小
                 if len(self._cache) > 200:
                     self._cache.clear()
