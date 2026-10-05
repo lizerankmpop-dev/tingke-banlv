@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../stores/useAppStore'
 import { useCourseStore } from '../stores/useCourseStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
-import { X, MinusCircle, BookOpen, Mic, MicOff, Settings, Loader2, AlertCircle, School, Monitor, Sparkles, FileText, ListChecks, GraduationCap, MessageCircle, Send } from 'lucide-react'
+import { useOverlayStore } from '../stores/useOverlayStore'
+import OverlayControlPanel from '../components/OverlayControlPanel'
+import { X, MinusCircle, BookOpen, Mic, MicOff, Settings, Loader2, AlertCircle, School, Monitor, Sparkles, FileText, ListChecks, GraduationCap, MessageCircle, Send, PictureInPicture2 } from 'lucide-react'
 
 export default function SubtitleOverlay() {
   const { courseId, stopListening, setView } = useAppStore()
@@ -19,6 +21,15 @@ export default function SubtitleOverlay() {
   const [collapsed, setCollapsed] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // 桌面悬浮窗控制面板
+  const [overlayPanelOpen, setOverlayPanelOpen] = useState(false)
+  const overlayOpen = useOverlayStore((s) => s.open)
+  const overlayInit = useOverlayStore((s) => s.init)
+
+  useEffect(() => {
+    void overlayInit()
+  }, [overlayInit])
 
   // AI 课摘要状态
   const [summaryOpen, setSummaryOpen] = useState(false)
@@ -157,6 +168,17 @@ export default function SubtitleOverlay() {
           </span>
         </div>
         <div style={styles.controlRight}>
+          {/* 桌面悬浮窗：开启后可切到浏览器看课，字幕始终浮在最上层 */}
+          <button
+            onClick={() => setOverlayPanelOpen(true)}
+            style={{
+              ...styles.ctrlBtn,
+              color: overlayOpen ? 'var(--accent-light)' : 'var(--text-muted)',
+            }}
+            title={overlayOpen ? '桌面悬浮窗已开启' : '开启桌面悬浮窗'}
+          >
+            <PictureInPicture2 size={15} />
+          </button>
           <button onClick={() => setQaOpen(true)} style={styles.ctrlBtn} title="AI 答疑">
             <MessageCircle size={15} />
           </button>
@@ -363,6 +385,9 @@ export default function SubtitleOverlay() {
           </div>
         </div>
       )}
+
+      {/* 桌面悬浮窗控制面板 */}
+      {overlayPanelOpen && <OverlayControlPanel onClose={() => setOverlayPanelOpen(false)} />}
     </div>
   )
 }

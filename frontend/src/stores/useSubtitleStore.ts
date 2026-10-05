@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { SubtitleLine, VocabularyEntry, ASRStatus } from '../types'
 import { useCourseStore } from './useCourseStore'
+import { overlayBridge } from '../lib/overlayBridge'
 
 interface SubtitleState {
   subtitleLines: SubtitleLine[]
@@ -33,6 +34,27 @@ interface SubtitleState {
   clearSubtitles: () => void
 }
 
+/**
+ * 把当前字幕快照推给桌面悬浮窗
+ *
+ * 悬浮窗刻意不自己轮询 /api/asr/poll —— 该端点会清空队列（popleft），
+ * 两个窗口同时拉会互相抢消息，字幕被拦腰截断。所以轮询者只有主窗口一个，
+ * 悬浮窗纯靠这里推过去的快照渲染。
+ *
+ * 快照只带文本，不带 words 数组：悬浮窗是鼠标穿透的，点不了词，
+ * 传 words 只会白白放大 IPC 载荷（每 500ms 一次）。
+ */
+function pushOverlay(get: any) {
+  const s = get()
+  overlayBridge.pushSubtitle({
+    lines: s.subtitleLines.slice(-4).map((l: SubtitleLine) => l.text),
+    currentText: s.currentText,
+    status: s.asrStatus,
+    message: s.asrMessage,
+    courseName: useCourseStore.getState().getActiveCourse()?.name || '',
+  })
+}
+
 function handleMessage(msg: any, get: any, set: any) {
   switch (msg.type) {
     case 'subtitle':
@@ -42,10 +64,10 @@ function handleMessage(msg: any, get: any, set: any) {
       get().updateInterimResult(msg.data.text, msg.data.words)
       break
     case 'asr_status':
-      set({ asrStatus: msg.data.status, asrMessage: msg.data.message || '' })
+      get().setASRStatus(msg.data.status, msg.data.message)
       break
     case 'error':
-      set({ asrStatus: 'error', asrMessage: msg.data.message })
+      get().setASRStatus('error', msg.data.message)
       break
   }
 }
@@ -81,6 +103,8 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       reconnectAttempts: 0,
       notRunningCount: 0,
     })
+    // 让悬浮窗同步清空上一节课的残留字幕
+    pushOverlay(get)
 
     // 启动后端 ASR
     get()._startBackendASR(courseId)
@@ -126,11 +150,12 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   },
 
   _startBackendASR: (courseId: string) => {
-    set({ asrStatus: 'listening', asrMessage: '正在启动识别...' })
+    get().setASRStatus('listening', '正在启动识别...')
     fetch(`/api/asr/start?course_id=${courseId}`, { method: 'POST' })
       .then(() => {
         if (!get().intentionalClose) {
-          set({ asrStatus: 'listening', asrMessage: '识别中...', reconnectAttempts: 0 })
+          set({ reconnectAttempts: 0 })
+          get().setASRStatus('listening', '识别中...')
         }
       })
       .catch(() => {
@@ -149,16 +174,13 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
     const maxReconnects = get().maxReconnects
 
     if (attempts >= maxReconnects) {
-      set({ asrStatus: 'error', asrMessage: '连接失败，已达最大重试次数' })
+      get().setASRStatus('error', '连接失败，已达最大重试次数')
       return
     }
 
     const delay = Math.min(1000 * Math.pow(2, attempts), 30000)
-    set({
-      asrStatus: 'error',
-      asrMessage: `连接断开，${Math.round(delay / 1000)}秒后重连 (${attempts + 1}/${maxReconnects})`,
-      reconnectAttempts: attempts + 1,
-    })
+    set({ reconnectAttempts: attempts + 1 })
+    get().setASRStatus('error', `连接断开，${Math.round(delay / 1000)}秒后重连 (${attempts + 1}/${maxReconnects})`)
 
     const timer = setTimeout(() => {
       set({ reconnectTimer: null })
@@ -187,6 +209,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       reconnectAttempts: 0,
       notRunningCount: 0,
     })
+    pushOverlay(get)
     const courseId = useCourseStore.getState().activeCourseId
     if (courseId) {
       fetch(`/api/asr/stop?course_id=${courseId}`, { method: 'POST' }).catch(() => {})
@@ -206,14 +229,17 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       currentText: '',
       currentWords: [],
     }))
+    pushOverlay(get)
   },
 
   updateInterimResult: (text, words) => {
     set({ currentText: text, currentWords: words })
+    pushOverlay(get)
   },
 
   setASRStatus: (status, message) => {
     set({ asrStatus: status, asrMessage: message || '' })
+    pushOverlay(get)
   },
 
   selectWord: async (word) => {
@@ -258,5 +284,6 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
 
   clearSubtitles: () => {
     set({ subtitleLines: [], currentText: '', currentWords: [] })
+    pushOverlay(get)
   },
 }))

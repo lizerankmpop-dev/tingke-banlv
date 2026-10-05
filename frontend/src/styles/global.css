@@ -25,6 +25,32 @@ html, body, #root {
   color: var(--text-primary);
 }
 
+/* 悬浮窗入口（#/overlay）：窗口本身是 transparent 的，页面背景必须一并透明，
+   否则 Chromium 会把 html/body 的底色画成整块不透明黑，穿透与半透明全部失效。
+   用 class 挂在 <html> 上（由 OverlayWindow 挂载时添加），只影响悬浮窗进程。 */
+html.overlay-transparent,
+html.overlay-transparent body,
+html.overlay-transparent #root {
+  background: transparent !important;
+  overflow: hidden;
+}
+html.overlay-transparent body {
+  user-select: none;
+  cursor: default;
+}
+
+/* 加载指示器动画
+   此前代码里大量使用 `animation: 'spin 1s linear infinite'` 与 `pulse`，
+   但两个 keyframes 全项目从未定义 —— Loader 图标实际上一直是静止的。
+   统一在此定义（悬浮窗与页面内共用）。 */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
 }

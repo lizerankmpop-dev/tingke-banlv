@@ -7,14 +7,20 @@
  *      （刻意不用 /api/health：它带外部探测，受限网络下单次可达 2 秒以上）
  *   3. 加载界面（开发走 Vite dev server，打包走 http://127.0.0.1:PORT —— 由后端同源托管前端）
  *   4. 退出时清理整棵后端进程树（Windows 下 uvicorn 子进程必须用 taskkill /T）
+ *   5. 管理桌面字幕悬浮窗（独立 BrowserWindow，见「桌面字幕悬浮窗」一节）
+ *
+ * 全局热键（悬浮窗默认鼠标穿透，键盘是唯一可靠的操作通道）：
+ *   Alt+Shift+O  开关悬浮窗
+ *   Alt+Shift+D  切换调整模式（临时关闭鼠标穿透以便拖动窗口）
  *
  * 环境变量：
  *   TINGKEBANLV_PYTHON          指定 Python 解释器（覆盖自动探测）
  *   TINGKEBANLV_BACKEND_DIR     指定后端目录
  *   TINGKEBANLV_PORT            强制指定端口（覆盖自动分配，调试用）
- *   TINGKEBANLV_HOME            数据目录（决定日志落点，默认 ~/.tingkebanlv）
+ *   TINGKEBANLV_HOME            数据目录（决定日志与 overlay.json 落点，默认 ~/.tingkebanlv）
  *   TINGKEBANLV_GPU_SANDBOX=1   恢复 Chromium GPU 沙箱默认行为（排障用）
  *   VITE_DEV_SERVER_URL         存在则进入开发模式加载该地址
+
  *
  * 随包分发的资源（均在 process.resourcesPath 下，不进 asar）：
  *   backend/          后端源码（源码模式回退用）
@@ -28,7 +34,7 @@
  * 日志：本进程与后端输出统一落盘到 <TINGKEBANLV_HOME>/logs/electron.log
  */
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -60,7 +66,17 @@ if (process.env.TINGKEBANLV_GPU_SANDBOX !== '1') {
 const COMPAT_MODE = process.argv.includes('--tingkebanlv-compat');
 const COMPAT_RELAUNCH_ARGS = ['--no-sandbox', '--tingkebanlv-compat'];
 
+// (3) 远程调试端口（排障用，默认关闭）
+// 悬浮窗是独立渲染进程，出问题时必须单独挂 DevTools 才能看到它的控制台；
+// 自动化验证也要靠 CDP 才能回读它的真实 DOM。
+// 注意：开放该端口等于允许本机任意进程接管页面，因此只在显式设置
+// TINGKEBANLV_DEBUG_PORT 时开启，默认一个端口都不监听。
+if (process.env.TINGKEBANLV_DEBUG_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TINGKEBANLV_DEBUG_PORT));
+}
+
 let mainWindow = null;
+let overlayWindow = null; // 桌面字幕悬浮窗（独立 BrowserWindow）
 let backendProcess = null;
 let backendPort = null;
 let isQuitting = false;
@@ -224,6 +240,364 @@ function resolvePythonCommand() {
   }
 
   return null;
+}
+
+// ============ 桌面字幕悬浮窗 ============
+//
+// 为什么必须做成独立窗口：应用内的字幕页只在主窗口里可见，学生一切到浏览器
+// 看网课就看不到字幕了 —— 而「切到浏览器看课」恰恰是这个产品的核心使用姿势。
+//
+// 设计要点：
+//   1. 设置由主进程持有并落盘到 <TINGKEBANLV_HOME>/overlay.json。位置/不透明度
+//      这类属性只能作用于 BrowserWindow 本身，真理源放渲染进程必然错位。
+//   2. 鼠标穿透用 setIgnoreMouseEvents(true, { forward: true })。穿透时若不传
+//      forward，下层窗口连 hover 都收不到，网课页面上的按钮高亮会失效。
+//   3. 穿透状态下窗口不可点也不可拖，因此提供「调整模式」（Alt+Shift+D）：
+//      临时关掉穿透并显示拖拽条，调完再切回。
+//   4. 生命周期必须与主窗口绑定：主窗口一关就销毁悬浮窗，否则会留下一个
+//      没有入口、永远置顶、只能靠任务管理器杀掉的孤儿窗口。
+//
+// 注意：悬浮窗**不自己轮询** /api/asr/poll（该端点取出即清空，两个窗口同时拉
+// 会互相抢消息）。字幕由主窗口经 IPC 转发，见 src/stores/useSubtitleStore.ts。
+
+/** 与 src/lib/overlayBridge.ts 的 DEFAULT_OVERLAY_SETTINGS 保持一致 */
+const DEFAULT_OVERLAY_SETTINGS = {
+  enabled: false,
+  fontSize: 24,
+  color: '#ffffff',
+  lineCount: 3,
+  textBgOpacity: 0.55,
+  windowOpacity: 1,
+  clickThrough: true,
+  bounds: { x: null, y: null, width: 900, height: 220 },
+};
+
+let overlaySettings = null;
+
+function overlaySettingsPath() {
+  const home = process.env.TINGKEBANLV_HOME || path.join(os.homedir(), '.tingkebanlv');
+  return path.join(home, 'overlay.json');
+}
+
+function clampNumber(value, lo, hi, fallback) {
+  // 空值一律走 fallback：Number(null) === 0 会把「没配」误判成「配了 0」，
+  // 结果是被夹到下界（例如字号变成 12）而不是默认值，用户无从理解。
+  if (value === null || value === undefined || value === '') return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, n));
+}
+
+/**
+ * 归一化设置
+ * 落盘文件可能被手工改坏（例如 color 写成 "white" 或 fontSize 给成 200），
+ * 这里统一夹到安全区间 —— 越界值会让窗口变成不可见或铺满屏幕，很难靠用户自己恢复。
+ */
+function normalizeOverlaySettings(raw) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const b = src.bounds && typeof src.bounds === 'object' ? src.bounds : {};
+  // 注意：不能写成 Number.isFinite(Number(v)) —— Number(null) === 0，
+  // 会把「首次运行、还没存过位置」的 null 静默转成 0，于是窗口永远被判定为
+  // 「已经在屏幕上（左上角）」，默认的底部居中位置一次都算不出来。
+  const intOrNull = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
+  return {
+    enabled: !!src.enabled,
+    fontSize: Math.round(clampNumber(src.fontSize, 12, 72, DEFAULT_OVERLAY_SETTINGS.fontSize)),
+    color: typeof src.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(src.color)
+      ? src.color
+      : DEFAULT_OVERLAY_SETTINGS.color,
+    lineCount: Math.round(clampNumber(src.lineCount, 1, 6, DEFAULT_OVERLAY_SETTINGS.lineCount)),
+    textBgOpacity: clampNumber(src.textBgOpacity, 0, 1, DEFAULT_OVERLAY_SETTINGS.textBgOpacity),
+    windowOpacity: clampNumber(src.windowOpacity, 0.2, 1, DEFAULT_OVERLAY_SETTINGS.windowOpacity),
+    clickThrough: src.clickThrough === undefined ? true : !!src.clickThrough,
+    bounds: {
+      x: intOrNull(b.x),
+      y: intOrNull(b.y),
+      width: Math.round(clampNumber(b.width, 320, 4000, DEFAULT_OVERLAY_SETTINGS.bounds.width)),
+      height: Math.round(clampNumber(b.height, 100, 2000, DEFAULT_OVERLAY_SETTINGS.bounds.height)),
+    },
+  };
+}
+
+function loadOverlaySettings() {
+  if (overlaySettings) return overlaySettings;
+  try {
+    const file = overlaySettingsPath();
+    overlaySettings = fs.existsSync(file)
+      ? normalizeOverlaySettings(JSON.parse(fs.readFileSync(file, 'utf8')))
+      : normalizeOverlaySettings(null);
+  } catch (err) {
+    logLine(`[overlay] 读取设置失败，回退默认值: ${err.message}`);
+    overlaySettings = normalizeOverlaySettings(null);
+  }
+  return overlaySettings;
+}
+
+function saveOverlaySettings() {
+  if (!overlaySettings) return;
+  try {
+    const file = overlaySettingsPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(overlaySettings, null, 2), 'utf8');
+  } catch (err) {
+    logLine(`[overlay] 保存设置失败: ${err.message}`);
+  }
+}
+
+function isOverlayOpen() {
+  return !!overlayWindow && !overlayWindow.isDestroyed();
+}
+
+function sameBounds(a, b) {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+/** 悬浮窗尺寸是否与某个显示器工作区有足够重叠（否则就是「跑到屏幕外了」） */
+function isOnSomeDisplay(b) {
+  if (b.x === null || b.y === null) return false;
+  return screen.getAllDisplays().some((d) => {
+    const wa = d.workArea;
+    return (
+      b.x + 80 < wa.x + wa.width &&
+      b.x + b.width - 80 > wa.x &&
+      b.y + 20 < wa.y + wa.height &&
+      b.y + b.height - 20 > wa.y
+    );
+  });
+}
+
+/**
+ * 修正落盘的窗口位置
+ *
+ * 两种必须兜底的情况：
+ *   1. 首次运行（x/y 为 null）→ 贴主屏工作区底部居中
+ *   2. 上次保存的位置已经不在任何显示器上（外接屏拔了、分辨率变了、用户拖出了屏幕）
+ *      → 同样回到默认位。否则窗口会永久不可见，而它是鼠标穿透的，
+ *        用户既点不到也没法拖回来，只能手工改 overlay.json。
+ */
+function resolveBoundsForDisplay(bounds) {
+  const b = { ...bounds };
+  if (!isOnSomeDisplay(b)) {
+    const wa = screen.getPrimaryDisplay().workArea;
+    b.x = Math.round(wa.x + (wa.width - b.width) / 2);
+    b.y = Math.round(wa.y + wa.height - b.height - 80);
+  }
+  return b;
+}
+
+/** 把设置里与窗口属性相关的部分真正作用到 BrowserWindow 上 */
+function applyOverlaySettingsToWindow() {
+  if (!isOverlayOpen()) return;
+  const s = loadOverlaySettings();
+  try {
+    overlayWindow.setOpacity(s.windowOpacity);
+  } catch (err) {
+    logLine(`[overlay] 设置窗口透明度失败: ${err.message}`);
+  }
+  try {
+    if (s.clickThrough) {
+      // forward: true —— 让 hover / 光标形状仍能穿透到下层窗口
+      overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+      overlayWindow.setFocusable(false);
+    } else {
+      overlayWindow.setIgnoreMouseEvents(false);
+      overlayWindow.setFocusable(true);
+    }
+  } catch (err) {
+    logLine(`[overlay] 应用鼠标穿透失败: ${err.message}`);
+  }
+}
+
+/** 把最新设置广播给两个渲染进程（悬浮窗用它渲染样式，主窗口用它同步 UI） */
+function broadcastOverlaySettings() {
+  const s = loadOverlaySettings();
+  if (isOverlayOpen() && !overlayWindow.webContents.isDestroyed()) {
+    overlayWindow.webContents.send('overlay:settings', s);
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('overlay:settings', s);
+  }
+}
+
+function notifyOverlayState() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('overlay:state', { open: isOverlayOpen() });
+  }
+}
+
+/** 悬浮窗入口地址：hash 路由 /overlay（见 src/App.tsx） */
+function overlayPageUrl() {
+  const dev = process.env.VITE_DEV_SERVER_URL;
+  if (dev) return `${dev.replace(/#.*$/, '')}#/overlay`;
+  return `http://127.0.0.1:${backendPort}#/overlay`;
+}
+
+/**
+ * 悬浮窗关键路径自检（排障 / 自动化验证用，默认关闭）
+ *
+ * 为什么需要它：`did-finish-load` 并不能证明 hash 路由真的匹配上了 ——
+ * 路由写错时 index.html 照样加载成功，只是渲染成主应用（一块不透明的 CourseList），
+ * 表现为「悬浮窗是黑的、不透明、也永远不动」。这类失败在日志里完全看不出来。
+ * 这里在加载完成后回读页面真实状态（透明类是否挂上、body 背景是否透明、
+ * root 下渲染了几个节点），把「看起来加载成功」和「真的渲染正确」区分开。
+ *
+ * 开启方式：TINGKEBANLV_OVERLAY_DIAG=1
+ */
+function runOverlayDiagnostics() {
+  if (process.env.TINGKEBANLV_OVERLAY_DIAG !== '1') return;
+  if (!isOverlayOpen()) return;
+  overlayWindow.webContents
+    .executeJavaScript(
+      `(() => {
+         const root = document.getElementById('root');
+         return {
+           hash: location.hash,
+           transparentClass: document.documentElement.classList.contains('overlay-transparent'),
+           bodyBg: getComputedStyle(document.body).backgroundColor,
+           rootChildren: root ? root.childElementCount : -1,
+           text: (root && root.innerText ? root.innerText : '').slice(0, 60),
+         };
+       })()`
+    )
+    .then((info) => logLine(`[overlay][diag] ${JSON.stringify(info)}`))
+    .catch((err) => logLine(`[overlay][diag] 回读失败: ${err.message}`));
+}
+
+function createOverlayWindow() {
+  if (isOverlayOpen()) return overlayWindow;
+
+  const b = resolveBoundsForDisplay(loadOverlaySettings().bounds);
+  // 把修正后的位置落盘：否则下次启动还要再算一遍，且 overlay.json 里的位置长期是坏的
+  overlaySettings.bounds = b;
+  saveOverlaySettings();
+
+  overlayWindow = new BrowserWindow({
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+    minWidth: 320,
+    minHeight: 100,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: true,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    show: false,
+    title: '听课伴侣字幕',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.cjs'),
+      // 学生切到浏览器看课时主窗口在后台，默认节流会把 500ms 轮询降到分钟级
+      backgroundThrottling: false,
+    },
+  });
+
+  // 'screen-saver' 是最高层级：不设的话会被浏览器全屏（F11）压在下面
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  if (process.platform === 'darwin') {
+    overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+
+  overlayWindow.once('ready-to-show', () => {
+    if (!isOverlayOpen()) return;
+    overlayWindow.showInactive(); // 不抢焦点，用户正在浏览器里打字时不该被打断
+    applyOverlaySettingsToWindow();
+    logLine(`[overlay] 悬浮窗已显示（穿透=${loadOverlaySettings().clickThrough ? '开' : '关'}）`);
+  });
+
+  overlayWindow.webContents.once('did-finish-load', () => {
+    logLine('[overlay] 页面加载完成');
+    broadcastOverlaySettings();
+    runOverlayDiagnostics();
+  });
+
+  overlayWindow.webContents.on('did-fail-load', (_e, errorCode, errorDesc, validatedURL) => {
+    logLine(`[overlay] 页面加载失败 code=${errorCode} desc=${errorDesc} url=${validatedURL}`);
+  });
+
+  // 用户拖动 / 缩放后落盘，下次启动还原到同一位置
+  let persistTimer = null;
+  const persistBounds = () => {
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      // 窗口创建/映射过程中也会触发 moved，此时窗口尚未显示、getBounds() 还是 0,0；
+      // 不挡掉的话会把「贴屏幕底部居中」的默认位置覆盖成左上角（实测踩过）。
+      if (!isOverlayOpen() || !overlayWindow.isVisible()) return;
+      const nb = overlayWindow.getBounds();
+      if (nb.width < 100 || nb.height < 50) return;
+      if (sameBounds(overlaySettings.bounds, nb)) return;
+      overlaySettings.bounds = { x: nb.x, y: nb.y, width: nb.width, height: nb.height };
+      saveOverlaySettings();
+      logLine(`[overlay] 位置/尺寸已保存: ${nb.x},${nb.y} ${nb.width}x${nb.height}`);
+      broadcastOverlaySettings();
+    }, 400);
+  };
+  overlayWindow.on('moved', persistBounds);
+  overlayWindow.on('resized', persistBounds);
+
+  overlayWindow.on('closed', () => {
+    overlayWindow = null;
+    notifyOverlayState();
+  });
+
+  const url = overlayPageUrl();
+  const wa = screen.getPrimaryDisplay().workArea;
+  logLine(
+    `[overlay] 窗口位置: ${b.x},${b.y} ${b.width}x${b.height} ` +
+    `（主屏工作区 ${wa.x},${wa.y} ${wa.width}x${wa.height}）`
+  );
+  logLine(`[overlay] 加载入口: ${url}`);
+  overlayWindow.loadURL(url);
+  return overlayWindow;
+}
+
+/** 仅销毁窗口，不改动 enabled（用于主窗口关闭 / 应用退出） */
+function destroyOverlayWindow() {
+  if (!isOverlayOpen()) return;
+  const win = overlayWindow;
+  overlayWindow = null; // 先置空：closed 回调据此判断是否还需广播状态
+  try {
+    win.destroy();
+  } catch (err) {
+    logLine(`[overlay] 销毁悬浮窗失败: ${err.message}`);
+  }
+}
+
+/** 用户主动关闭：同时记住「不要再自动打开」 */
+function closeOverlayWindow() {
+  loadOverlaySettings().enabled = false;
+  saveOverlaySettings();
+  destroyOverlayWindow();
+  notifyOverlayState();
+}
+
+function openOverlayWindow() {
+  loadOverlaySettings().enabled = true;
+  saveOverlaySettings();
+  createOverlayWindow();
+  notifyOverlayState();
+}
+
+/** 调整模式：临时关掉鼠标穿透，让用户可以拖动窗口 */
+function toggleOverlayInteractive() {
+  if (!isOverlayOpen()) return;
+  const s = loadOverlaySettings();
+  s.clickThrough = !s.clickThrough;
+  saveOverlaySettings();
+  applyOverlaySettingsToWindow();
+  broadcastOverlaySettings();
+  logLine(`[overlay] 鼠标穿透=${s.clickThrough ? '开' : '关（调整模式）'}`);
 }
 
 // ============ 端口分配 ============
@@ -462,16 +836,25 @@ const COMPAT_REPAINT_TIMEOUT_MS = 20000;
  * Electron 的正常退出流程，实测在本环境下会静默失效 —— 老进程退出了、
  * 新实例从未出现，且不产生任何报错，极难排查。
  * 直接 spawn 自身可执行文件，行为完全可控、可验证。
+ *
+ * 注意 appPath：打包后 process.execPath 本身就是应用（不需要路径参数），
+ * 但源码模式下它是 node_modules/electron/dist/electron.exe —— 不带应用路径时
+ * Electron 会退回到默认 app，找不到 main.cjs 便直接退出，且**不留任何日志**，
+ * 表现为「应用闪一下消失、日志停在 watchdog 那一行」。开发模式排查兼容问题时必看此处。
  */
 function relaunchInCompatMode() {
   try {
-    const child = spawn(process.execPath, COMPAT_RELAUNCH_ARGS, {
+    const args = app.isPackaged
+      ? [...COMPAT_RELAUNCH_ARGS]
+      : [...COMPAT_RELAUNCH_ARGS, app.getAppPath()];
+    const child = spawn(process.execPath, args, {
       detached: true, // 独立进程组，父进程退出后仍存活
       stdio: 'ignore',
+      cwd: app.getAppPath(),
       env: process.env,
     });
     child.unref();
-    logLine(`[watchdog] 已拉起兼容模式实例 pid=${child.pid}`);
+    logLine(`[watchdog] 已拉起兼容模式实例 pid=${child.pid} args=${args.join(' ')}`);
     return true;
   } catch (err) {
     logLine(`[watchdog] 拉起兼容模式实例失败: ${err.message}`);
@@ -523,6 +906,10 @@ function createWindow(port) {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
+      // 关键：学生开始识别后就会切到浏览器看网课，主窗口随即进入后台。
+      // Chromium 默认会把后台窗口的定时器降到分钟级，而 ASR 字幕靠 500ms
+      // 轮询驱动 —— 不关掉节流，字幕会在切走的一瞬间整体停住。
+      backgroundThrottling: false,
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
   });
@@ -554,6 +941,9 @@ function createWindow(port) {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    // 主窗口是悬浮窗的唯一入口与生命周期锚点：主窗口没了就必须销毁悬浮窗，
+    // 否则会留下一个永远置顶、点不掉、也没有 UI 能关掉它的孤儿窗口。
+    destroyOverlayWindow();
   });
 }
 
@@ -569,10 +959,45 @@ logLine(
 );
 logLine(`[env] 运行模式=${COMPAT_MODE ? '兼容模式（Chromium 沙箱已关闭）' : '标准模式'}`);
 
+/**
+ * 注册悬浮窗全局热键
+ *
+ * 悬浮窗默认鼠标穿透，用户点不到它也拖不动它 —— 必须留一条键盘通道，
+ * 否则「想挪一下位置」这件事在 UI 上无解。
+ * 注册失败（热键被别的软件占用）不应影响主流程，只记日志。
+ */
+function registerOverlayShortcuts() {
+  const bind = (accelerator, handler, label) => {
+    try {
+      const ok = globalShortcut.register(accelerator, handler);
+      logLine(`[overlay] 热键 ${accelerator}（${label}）注册${ok ? '成功' : '失败（可能被占用）'}`);
+    } catch (err) {
+      logLine(`[overlay] 热键 ${accelerator}（${label}）注册异常: ${err.message}`);
+    }
+  };
+  bind('Alt+Shift+O', () => {
+    if (isOverlayOpen()) closeOverlayWindow();
+    else openOverlayWindow();
+  }, '开关悬浮窗');
+  bind('Alt+Shift+D', toggleOverlayInteractive, '切换调整模式');
+}
+
+/** 上次退出时悬浮窗是开着的 → 本次启动自动恢复 */
+function restoreOverlayIfEnabled() {
+  if (!loadOverlaySettings().enabled) return;
+  try {
+    createOverlayWindow();
+  } catch (err) {
+    logLine(`[overlay] 自动恢复悬浮窗失败: ${err.message}`);
+  }
+}
+
 app.whenReady().then(async () => {
   try {
     const port = await launchBackend();
     createWindow(port);
+    restoreOverlayIfEnabled();
+    registerOverlayShortcuts();
   } catch (err) {
     logLine(`[fatal] 启动失败: ${err.message}`);
     dialog.showErrorBox(
@@ -586,6 +1011,8 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0 && backendPort) {
       createWindow(backendPort);
+      // macOS 关掉主窗口不退出应用，重新激活时按上次的 enabled 把悬浮窗一并还原
+      restoreOverlayIfEnabled();
     }
   });
 });
@@ -596,6 +1023,12 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  destroyOverlayWindow();
+  try {
+    globalShortcut.unregisterAll();
+  } catch (_) {
+    /* 忽略 */
+  }
   killBackend();
 });
 
@@ -617,3 +1050,93 @@ process.on('SIGTERM', () => {
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('get-backend-port', () => backendPort);
+
+// ---- 悬浮窗 ----
+
+ipcMain.handle('overlay:get-settings', () => loadOverlaySettings());
+
+ipcMain.handle('overlay:get-state', () => ({
+  open: isOverlayOpen(),
+  settings: loadOverlaySettings(),
+}));
+
+ipcMain.handle('overlay:set-settings', (_event, patch) => {
+  const current = loadOverlaySettings();
+  const incoming = patch && typeof patch === 'object' ? patch : {};
+  const merged = normalizeOverlaySettings({
+    ...current,
+    ...incoming,
+    // bounds 单独合并：渲染进程只改字号时不应把已有位置冲成 null
+    bounds: { ...current.bounds, ...(incoming.bounds || {}) },
+  });
+  overlaySettings = merged;
+  saveOverlaySettings();
+
+  if (isOverlayOpen()) {
+    const nb = overlayWindow.getBounds();
+    const want = merged.bounds;
+    const target = {
+      x: want.x === null ? nb.x : want.x,
+      y: want.y === null ? nb.y : want.y,
+      width: want.width,
+      height: want.height,
+    };
+    if (!sameBounds(nb, target)) {
+      try {
+        overlayWindow.setBounds(target);
+      } catch (err) {
+        logLine(`[overlay] 应用窗口尺寸失败: ${err.message}`);
+      }
+    }
+    applyOverlaySettingsToWindow();
+  }
+
+  broadcastOverlaySettings();
+  return merged;
+});
+
+ipcMain.handle('overlay:open', () => {
+  openOverlayWindow();
+  return { open: isOverlayOpen() };
+});
+
+ipcMain.handle('overlay:close', () => {
+  closeOverlayWindow();
+  return { open: isOverlayOpen() };
+});
+
+/**
+ * 把悬浮窗挪回默认位置（贴主屏工作区底部居中）
+ *
+ * 为什么需要单独的通道：设置里的 bounds.x/y 允许为 null（表示「没存过位置」），
+ * 于是 normalize 之后再回传 null 也无从区分「用户想把窗口放回默认位」。
+ * 用户把窗口拖到屏幕外或拖到只露出一角时，这是唯一的自救入口。
+ */
+ipcMain.handle('overlay:reset-position', () => {
+  const s = loadOverlaySettings();
+  const wa = screen.getPrimaryDisplay().workArea;
+  const target = {
+    x: Math.round(wa.x + (wa.width - s.bounds.width) / 2),
+    y: Math.round(wa.y + wa.height - s.bounds.height - 80),
+    width: s.bounds.width,
+    height: s.bounds.height,
+  };
+  s.bounds = target;
+  overlaySettings = s;
+  saveOverlaySettings();
+  if (isOverlayOpen()) {
+    try {
+      overlayWindow.setBounds(target);
+    } catch (err) {
+      logLine(`[overlay] 重置位置失败: ${err.message}`);
+    }
+  }
+  broadcastOverlaySettings();
+  return s;
+});
+
+// 字幕快照转发：主窗口（唯一轮询者）→ 主进程 → 悬浮窗
+ipcMain.on('overlay:subtitle', (_event, payload) => {
+  if (!isOverlayOpen() || overlayWindow.webContents.isDestroyed()) return;
+  overlayWindow.webContents.send('overlay:subtitle', payload);
+});

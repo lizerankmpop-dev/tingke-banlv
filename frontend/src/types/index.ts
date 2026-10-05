@@ -82,3 +82,37 @@ export type WSMessage =
 // ============ 应用状态 ============
 
 export type ASRStatus = 'idle' | 'listening' | 'processing' | 'loading' | 'error'
+
+// ============ 桌面字幕悬浮窗 ============
+//
+// 悬浮窗是独立 BrowserWindow（独立渲染进程、独立入口 #/overlay），
+// 它的设置由**主进程**持有并持久化到 <TINGKEBANLV_HOME>/overlay.json，
+// 渲染进程只通过 IPC 读写 —— 这样窗口位置/透明度这类必须由主进程
+// 直接作用到 BrowserWindow 的属性也有了唯一真理源，不会两处打架。
+
+export interface OverlayBounds {
+  x: number | null   // null = 首次启动，由主进程按屏幕右下角摆放
+  y: number | null
+  width: number
+  height: number
+}
+
+export interface OverlaySettings {
+  enabled: boolean          // 是否显示悬浮窗
+  fontSize: number          // 字幕字号 px
+  color: string             // 字幕颜色
+  lineCount: number         // 显示的历史字幕行数（含当前行）
+  textBgOpacity: number     // 当前句底色不透明度 0~1
+  windowOpacity: number     // 整个窗口不透明度 0.2~1
+  clickThrough: boolean     // 鼠标穿透（true 时不可点、不可拖）
+  bounds: OverlayBounds
+}
+
+/** 主渲染进程 → 悬浮窗 的字幕快照（唯一轮询者在主窗口，见 useSubtitleStore） */
+export interface OverlaySubtitlePayload {
+  lines: string[]           // 历史字幕（纯文本，最后一条最新）
+  currentText: string       // 当前实时字幕
+  status: ASRStatus
+  message: string
+  courseName: string
+}
