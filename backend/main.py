@@ -59,7 +59,7 @@ from fastapi.staticfiles import StaticFiles
 from api.routes import router
 from dependencies import db
 
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.4.0"
 
 # ============ 回环流量必须绕过系统代理 ============
 # 企业/校园网络常预设 HTTP_PROXY / HTTPS_PROXY，而 httpx 与 urllib 默认会信任

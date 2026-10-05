@@ -63,8 +63,54 @@ if (process.env.TINGKEBANLV_GPU_SANDBOX !== '1') {
 // JS/CSS 永不加载，页面停留在白屏（CDP 中 Runtime.evaluate 会超时）。
 // 这无法在启动前预判，因此采用「先正常启动，超时未渲染则自动降级重启」策略：
 // 见 createWindow() 中的 firstPaintWatchdog。COMPAT_MODE 即降级重启后的标记。
-const COMPAT_MODE = process.argv.includes('--tingkebanlv-compat');
+//
+// **记忆化**：一台机器一旦确认需要兼容模式，就把标记写进数据目录，之后直接以
+// 兼容模式启动。否则每次开应用都要「先崩一次渲染进程 → 白等 12 秒 → 再重启一遍」，
+// 而在部分机器上那次崩溃还会连带触发崩溃上报（实测最坏情况整个会话被拖住
+// 20 分钟），代价远高于读一个标记文件。
+// 恢复默认（重新启用渲染器沙箱）：设置 TINGKEBANLV_RENDER_SANDBOX=1，并删掉标记文件。
+function dataHome() {
+  return process.env.TINGKEBANLV_HOME || path.join(os.homedir(), '.tingkebanlv');
+}
+
+/** 兼容模式记忆标记；任何读写失败都当作「没有」，绝不因此影响启动 */
+const COMPAT_MARKER = path.join(dataHome(), '.compat-mode');
+
+function compatMarkerExists() {
+  if (process.env.TINGKEBANLV_RENDER_SANDBOX === '1') return false;
+  try {
+    return fs.existsSync(COMPAT_MARKER);
+  } catch (_) {
+    return false;
+  }
+}
+
+function markCompatModeNeeded() {
+  try {
+    fs.mkdirSync(path.dirname(COMPAT_MARKER), { recursive: true });
+    fs.writeFileSync(
+      COMPAT_MARKER,
+      JSON.stringify(
+        { at: new Date().toISOString(), reason: '渲染器沙箱被系统策略拦截，自动降级' },
+        null,
+        2
+      ),
+      'utf8'
+    );
+  } catch (_) {
+    /* 写不进去只会退化成「每次先试标准模式」，功能不受影响 */
+  }
+}
+
+const FORCED_COMPAT = compatMarkerExists();
+const COMPAT_MODE = process.argv.includes('--tingkebanlv-compat') || FORCED_COMPAT;
 const COMPAT_RELAUNCH_ARGS = ['--no-sandbox', '--tingkebanlv-compat'];
+
+// 命令行走的是 --no-sandbox 参数；从标记恢复时没有这个参数，必须自己补上，
+// 否则「这台机器需要兼容模式」这个判断只改了超时阈值、沙箱照样拦，白白再崩一次。
+if (COMPAT_MODE) {
+  app.commandLine.appendSwitch('no-sandbox');
+}
 
 // (3) 远程调试端口（排障用，默认关闭）
 // 悬浮窗是独立渲染进程，出问题时必须单独挂 DevTools 才能看到它的控制台；
@@ -429,8 +475,7 @@ const {
 let overlaySettings = null;
 
 function overlaySettingsPath() {
-  const home = process.env.TINGKEBANLV_HOME || path.join(os.homedir(), '.tingkebanlv');
-  return path.join(home, 'overlay.json');
+  return path.join(dataHome(), 'overlay.json');
 }
 
 /**
@@ -491,6 +536,15 @@ function sendToOverlay(channel, payload) {
 
 function sendToMain(channel, payload) {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
+  // 主窗口渲染进程挂掉后，BrowserWindow 对象还在、帧却已经没了。此时
+  // webContents.send() 不会抛错（我们的 try/catch 拦不住），而是由 Electron
+  // 内部打一行
+  //   Error sending from webFrameMain: Error: Render frame was disposed ...
+  // 直接刷在用户 stdout 上，看起来像应用报错。实测就是这么来的：
+  // render-process-gone → markHostAlive(false) → sendToMain 打到已销毁的帧。
+  // 所以这里以「主窗口是否健在」为准直接不发 —— 主窗口重新加载后，
+  // 设置与状态会被整体重播一遍，不会漏。
+  if (!hostAlive) return false;
   try {
     mainWindow.webContents.send(channel, payload);
     return true;
@@ -832,6 +886,22 @@ function startHeartbeatWatch() {
       markHostAlive(true, '悬浮窗未开，跳过探测');
       return;
     }
+    // 宽限期：一次心跳都还没收到过 → 只能说明渲染进程**还没启动完**，不能判失联。
+    // 心跳是「活着」的证据；在观察到活之前推不出死。
+    //
+    // 这个窗口必然存在：whenReady 里的顺序是 createWindow() 紧接着
+    // restoreOverlayIfEnabled()，悬浮窗几秒内就显示出来了，而主窗口的 React
+    // 要等页面加载完成才挂载（本机踩渲染器沙箱缺陷时还要多一次兼容模式重启，
+    // 20s 量级）。没有这条宽限，**每次启动**都会闪一条
+    // 「主窗口已断开，请重启应用」的红色横幅 —— 用户学会无视它之后，
+    // 这条提示就彻底失去意义了（这正是要做失联提示的那类场景）。
+    //
+    // 代价：渲染进程从未发出过心跳的死法不会被这里发现。但那类故障由
+    // render-process-gone / unresponsive 与启动 watchdog 覆盖，不靠心跳。
+    if (perfStats.heartbeats === 0) {
+      lastHeartbeatAt = Date.now();
+      return;
+    }
     if (Date.now() - lastHeartbeatAt > HEARTBEAT_STALE_MS) {
       perfStats.heartbeatMisses++;
       markHostAlive(false, `超过 ${HEARTBEAT_STALE_MS}ms 未收到渲染进程心跳`);
@@ -1120,21 +1190,45 @@ const COMPAT_REPAINT_TIMEOUT_MS = 20000;
  * 表现为「应用闪一下消失、日志停在 watchdog 那一行」。开发模式排查兼容问题时必看此处。
  */
 function relaunchInCompatMode() {
+  // cwd 必须是一个真实存在的**目录**。踩过的坑：打包后 app.getAppPath() 指向
+  // `<安装目录>\resources\app.asar` —— 那是一个**文件**，把它当 cwd 传给 spawn，
+  // 底层直接以 ENOENT 失败，而错误信息里出现的是 exe 路径，
+  // 看起来像「找不到程序」，极容易误判。
+  // 这个 bug 只在实装后暴露：源码模式下 getAppPath() 是仓库目录，一切正常，
+  // 所以 CDP 冒烟全绿也照样带着它出门。
+  const cwd = app.isPackaged ? path.dirname(process.execPath) : app.getAppPath();
+  const args = app.isPackaged
+    ? [...COMPAT_RELAUNCH_ARGS]
+    : [...COMPAT_RELAUNCH_ARGS, app.getAppPath()];
+
+  // 先把标记落下：即便下面 spawn 失败，用户下次手动双击也会直接进兼容模式，
+  // 不至于反复卡在同一个坑里
+  markCompatModeNeeded();
+
   try {
-    const args = app.isPackaged
-      ? [...COMPAT_RELAUNCH_ARGS]
-      : [...COMPAT_RELAUNCH_ARGS, app.getAppPath()];
     const child = spawn(process.execPath, args, {
       detached: true, // 独立进程组，父进程退出后仍存活
       stdio: 'ignore',
-      cwd: app.getAppPath(),
+      cwd,
       env: process.env,
     });
+    // spawn 的失败是**异步**的（走 'error' 事件）。不挂监听的话它会一路冒到
+    // uncaughtException —— 实测就是这样：日志里只剩一行堆栈，用户什么提示都
+    // 看不到，而调用方以为已经成功拉起了新实例。挂上监听后，是否成功改由
+    // 返回值（pid）决定，调用方才能正确地弹出错误框。
+    child.on('error', (err) => {
+      logError(`[watchdog] 兼容模式实例启动失败: ${err.message}`);
+    });
+    // pid 取不到 = 底层 spawn 没成功，此时绝不能报「已拉起」
+    if (!child.pid) {
+      logError('[watchdog] 兼容模式实例未取到 pid，判定为拉起失败');
+      return false;
+    }
     child.unref();
-    logLine(`[watchdog] 已拉起兼容模式实例 pid=${child.pid} args=${args.join(' ')}`);
+    logLine(`[watchdog] 已拉起兼容模式实例 pid=${child.pid} cwd=${cwd} args=${args.join(' ')}`);
     return true;
   } catch (err) {
-    logLine(`[watchdog] 拉起兼容模式实例失败: ${err.message}`);
+    logError(`[watchdog] 拉起兼容模式实例失败: ${err.message}`);
     return false;
   }
 }
@@ -1265,7 +1359,10 @@ logLine(
   `[env] disable-gpu-sandbox=` +
   (process.env.TINGKEBANLV_GPU_SANDBOX === '1' ? '未启用（用户显式恢复默认）' : '已启用')
 );
-logLine(`[env] 运行模式=${COMPAT_MODE ? '兼容模式（Chromium 沙箱已关闭）' : '标准模式'}`);
+logLine(
+  `[env] 运行模式=${COMPAT_MODE ? '兼容模式（Chromium 沙箱已关闭）' : '标准模式'}` +
+  (FORCED_COMPAT ? `（来自记忆标记 ${path.basename(COMPAT_MARKER)}，跳过标准模式重试）` : '')
+);
 
 /**
  * 注册悬浮窗全局热键
@@ -1509,6 +1606,10 @@ ipcMain.on('overlay:subtitle', (_event, payload) => {
 ipcMain.on('app:heartbeat', () => {
   lastHeartbeatAt = Date.now();
   perfStats.heartbeats++;
+  // 首个心跳打一行 info：把「整段时间都没出现失联告警」这种**否定式**证据
+  // 变成「链路确实通过」的**肯定式**证据。每次启动只此一行，成本可忽略。
+  // （实装验证脚本 verify_install.py 依赖这行判定心跳链路是否真的通了）
+  if (perfStats.heartbeats === 1) logLine('[overlay] 心跳链路已通（收到首个渲染进程心跳）');
   if (!hostAlive) markHostAlive(true, '心跳恢复');
 });
 

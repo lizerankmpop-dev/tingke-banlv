@@ -17,14 +17,27 @@
      目录原样保留），是本次实装才暴露出来的。
   4. **注册表项**：装了要在「设置 → 应用」可见，卸载后要消失。
 
-另外内置模型是新增能力，必须验证**不设任何环境变量**时，冻结 exe 能从
+v3.4.0 起新增 **S 层（稳定性加固）断言**。为什么非要在「实装」这一步做：
+`overlay-settings.cjs` 的单元测试用的是内存 fs 桩，真实文件系统的权限、
+路径解析、原子改名语义都不在覆盖范围里；而主进程的迁移 / 节流 / 心跳
+三条链路又恰好全部只在打包后的 Electron 运行时里才会真正跑起来。
+
+    · 配置 v1→v3 迁移 + 迁移后用户设置原样保留（字号/颜色不能被重置）
+    · 原子写无残留（overlay.json.tmp / .lock 必须为空）
+    · 悬浮窗按 `enabled: true` 自动恢复
+    · 节流决策：出口=悬浮窗时必须「不节流」（否则字幕会停）
+    · IPC 心跳链路：必须至少收到一次渲染进程心跳，且全程无失联误报
+    · 重启后配置与窗口位置保持，且不再重复迁移
+    · 模块加载 / 数据目录权限（Cannot find module、EACCES/EPERM）无报错
+
+另外内置模型是 v3.1.0 起的能力，必须验证**不设任何环境变量**时，冻结 exe 能从
 `<安装目录>/resources/whisper_models` 自动反推出种子目录（model_bootstrap
 的三级解析里，env 那一级在真实用户机上是空的）。
 
 用法
 ----
     <venv>/Scripts/python.exe scripts/verify_install.py \
-        --installer frontend/release/tingkebanlv-3.1.0-setup.exe \
+        --installer frontend/release/tingkebanlv-3.4.0-setup.exe \
         [--hold 150] [--report packaging/verify/report.json]
 
 退出码：0 全部通过；1 有阻断项失败。报告同时落盘 JSON 与文末摘要。
@@ -61,6 +74,47 @@ LOG_ERROR_MARKERS = (
 )
 LOG_OK_MARKERS = ("界面加载完成",)
 
+# ---- S 层断言用的日志锚点 ----
+# 全部与 frontend/electron/main.cjs 里的字面量一一对应，改那边必须同步改这里。
+# 刻意用「精确字面量」而不是宽松正则：宁可脚本报「标记缺失」让人来核对，
+# 也不要因为正则太宽把一次真实的失败判成通过。
+MIGRATION_LOG = "配置已从旧版本迁移到 schemaVersion="
+OVERLAY_SHOWN_LOG = "[overlay] 悬浮窗已显示"
+OVERLAY_LOADED_LOG = "[overlay] 页面加载完成"
+HEARTBEAT_OK_LOG = "[overlay] 心跳链路已通"
+HOST_LOST_LOG = "[overlay] 主窗口失联"
+# 失联告警分两类：渲染进程真崩了（正确提示）vs 心跳超时（误报）。
+# 只有后者算失败 —— 前者恰恰是「该提示的时候必须提示」。
+HOST_CRASHED_LOG = "[fatal] 主窗口渲染进程退出"
+HB_TIMEOUT_LOST_LOG = "未收到渲染进程心跳"
+THROTTLE_LOG = "[perf] 后台节流="
+
+# Electron 主进程向「已销毁的渲染帧」发消息时，会由内部打一行
+#   Error sending from webFrameMain: Error: Render frame was disposed ...
+# 它只出现在渲染进程崩溃之后，属于 Electron 自身的告警，不是应用缺陷。
+# 不过滤掉的话，「stdout 无致命字样」这项会被它永久污染。
+BENIGN_STDIO_MARKERS = ("Error sending from webFrameMain",)
+
+# 打包后「模块找不到」与「目录不可写」这两类问题都不会弹窗、界面看着照常，
+# 只会静默退回默认配置 —— 所以必须主动搜日志。
+MODULE_ERROR_MARKERS = ("Cannot find module", "MODULE_NOT_FOUND")
+PERMISSION_ERROR_MARKERS = ("EACCES", "EPERM")
+
+# 模拟「老用户升级」用的 v1 配置。三个关键缺失：无 schemaVersion、
+# 无 backgroundUpdate（v1 时代是硬编码不节流）、无 anchor（多屏自愈是 v3 才有的）。
+# fontSize=30 是个**非默认值**：迁移若写成「整体替换为默认配置」，
+# 用户自己调好的字号/颜色会被静默抹掉 —— 这类 bug 不报错，只能靠逐字段核对。
+LEGACY_V1_OVERLAY = {
+    "enabled": True,
+    "fontSize": 30,
+    "color": "#ff5a5f",
+    "lineCount": 4,
+    "textBgOpacity": 0.5,
+    "windowOpacity": 1,
+    "clickThrough": True,
+    "bounds": {"x": None, "y": None, "width": 900, "height": 220},
+}
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -69,10 +123,11 @@ def now_iso() -> str:
 class Report:
     """收集每步结果，最后落盘 JSON"""
 
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
         self.started = now_iso()
         self.steps: list[dict] = []
         self.passed = True
+        self.path = path
 
     def step(self, name: str, ok: bool, detail: str = "", data=None, critical: bool = True) -> bool:
         entry = {
@@ -89,9 +144,16 @@ class Report:
             self.passed = False
         tag = " OK " if ok else ("FAIL" if critical else "WARN")
         print(f"[{tag}] {name}: {detail}")
+        # 每一步都落盘。踩过的坑：报告原本只在结尾写一次，而这一轮验证的进程被
+        # 环境中途杀掉（本机跑 700MB 的全新安装时，杀软首次扫描会把整个会话拖住），
+        # 结果是「跑了半小时、一个结论都没留下」，只能靠翻日志反推。
+        # 写一份 JSON 的成本远低于丢整轮证据。
+        if self.path is not None:
+            self.dump(self.path, quiet=True)
         return ok
 
-    def dump(self, path: Path) -> None:
+    def dump(self, path: Path | None = None, quiet: bool = False) -> None:
+        target = Path(path or self.path or "packaging/verify/report.json")
         payload = {
             "app": APP_NAME,
             "startedAt": self.started,
@@ -99,9 +161,10 @@ class Report:
             "passed": self.passed,
             "steps": self.steps,
         }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"\n报告已写入: {path}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        if not quiet:
+            print(f"\n报告已写入: {target}")
 
 
 # ============ 通用工具 ============
@@ -200,6 +263,32 @@ def http_ok(url: str, timeout: float = 5.0) -> bool:
         return False
 
 
+def read_overlay_json(home: Path) -> dict | None:
+    """读 overlay.json；不存在 / 损坏 / 权限不足都返回 None（由调用方决定怎么判）"""
+    try:
+        return json.loads((home / "overlay.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def overlay_residue(home: Path) -> list[str]:
+    """
+    原子写与文件锁的残留：`overlay.json.tmp` / `overlay.json.lock`
+
+    正常退出后这两个都必须是空的：
+      · 留下 .tmp → 进程在 rename 之前就死了，下次启动读到的是**旧**配置
+      · 留下 .lock → releaseLock 没执行到（下次要靠 5s 陈旧判定自学，能用但会白重试一次）
+
+    注意 `overlay.json.bad` 不在检查范围：那是配置损坏时**刻意**留下的证据文件，
+    保留它是对的（直接删掉会让用户彻底无法自救）。
+    """
+    if not home.is_dir():
+        return []
+    return sorted(
+        p.name for p in home.glob("overlay.json.*") if p.suffix in (".tmp", ".lock")
+    )
+
+
 # ============ 主流程 ============
 
 def discover_install_dir(local_appdata: Path) -> Path | None:
@@ -267,7 +356,7 @@ def main() -> int:
     args = parser.parse_args()
 
     installer = Path(args.installer).resolve()
-    report = Report()
+    report = Report(Path(args.report))
 
     print("=" * 76)
     print(f"{APP_NAME} 安装包分发验证")
@@ -471,6 +560,21 @@ def main() -> int:
             report.dump(Path(args.report))
             return 0
 
+        # ---------- 3b. 预置一份「老用户」的 v1 配置 ----------
+        # 把「老用户升级」这条路径变成可断言的。先写一份 v1 格式的 overlay.json
+        # （无 schemaVersion / 无 backgroundUpdate / 无 anchor，且 fontSize=30 非默认），
+        # 启动后逐字段核对：该补的补上了、该留的一个没丢。
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "overlay.json").write_text(
+            json.dumps(LEGACY_V1_OVERLAY, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        report.step(
+            "预置 v1 配置（模拟老用户升级）",
+            True,
+            "overlay.json：无 schemaVersion / 无 anchor / fontSize=30（非默认，用于验证不被重置）",
+            critical=False,
+        )
+
         # ---------- 4. 启动应用 + 稳定性长测 ----------
         if log_file.exists():
             log_file.unlink()  # 只看本次启动的日志
@@ -640,6 +744,149 @@ def main() -> int:
             log_file.is_file() and bool(text),
             f"{log_file}（{len(text.splitlines())} 行）",
         )
+
+        # ---------- 4b. S 层稳定性加固断言 ----------
+        # 悬浮窗在主窗口之后创建、页面异步加载，所以先等它就位，再统一取一次日志
+        # 快照做断言（下面的断言全都基于这一份，避免「前半段读到的是旧内容」）。
+        overlay_ready = wait_for(
+            lambda: OVERLAY_SHOWN_LOG in read_log() and OVERLAY_LOADED_LOG in read_log(),
+            timeout=90,
+            interval=1.0,
+        )
+        text = read_log()
+
+        report.step(
+            "S层·悬浮窗自动恢复",
+            overlay_ready,
+            "上次 enabled=true → 本次已自动创建并加载完成"
+            if overlay_ready
+            else "90s 内未见「悬浮窗已显示 / 页面加载完成」，自动恢复失效",
+        )
+
+        migrated = MIGRATION_LOG in text
+        report.step(
+            "S层·配置迁移 v1→v3",
+            migrated,
+            "日志出现「配置已从旧版本迁移到 schemaVersion=3」"
+            if migrated
+            else "未触发迁移（v1 配置被当成 v3 读了，老用户会丢设置）",
+        )
+
+        cfg = read_overlay_json(home) or {}
+        cfg_bounds = cfg.get("bounds") or {}
+        preserved = all(
+            (
+                cfg.get("schemaVersion") == 3,
+                cfg.get("fontSize") == 30,          # 用户改过的值必须原样保留
+                cfg.get("color") == "#ff5a5f",
+                cfg.get("backgroundUpdate") is True,  # v1→v2 补的默认值
+                isinstance(cfg.get("anchor"), dict),  # v2→v3 补的锚点
+                isinstance(cfg_bounds.get("x"), int),  # 未存位置 → 必须算出真实坐标
+                isinstance(cfg_bounds.get("y"), int),
+            )
+        )
+        report.step(
+            "S层·迁移后设置保留",
+            preserved,
+            "schemaVersion=3 / fontSize=30 与颜色原样保留 / 已补 backgroundUpdate 与 anchor / 坐标已落盘"
+            if preserved
+            else f"迁移结果不符预期: {json.dumps(cfg, ensure_ascii=False)[:500]}",
+            data={"config": cfg},
+        )
+
+        residue = overlay_residue(home)
+        report.step(
+            "S层·原子写无残留",
+            not residue,
+            "无 .tmp / .lock 残留" if not residue else f"残留 {residue}（原子写或锁释放未收尾）",
+        )
+
+        throttle_line = next((ln for ln in text.splitlines() if THROTTLE_LOG in ln), "")
+        throttle_ok = "后台节流=关" in throttle_line and "出口=悬浮窗" in throttle_line
+        report.step(
+            "S层·节流决策（有出口不节流）",
+            throttle_ok,
+            throttle_line.strip() if throttle_line
+            else "日志中没有 [perf] 后台节流= 行，节流策略从未生效",
+        )
+
+        hb_ok = HEARTBEAT_OK_LOG in text and HB_TIMEOUT_LOST_LOG not in text
+        report.step(
+            "S层·IPC 心跳链路",
+            hb_ok,
+            "已收到渲染进程心跳，且无「心跳超时型」失联误报"
+            if hb_ok
+            else (
+                "出现「超过 8000ms 未收到渲染进程心跳」→ 心跳监视误报（悬浮窗会闪红条）"
+                if HB_TIMEOUT_LOST_LOG in text
+                else "未见「心跳链路已通」，渲染进程根本没发出心跳"
+            ),
+            data={
+                # 渲染进程真崩过时，跟着出现的「主窗口失联」是**正确**行为：
+                # 悬浮窗此刻确实该提示用户。真正要防的是心跳超时造成的误报，
+                # 所以两者分开记，只对后者判定失败。
+                "crashDerivedHostLost": HOST_CRASHED_LOG in text,
+                "heartbeatTimeoutHostLost": HB_TIMEOUT_LOST_LOG in text,
+            },
+        )
+
+        mod_bad = [m for m in MODULE_ERROR_MARKERS if m in text]
+        report.step(
+            "S层·模块加载无报错",
+            not mod_bad,
+            "overlay-settings.cjs 随包正常加载" if not mod_bad
+            else f"命中 {mod_bad}（打包后模块路径解析有问题）",
+        )
+
+        perm_bad = [m for m in PERMISSION_ERROR_MARKERS if m in text]
+        report.step(
+            "S层·数据目录可写（无 EACCES）",
+            not perm_bad,
+            f"overlay.json 读写正常（{home}）" if not perm_bad
+            else f"命中 {perm_bad}，真实用户机可能受权限策略限制",
+        )
+
+        # 兼容模式记忆：这台机器一旦确认渲染器沙箱被拦，就要把标记落下，
+        # 否则每次开应用都要「先崩一次渲染进程 + 白等 12 秒」。
+        # 断言的是**一致性**而不是「必须有标记」：标准模式一次渲染成功的机器
+        # 本来就不该有标记，那种情况下这一步自动通过。
+        watchdog_fired = "判定为 Chromium 沙箱被系统策略拦截" in text
+        compat_marker = (home / ".compat-mode").is_file()
+        report.step(
+            "S层·兼容模式记忆",
+            (not watchdog_fired) or compat_marker,
+            "标准模式一次渲染成功，无需兼容模式"
+            if not watchdog_fired
+            else (
+                "已写 .compat-mode，下次启动直接进兼容模式"
+                if compat_marker
+                else "降级重启后没写记忆标记 → 下次启动还要再崩一次"
+            ),
+        )
+        if watchdog_fired:
+            # 这是本轮实装才暴露的阻断级缺陷：cwd 传成了 app.asar（文件），
+            # spawn 直接 ENOENT。日志里错误信息指向 exe 路径，很容易误判成
+            # 「找不到程序」。
+            spawn_failed = "调用失败" in text or "ENOENT" in text
+            report.step(
+                "S层·兼容模式重启成功拉起",
+                not spawn_failed,
+                "降级实例已成功启动"
+                if not spawn_failed
+                else "降级重启失败（打包后 cwd/appPath 解析错误），应用将无法显示界面",
+            )
+
+        # 主进程的未捕获异常一律视为缺陷。这一条是本轮新加的回归护栏：
+        # 修复前的日志里正是这样一行 —— spawn 的异步失败没被监听，
+        # 一路冒到 uncaughtException，用户什么提示都看不到。
+        uncaught = [m for m in ("未捕获异常", "未处理的 Promise 拒绝") if m in text]
+        report.step(
+            "S层·主进程无未捕获异常",
+            not uncaught,
+            "无未捕获异常 / 无未处理的 Promise 拒绝" if not uncaught
+            else f"命中 {uncaught}，详见 electron.log",
+        )
+
         # 这个应用的 logLine() 同时写文件与 console.log。打包后接管道时
         # stdout 是能收到的，所以「有输出」是**正常现象**，不是错误；
         # 真正值得看的是里面有没有异常字样 —— 而且这份文件的另一层价值是
@@ -648,7 +895,14 @@ def main() -> int:
             stdio_peek = app_stdio.read_text(encoding="utf-8", errors="replace")
         except OSError:
             stdio_peek = ""
-        stdio_bad = [m for m in ("Traceback", "Error: ", "FATAL") if m in stdio_peek]
+        stdio_bad = [
+            m
+            for m in ("Traceback", "Error: ", "FATAL")
+            if any(
+                m in ln and not any(b in ln for b in BENIGN_STDIO_MARKERS)
+                for ln in stdio_peek.splitlines()
+            )
+        ]
         report.step(
             "应用 stdout/stderr 无致命字样",
             not stdio_bad,
@@ -674,6 +928,99 @@ def main() -> int:
         stdio_text = ""
         try:
             stdio_text = app_stdio.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+
+        # ---------- 5b. 重启持久化 ----------
+        # 只有「关掉再开」这条路径才会暴露的问题：窗口位置到底有没有真的落盘、
+        # 上次开着的悬浮窗这次还会不会自己回来、迁移会不会每次启动都重跑一遍。
+        #
+        # logLine 是按天归档的，重启不会新建日志文件 —— 所以先把第一轮日志复制
+        # 一份留档，再删掉 electron.log 让第二轮从空文件开始。否则「这一轮有没有
+        # 出现 XX」会被上一轮的内容污染，`MIGRATION_LOG not in text2` 这种断言
+        # 会永远为假。
+        try:
+            shutil.copy2(log_file, Path(args.report).parent / "electron-run1.log")
+        except OSError:
+            pass
+
+        before_bounds = (read_overlay_json(home) or {}).get("bounds") or {}
+        try:
+            log_file.unlink()
+        except OSError:
+            pass
+
+        print("\n开始重启持久化校验…")
+        app_stdio2 = Path(args.report).parent / "app-stdio-run2.log"
+        stdio_handle2 = app_stdio2.open("wb")
+        subprocess.Popen(
+            [str(app_exe)],
+            stdout=stdio_handle2,
+            stderr=subprocess.STDOUT,
+            env=clean_env({"TINGKEBANLV_HOME": str(home)}),
+        )
+        entered2 = wait_for(lambda: log_file.is_file(), timeout=25, interval=1.0)
+        painted2 = wait_for(
+            lambda: any(marker in read_log() for marker in LOG_OK_MARKERS),
+            timeout=150,
+            interval=1.0,
+        )
+        restored2 = wait_for(
+            lambda: OVERLAY_SHOWN_LOG in read_log(), timeout=90, interval=1.0
+        )
+        text2 = read_log()
+
+        report.step(
+            "S层·重启后悬浮窗自动恢复",
+            entered2 and painted2 and restored2,
+            "重启后主窗口加载完成，且悬浮窗按已保存的 enabled 自动恢复"
+            if (entered2 and painted2 and restored2)
+            else f"进入GUI={entered2} / 界面加载={painted2} / 悬浮窗恢复={restored2}",
+        )
+        report.step(
+            "S层·重启不重复迁移",
+            entered2 and MIGRATION_LOG not in text2,
+            "已是 schemaVersion=3，未再触发迁移"
+            if MIGRATION_LOG not in text2
+            else "重启后又报了一次迁移 → 上一轮没有把迁移结果落盘",
+        )
+
+        # 上一轮若落下了兼容模式标记，这一轮必须直接走兼容模式：
+        # 这是「用户第二次开应用不再白等 12 秒」的验收点。
+        if compat_marker:
+            via_marker = "来自记忆标记" in text2
+            report.step(
+                "S层·重启直接走兼容模式记忆",
+                via_marker,
+                "启动日志确认「来自记忆标记」，未再经历一次渲染进程崩溃"
+                if via_marker
+                else "标记存在但本轮回到了标准模式，记忆化没生效",
+            )
+
+        after_bounds = (read_overlay_json(home) or {}).get("bounds") or {}
+        kept = all(
+            before_bounds.get(key) == after_bounds.get(key)
+            for key in ("x", "y", "width", "height")
+        ) and before_bounds.get("x") is not None
+        report.step(
+            "S层·重启后窗口位置保持",
+            kept,
+            f"{before_bounds} 保持不变"
+            if kept
+            else f"位置在重启后被改写: {before_bounds} → {after_bounds}",
+            data={"before": before_bounds, "after": after_bounds},
+        )
+
+        run(["taskkill", "/IM", f"{APP_NAME}.exe", "/T", "/F"], timeout=60)
+        gone2 = wait_for(lambda: app_process_count() == 0, timeout=30, interval=1.0)
+        report.step(
+            "重启轮退出后无残留进程",
+            gone2,
+            "无残留" if gone2 else f"仍有 {app_process_count()} 个 {APP_NAME}.exe 在运行",
+            critical=False,
+        )
+        try:
+            stdio_handle2.close()
         except OSError:
             pass
 
