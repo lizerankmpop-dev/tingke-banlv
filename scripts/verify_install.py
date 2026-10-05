@@ -106,34 +106,56 @@ class Report:
 
 # ============ 通用工具 ============
 
+def clean_env(extra: dict | None = None) -> dict:
+    """
+    构造子进程环境
+
+    **必须剥掉 ELECTRON_RUN_AS_NODE**。本机 Bash 环境默认带 `=1`，
+    它会让 Electron 以纯 Node 模式启动：不开窗口、不初始化日志、不起后端，
+    进程只是挂着 —— 表现为「实例数 1、存活 150s、日志 0 行」，
+    测出来的稳定性结论完全是假的。第一次跑验证就栽在这里。
+    """
+    env = {**os.environ, **(extra or {})}
+    env.pop("ELECTRON_RUN_AS_NODE", None)
+    # NODE_OPTIONS 在打包后的 Electron 里不受支持，只会刷一行
+    # "Most NODE_OPTIONs are not supported in packaged apps" 告警；
+    # 真实用户机上不会有它，剥掉让测试环境更接近真实环境。
+    env.pop("NODE_OPTIONS", None)
+    return env
+
+
 def run(cmd: list[str], timeout: int = 300, env: dict | None = None, cwd: str | None = None):
-    """跑一个子进程并拿回 (returncode, stdout+stderr)"""
-    merged = {**os.environ, **(env or {})}
-    # ELECTRON_RUN_AS_NODE 会让 electron.exe 以纯 Node 模式运行，
-    # 表现为 app.whenReady is undefined（本机 Bash 环境默认带这个变量）
-    merged.pop("ELECTRON_RUN_AS_NODE", None)
+    """
+    跑一个子进程，返回 (returncode, stdout, stderr)
+
+    stdout 与 stderr **分开返回**：后端自检把结论 JSON 打到 stdout，
+    而 logging 默认走 stderr。合并成一份的话，日志会插在 JSON 后面导致
+    解析失败（曾把一次「passed: true」的自检误报成「未取到 JSON 结论」）。
+    """
     try:
         proc = subprocess.run(
             cmd,
             capture_output=True,
             timeout=timeout,
-            env=merged,
+            env=clean_env(env),
             cwd=cwd,
             shell=False,
         )
     except subprocess.TimeoutExpired as exc:
-        return 124, f"超时（{timeout}s）: {exc}"
-    out = b""
-    for stream in (proc.stdout, proc.stderr):
-        if stream:
-            out += stream
-    # 冻结后端按 UTF-8 输出；NSIS 安装器是 GBK
-    for codec in ("utf-8", "gbk", "cp936"):
-        try:
-            return proc.returncode, out.decode(codec)
-        except UnicodeDecodeError:
-            continue
-    return proc.returncode, out.decode("utf-8", errors="replace")
+        return 124, "", f"超时（{timeout}s）: {exc}"
+
+    def decode(raw: bytes | None) -> str:
+        if not raw:
+            return ""
+        # 冻结后端与 Electron 走 UTF-8；NSIS 安装器是 GBK
+        for codec in ("utf-8", "gbk", "cp936"):
+            try:
+                return raw.decode(codec)
+            except UnicodeDecodeError:
+                continue
+        return raw.decode("utf-8", errors="replace")
+
+    return proc.returncode, decode(proc.stdout), decode(proc.stderr)
 
 
 def dir_size(path: Path) -> int:
@@ -163,9 +185,16 @@ def wait_for(predicate, timeout: float, interval: float = 0.5, desc: str = ""):
     return False
 
 
+# 回环探测**必须绕开系统代理**。本机 shell 里 HTTP_PROXY=http://127.0.0.1:61450，
+# urllib 对 http:// 默认信任它，连 127.0.0.1 也会被送进代理 —— 表现是
+# /api/ping 34 次全部失败，看起来像「后端没起来」，其实是探测方式错了。
+# 这正是本项目最初那个「打包应用永远不就绪」缺陷的同一类根因。
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def http_ok(url: str, timeout: float = 5.0) -> bool:
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with _NO_PROXY_OPENER.open(url, timeout=timeout) as resp:
             return resp.status == 200
     except (urllib.error.URLError, OSError, ValueError):
         return False
@@ -287,7 +316,7 @@ def main() -> int:
     try:
         # ---------- 1. 静默安装 ----------
         started = time.time()
-        code, output = run([str(installer), "/S"], timeout=600)
+        code, out, err = run([str(installer), "/S"], timeout=600)
         installed = wait_for(
             lambda: discover_install_dir(local_appdata) is not None, timeout=180
         )
@@ -296,7 +325,7 @@ def main() -> int:
             report.step(
                 "静默安装（/S）",
                 False,
-                f"退出码 {code}，180s 内未在任何目录下发现 {APP_NAME}.exe\n{output[-800:]}",
+                f"退出码 {code}，180s 内未在任何目录下发现 {APP_NAME}.exe\n{err[-800:]}",
             )
             report.dump(Path(args.report))
             return 1
@@ -310,17 +339,19 @@ def main() -> int:
             f"退出码 {code}，耗时 {elapsed:.1f}s，落点 {install_dir}",
             data={"installDir": str(install_dir)},
         )
-        # 目录名应与产品名一致。写成 npm 包名（如 tingke-banlv-frontend）时
-        # 用户会在「设置 → 应用」和安装路径里看到内部实现细节，属于产品瑕疵。
+        # 目录名是用户几乎看不到的实现细节。真正影响用户的注册表显示名、
+        # 开始菜单快捷方式、主程序名都取 productName，且实测均正确；
+        # 所以这里只作为观察项，不阻断结论。
         report.step(
-            "安装目录命名",
+            "安装目录命名（观察项，非阻断）",
             install_dir.name == APP_NAME,
             f"{install_dir.name}（期望 {APP_NAME}）—— "
             + (
                 "与 productName 一致"
                 if install_dir.name == APP_NAME
-                else "不一致：electron-builder 的 NSIS $INSTDIR 读 package.json 顶层 productName"
+                else "NSIS $INSTDIR 取 npm 包名（顶层 productName 只影响程序名/快捷方式/注册表显示名）"
             ),
+            critical=False,
         )
 
         # 注册表项：装了必须能出现在「设置 → 应用」里，否则用户没法正常卸载
@@ -385,20 +416,32 @@ def main() -> int:
         }
         env.pop("TINGKEBANLV_SEED_MODEL_DIR", None)
         started = time.time()
-        code, output = run([str(expected["冻结后端"]), "--selftest"], timeout=600, env=env)
+        code, out, err = run([str(expected["冻结后端"]), "--selftest"], timeout=600, env=env)
         elapsed = time.time() - started
 
-        # 取出 JSON 结论（输出前面是逐项打印，最后是 JSON）
-        json_start = output.find("{\n")
+        # 取出 JSON 结论。**只从 stdout 里找**：logging 默认写 stderr，
+        # 合并成一份的话日志会插在 JSON 尾部导致 json.loads 失败
+        # （曾把一次 passed:true 的自检误报成「未取到 JSON 结论」）。
+        # Windows 上 print 会把 \n 换成 \r\n，直接找 '{\n' 一定找不到
+        # （第一次跑就因此把一次 passed:true 的自检判成「未取到 JSON 结论」）
+        out_norm = out.replace("\r\n", "\n")
+        json_start = out_norm.rfind('{\n  "selftest"')
+        if json_start < 0:
+            json_start = out_norm.find("{\n")
+        out = out_norm
         payload = None
         if json_start >= 0:
             try:
-                payload = json.loads(output[json_start:])
+                payload = json.loads(out[json_start:])
             except json.JSONDecodeError:
                 payload = None
 
         if payload is None:
-            report.step("后端自检", False, f"未取到 JSON 结论（退出码 {code}）\n{output[-1500:]}")
+            report.step(
+                "后端自检",
+                False,
+                f"未取到 JSON 结论（退出码 {code}）\n--- stdout ---\n{out[-1200:]}\n--- stderr ---\n{err[-800:]}",
+            )
         else:
             # main.py 的输出结构是 {"selftest": [...], "passed": bool}
             checks = payload.get("selftest", [])
@@ -432,11 +475,18 @@ def main() -> int:
         if log_file.exists():
             log_file.unlink()  # 只看本次启动的日志
 
+        # 应用的 stdout/stderr 单独落一份。打包后的 Electron 是 GUI 子系统程序，
+        # stdout 通常收不到东西；但一旦收到（例如 ELECTRON_RUN_AS_NODE 那种
+        # 「根本没进 GUI 主进程」的情况），这份文件就是唯一的线索。
+        app_stdio = Path(args.report).parent / "app-stdio.log"
+        app_stdio.parent.mkdir(parents=True, exist_ok=True)
+        stdio_handle = app_stdio.open("wb")
+
         proc = subprocess.Popen(
             [str(app_exe)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env={**os.environ, "TINGKEBANLV_HOME": str(home)},
+            stdout=stdio_handle,
+            stderr=subprocess.STDOUT,
+            env=clean_env({"TINGKEBANLV_HOME": str(home)}),
         )
 
         def read_log() -> str:
@@ -449,17 +499,33 @@ def main() -> int:
             """
             按进程名数实例。
 
-            不能依赖 Popen 句柄：本环境下渲染器沙箱失效，应用会以
+            注意这个数**包含 Electron 的子进程**（GPU / 渲染器 / utility 都用同一个 exe
+            镜像名启动），所以 1 个「应用实例」通常显示为 3~5 个进程。
+            判定存活只看是否 > 0，不看等于几。
+
+            另外不能依赖 Popen 句柄：本环境下渲染器沙箱失效，应用会以
             `spawn(execPath, args, {detached:true})` 自我重启到兼容模式，
             **原进程会先退出** —— 拿 proc.poll() 判断存活会误报「已退出」。
             """
-            code, listing = run(
+            code, listing, _ = run(
                 ["tasklist", "/FI", f"IMAGENAME eq {APP_NAME}.exe", "/FO", "CSV", "/NH"],
                 timeout=60,
             )
             if code != 0:
                 return -1
             return sum(1 for line in listing.splitlines() if APP_NAME in line)
+
+        # 先做一次「到底进没进 GUI 主进程」的判定：主进程启动第一步就是
+        # 建 <TINGKEBANLV_HOME>/logs 并写第一行。这一步 20s 内就能出结论，
+        # 不用等满 150s 才发现整个观察期都是无效的
+        # （曾因 ELECTRON_RUN_AS_NODE 未剥离，应用以纯 Node 模式空转 150s，
+        #   所有稳定性结论全部作废）。
+        entered_gui = wait_for(lambda: log_file.is_file(), timeout=25, interval=1.0)
+        report.step(
+            "启动进入 GUI 主进程",
+            entered_gui,
+            "已创建日志文件" if entered_gui else "25s 内未创建日志文件（进程可能未进入 Electron 主进程）",
+        )
 
         # 先等日志出现「内置模型种子」，确认主进程把种子路径传给了后端
         got_seed_log = wait_for(lambda: "内置模型种子" in read_log(), timeout=60, interval=1.0)
@@ -481,15 +547,20 @@ def main() -> int:
         report.step("界面加载完成", painted, "日志出现「界面加载完成」" if painted else "150s 内未出现")
 
         # 从日志里抓后端端口，用它做存活探测（比查进程更接近「真的能用」）。
-        # 取**最后**一次出现：兼容模式降级重启会让日志里同时存在新旧两个实例的记录，
-        # 旧实例的端口已经没人监听了。
+        #
+        # **必须锚定 `[backend] 就绪: http://127.0.0.1:<port>` 这一行**，
+        # 不能笼统地取「最后一个含 127.0.0.1 的端口」。踩过的坑：uvicorn 的
+        # 访问日志长这样 `127.0.0.1:65273 - "GET /api/courses HTTP/1.1" 200 OK`，
+        # 里面是**客户端临时端口**；按「最后一个」解析会拿到 65273 而不是
+        # 真正的服务端口 65255，于是 150 秒里 34 次探测全部失败，
+        # 看起来像后端挂了，其实只是探错了端口。
         port = None
         for line in read_log().splitlines():
-            if "127.0.0.1:" not in line:
+            marker = "[backend] 就绪: http://127.0.0.1:"
+            if marker not in line:
                 continue
-            tail = line.split("127.0.0.1:", 1)[1]
             digits = ""
-            for ch in tail:
+            for ch in line.split(marker, 1)[1]:
                 if ch.isdigit():
                     digits += ch
                 else:
@@ -499,7 +570,7 @@ def main() -> int:
         report.step(
             "解析后端端口",
             port is not None,
-            f"端口 {port}" if port else "日志中未找到端口",
+            f"端口 {port}（取自「[backend] 就绪」标记行）" if port else "日志中未找到就绪标记行",
             critical=False,
         )
 
@@ -526,10 +597,13 @@ def main() -> int:
 
         final_count = app_process_count()
         ratio = (alive / samples) if samples else 0.0
+        # 把日志里所有含回环地址的行留进报告：端口是这里解析出来的，
+        # 一旦 ping 不通，这几行就是判断「端口取错」还是「后端真的没在听」的关键
+        loopback_lines = [ln for ln in read_log().splitlines() if "127.0.0.1" in ln]
         report.step(
             f"{args.hold}s 稳定性",
             final_count > 0 and dead_samples == 0 and (ratio >= 0.95 if samples else True),
-            f"实例 {final_count} 个，观察期内 {dead_samples} 次采样无进程；"
+            f"进程 {final_count} 个（含 Electron 子进程），观察期内 {dead_samples} 次采样为 0；"
             f"/api/ping {alive}/{samples} 可用（{ratio * 100:.1f}%）",
             data={
                 "samples": samples,
@@ -537,6 +611,8 @@ def main() -> int:
                 "deadSamples": dead_samples,
                 "holdSeconds": args.hold,
                 "finalProcessCount": final_count,
+                "probedPort": port,
+                "loopbackLogLines": loopback_lines[-12:],
             },
         )
 
@@ -545,20 +621,40 @@ def main() -> int:
         bad = [marker for marker in LOG_ERROR_MARKERS if marker in text]
         report.step(
             "启动日志无错误字样",
-            not bad,
-            "干净" if not bad else f"命中: {bad}",
+            not bad and bool(text),
+            "干净" if not bad and text else (f"命中: {bad}" if bad else "日志为空，无从判断"),
         )
         relaunched = text.count("兼容模式") > 0
         report.step(
             "渲染器状态",
-            True,
-            "触发了兼容模式降级重启（已知环境限制，非缺陷）" if relaunched else "一次启动成功",
+            bool(text),
+            (
+                "触发了兼容模式降级重启（已知环境限制，非缺陷）"
+                if relaunched
+                else ("一次启动成功" if text else "日志为空，无法判定")
+            ),
             critical=False,
         )
         report.step(
             "日志落盘",
-            log_file.is_file(),
+            log_file.is_file() and bool(text),
             f"{log_file}（{len(text.splitlines())} 行）",
+        )
+        # 这个应用的 logLine() 同时写文件与 console.log。打包后接管道时
+        # stdout 是能收到的，所以「有输出」是**正常现象**，不是错误；
+        # 真正值得看的是里面有没有异常字样 —— 而且这份文件的另一层价值是
+        # 「有没有进 GUI 主进程」的兜底证据（纯 Node 模式不会有这些日志）。
+        try:
+            stdio_peek = app_stdio.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            stdio_peek = ""
+        stdio_bad = [m for m in ("Traceback", "Error: ", "FATAL") if m in stdio_peek]
+        report.step(
+            "应用 stdout/stderr 无致命字样",
+            not stdio_bad,
+            f"{len(stdio_peek.splitlines())} 行（日志镜像，正常）"
+            if not stdio_bad
+            else f"命中 {stdio_bad}，见 {app_stdio}",
         )
 
         # ---------- 5. 关闭应用 ----------
@@ -571,6 +667,15 @@ def main() -> int:
             gone,
             "无残留" if gone else f"仍有 {app_process_count()} 个 {APP_NAME}.exe 在运行",
         )
+        try:
+            stdio_handle.close()
+        except OSError:
+            pass
+        stdio_text = ""
+        try:
+            stdio_text = app_stdio.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
 
         # ---------- 6. 静默卸载 ----------
         # **必须带 /currentuser**。踩过的坑：只传 /S 时卸载器退出码 2 且什么都不做
@@ -583,7 +688,7 @@ def main() -> int:
         if not uninstaller.is_file():
             report.step("定位卸载器", False, f"未找到 {uninstaller}")
         else:
-            code, output = run([str(uninstaller), "/S", "/currentuser"], timeout=300)
+            code, out, err = run([str(uninstaller), "/S", "/currentuser"], timeout=300)
             gone = wait_for(lambda: not app_exe.is_file(), timeout=120)
             report.step(
                 "静默卸载（/S /currentuser）",
@@ -600,15 +705,21 @@ def main() -> int:
                 critical=False,
             )
 
+            # 注册表项是卸载器**最后**才删的，早于主程序文件消失。
+            # 不做轮询会误判成「卸载没删注册项」（第一次跑就是这样）。
+            removed = wait_for(lambda: uninstall_registry_entry() is None, timeout=60, interval=1.0)
             after = uninstall_registry_entry()
             report.step(
                 "卸载后注册项已移除",
-                after is None,
-                "已移除" if after is None else f"仍存在: {after['displayName']}",
+                removed,
+                "已移除" if removed else f"60s 后仍存在: {after and after['displayName']}",
             )
 
-            # %TEMP%\~nsu.tmp 是 NSIS 卸载器的自我拷贝，正常应被清掉
+            # %TEMP%\~nsu.tmp 是 NSIS 卸载器的自我拷贝，理论上它退出时会清掉自己。
+            # 实测会残留，给一点时间再判（这是 NSIS 的固有行为，只影响临时目录整洁度，
+            # 不阻断结论）。
             nsu = Path(os.environ.get("TEMP", "")) / "~nsu.tmp"
+            wait_for(lambda: not nsu.exists(), timeout=20, interval=1.0)
             report.step(
                 "卸载器临时目录已清理",
                 not nsu.exists(),
@@ -619,6 +730,17 @@ def main() -> int:
         # ---------- 7. 清理用户数据 ----------
         # 说明：卸载器**刻意**不删用户数据（生词本、课程配置），这是正确行为。
         # 这里按用户要求手动清理，以验证「从零再装一遍」的第一印象。
+        #
+        # 但**清理前必须先把日志留档**：否则一旦某个检查失败，唯一的现场证据
+        # 就跟着一起被删了（第一次跑时就是这样，ping 全失败却查不到原因）。
+        kept_log = Path(args.report).parent / "electron.log"
+        if log_file.is_file():
+            try:
+                shutil.copy2(log_file, kept_log)
+                report.step("留存启动日志", True, str(kept_log), critical=False)
+            except OSError as exc:
+                report.step("留存启动日志", False, str(exc), critical=False)
+
         data_before = dir_size(home)
         db_files = list(home.glob("data/*.db")) if home.exists() else []
         model_dirs = list(home.glob("whisper_models/models--*")) if home.exists() else []
