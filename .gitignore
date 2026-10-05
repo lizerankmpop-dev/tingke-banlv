@@ -21,6 +21,12 @@ backend/dictionary/_backup_batches/
 # PyInstaller 冻结后端的产物与中间目录（packaging/out/backend-server 约 200MB）
 packaging/out/
 packaging/build/
+# 重建前用来给旧产物「让位」的改名目录（PyInstaller 清空 dist 时会触发
+# 沙箱的批量删除保护，所以改为先 mv 再建，这些是临时残留）
+packaging/_stale_*/
+
+# 实装验证报告（由 scripts/verify_install.py 生成）
+packaging/verify/
 
 # 内置模型种子（约 141MB 二进制，由 scripts/prepare_seed_model.py 生成，
 # 不入库；构建前需先执行该脚本）

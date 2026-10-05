@@ -27,8 +27,11 @@
 * 必须 `console=True`：主进程靠子进程的 stdout/stderr 把后端日志写进
   <TINGKEBANLV_HOME>/logs/electron.log，并保留最后 40 行用于失败弹窗。
   控制台窗口不会真的弹出来 —— 主进程 spawn 时带 windowsHide: true。
-* 模型权重**不打进包里**（base 139MB / small 464MB），运行时下载到
-  ~/.tingkebanlv/whisper_models，见 asr/whisper_engine.py。
+* 模型权重**不打进这个包**。base 模型由 electron-builder 放进
+  `<安装目录>/resources/whisper_models/`（extraResources，不进 asar），
+  后端首启把它播种到 `<TINGKEBANLV_HOME>/whisper_models/` 后再加载，
+  见 asr/model_bootstrap.py。在这里塞一份等于让安装包多背 141MB 且要维护两处。
+  自检单独跑 exe 时，种子目录由 `exe 所在目录/../whisper_models` 反推得到。
 """
 
 import os
@@ -114,6 +117,10 @@ hiddenimports += [
     "aiosqlite",
     "httpx",
     "silero_vad",
+    # 模型播种/完整性校验。当前由 asr.whisper_engine 在模块层导入，静态分析找得到；
+    # 显式列出是为了防止将来改成惰性导入（例如为了缩短启动时间）后悄悄漏掉 ——
+    # 漏了的表现是「安装包能用但首启不播种」，最难排查的那一类。
+    "asr.model_bootstrap",
 ]
 
 # torch 只是「如果装了就用它探测 CUDA」的可选依赖（见 asr/whisper_engine.py 的
