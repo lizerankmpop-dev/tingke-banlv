@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { OverlaySubtitlePayload } from '../types'
-import { overlayBridge } from '../lib/overlayBridge'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { HostStatusPayload, OverlaySubtitlePayload } from '../types'
+import { hostBridge, overlayBridge } from '../lib/overlayBridge'
 import { useOverlayStore } from '../stores/useOverlayStore'
-import { Loader2, AlertCircle, Move } from 'lucide-react'
+import { Loader2, AlertCircle, Move, Unplug, Crosshair } from 'lucide-react'
 
 /**
  * 桌面字幕悬浮窗（独立窗口入口：#/overlay）
@@ -16,6 +16,11 @@ import { Loader2, AlertCircle, Move } from 'lucide-react'
  * 两个窗口同时轮询会互相抢消息、字幕被腰斩。因此由主窗口（唯一轮询者）
  * 经 IPC 把快照推过来。
  *
+ * 断连提示：
+ *   悬浮窗是独立窗口，主窗口渲染进程崩溃时它不会消失，只会永远停在最后一句
+ *   字幕上 —— 看起来像「字幕卡住了」。主进程用心跳 + render-process-gone
+ *   判定后会推 overlay:host-status，这里据此显式告诉用户该怎么办。
+ *
  * 样式：
  *   - 整层 pointer-events: none —— 字幕绝不能挡住用户点网课页面上的按钮
  *   - 鼠标穿透由主进程 setIgnoreMouseEvents(true, {forward:true}) 实现
@@ -26,6 +31,9 @@ export default function OverlayWindow() {
   const settings = useOverlayStore((s) => s.settings)
   const init = useOverlayStore((s) => s.init)
   const [payload, setPayload] = useState<OverlaySubtitlePayload | null>(null)
+  const [host, setHost] = useState<HostStatusPayload | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimer = useRef<number | null>(null)
 
   // 订阅主进程推来的字幕快照
   useEffect(() => overlayBridge.onSubtitle(setPayload), [])
@@ -34,6 +42,30 @@ export default function OverlayWindow() {
   useEffect(() => {
     void init()
   }, [init])
+
+  // 宿主（主窗口）存活状态
+  useEffect(() => hostBridge.onHostStatus(setHost), [])
+
+  /** 轻提示：3 秒后自动消失，不需要用户点掉（穿透窗口也点不到） */
+  const showToast = useCallback((text: string) => {
+    setToast(text)
+    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(null), 3000)
+  }, [])
+
+  useEffect(() => () => {
+    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current)
+  }, [])
+
+  // 显示器插拔导致位置被主进程自动校正 → 明确告知，否则用户只会觉得「窗口自己跳了」
+  useEffect(() => {
+    return hostBridge.onPositionCorrected((p) => {
+      showToast(`显示器变化（${p.reason}），已自动调整位置`)
+    })
+  }, [showToast])
+
+  // 快捷键调字号 / 重置位置的反馈
+  useEffect(() => hostBridge.onToast((p) => showToast(p.text)), [showToast])
 
   // 让 html/body 背景透明 —— 否则 transparent 窗口会被页面底色覆盖
   useEffect(() => {
@@ -56,9 +88,20 @@ export default function OverlayWindow() {
   const isListening = payload?.status === 'listening' || payload?.status === 'processing'
   const isLoading = payload?.status === 'loading'
   const hasError = payload?.status === 'error'
+  const hostDown = host?.alive === false
 
   return (
     <div style={styles.root}>
+      {/* 主窗口已断开：这比「字幕不动」有意义得多 —— 用户知道该重启了 */}
+      {hostDown && (
+        <div style={styles.hostDown}>
+          <Unplug size={12} />
+          <span style={styles.hostDownText}>
+            主窗口已断开（{host?.reason}）· 字幕已停止更新，请重启听课伴侣
+          </span>
+        </div>
+      )}
+
       {/* 调整模式：给用户一个明确的可拖动区域与退出提示 */}
       {!clickThrough && (
         <div style={styles.dragBar}>
@@ -119,6 +162,14 @@ export default function OverlayWindow() {
           )
         )}
       </div>
+
+      {/* 轻提示：快捷键反馈 / 位置自动校正 */}
+      {toast && (
+        <div style={styles.toast}>
+          <Crosshair size={11} />
+          <span>{toast}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -136,6 +187,18 @@ const styles: Record<string, React.CSSProperties> = {
     // （也覆盖「主进程尚未切换 forward 标志」的短暂窗口）。
     pointerEvents: 'none',
   },
+  hostDown: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: '4px 10px',
+    background: 'rgba(225, 112, 85, 0.92)',
+    color: '#fff',
+    fontSize: 11,
+    flexShrink: 0,
+  },
+  hostDownText: { fontSize: 11 },
   dragBar: {
     display: 'flex',
     alignItems: 'center',
@@ -186,6 +249,21 @@ const styles: Record<string, React.CSSProperties> = {
     opacity: 0.7,
     padding: '6px 14px',
     textShadow: '0 1px 6px rgba(0,0,0,0.9)',
+  },
+  toast: {
+    position: 'absolute',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    bottom: 6,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    padding: '3px 10px',
+    borderRadius: 10,
+    background: 'rgba(0,0,0,0.72)',
+    color: '#fff',
+    fontSize: 11,
+    whiteSpace: 'nowrap',
   },
   spin: { animation: 'spin 1s linear infinite' },
 }

@@ -1,10 +1,17 @@
-import type { OverlaySettings, OverlaySubtitlePayload } from './index'
+import type {
+  HostStatusPayload,
+  OverlaySettings,
+  OverlaySubtitlePayload,
+  OverlayToastPayload,
+  PerfStats,
+  PositionCorrectedPayload,
+} from './index'
 
 /**
- * preload.cjs 通过 contextBridge 暴露的悬浮窗 API
+ * preload.cjs 通过 contextBridge 暴露的全部能力
  *
  * 只在 Electron 环境下存在；用浏览器直接打开 Vite 页面时为 undefined，
- * 因此所有调用点都必须做存在性判断（统一收口在 lib/overlayBridge.ts）。
+ * 因此所有调用点都必须做存在性判断（统一收口在 lib/overlayBridge.ts 与 lib/hostBridge.ts）。
  */
 export interface ElectronOverlayAPI {
   getSettings: () => Promise<OverlaySettings>
@@ -24,13 +31,27 @@ export interface ElectronOverlayAPI {
   onStateChanged: (cb: (state: { open: boolean }) => void) => () => void
 }
 
+/** 存活心跳 / 诊断能力（主窗口与悬浮窗都会用到一部分） */
+export interface ElectronHostAPI {
+  /** 渲染进程 → 主进程心跳（每 2s 一次，单向） */
+  heartbeat: () => void
+  onHostStatus: (cb: (payload: HostStatusPayload) => void) => () => void
+  getHostStatus: () => Promise<{ alive: boolean; throttled: boolean | null; overlayOpen: boolean }>
+  onPositionCorrected: (cb: (payload: PositionCorrectedPayload) => void) => () => void
+  onToast: (cb: (payload: OverlayToastPayload) => void) => () => void
+  getPerfStats: () => Promise<PerfStats>
+  exportLogs: () => Promise<{ ok: boolean; filePath?: string; files?: number; canceled?: boolean; error?: string }>
+}
+
+export type ElectronAPI = ElectronHostAPI & {
+  getAppVersion: () => Promise<string>
+  getBackendPort: () => Promise<number | null>
+  overlay?: ElectronOverlayAPI
+}
+
 declare global {
   interface Window {
-    electronAPI?: {
-      getAppVersion: () => Promise<string>
-      getBackendPort: () => Promise<number | null>
-      overlay?: ElectronOverlayAPI
-    }
+    electronAPI?: ElectronAPI
   }
 }
 

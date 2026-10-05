@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
-import { X, Eye, Move, RotateCcw, AlertCircle, PictureInPicture2, Type } from 'lucide-react'
+import {
+  X, Eye, Move, RotateCcw, AlertCircle, PictureInPicture2, Type, Zap, FileDown,
+} from 'lucide-react'
 import { useOverlayStore } from '../stores/useOverlayStore'
+import { hostBridge } from '../lib/overlayBridge'
 
 /**
  * 悬浮窗控制面板
@@ -9,12 +12,14 @@ import { useOverlayStore } from '../stores/useOverlayStore'
  * 自然也没法在主应用里模拟拖拽。位置调整走两条路 ——
  *   1. 「调整模式」按钮（等价 Alt+Shift+D）临时关掉穿透，用户在悬浮窗上直接拖
  *   2. 「重置位置」一键挪回屏幕底部居中（窗口被拖丢时的自救手段）
+ *      （另有 Alt+Shift+R 热键、Alt+Shift+] / [ 快速调字号）
  */
 const PRESET_COLORS = ['#ffffff', '#ffeaa7', '#a29bfe', '#74b9ff', '#55efc4', '#fab1a0']
 
 export default function OverlayControlPanel({ onClose }: { onClose: () => void }) {
   const { available, open, settings, loading, error, init, patch, toggle, resetPosition } = useOverlayStore()
   const [busy, setBusy] = useState(false)
+  const [logNotice, setLogNotice] = useState<string | null>(null)
 
   useEffect(() => {
     void init()
@@ -26,6 +31,14 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
     setBusy(true)
     await toggle()
     setBusy(false)
+  }
+
+  /** 导出诊断日志：出问题时不要求用户自己去 %USERPROFILE% 找文件 */
+  const exportLogs = async () => {
+    const res = await hostBridge.exportLogs()
+    if (res.ok) setLogNotice(`已导出：${res.filePath}`)
+    else if (res.canceled) setLogNotice(null)
+    else setLogNotice(`导出失败：${res.error || '未知原因'}`)
   }
 
   return (
@@ -141,7 +154,47 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
 
               <Divider />
 
-              {/* 调整模式 / 重置位置 */}
+              {/*
+                后台持续更新开关
+                这不是一个「性能选项」，而是产品权衡：
+                  开（默认）= 切到浏览器看网课时字幕照常更新，代价是主窗口在后台
+                               仍跑 500ms 轮询，笔记本耗电/风扇略增
+                  关        = 交给 Chromium 节流，省电，但字幕会在切走后停住
+                必须让用户看见代价后再选，而不是我们替他硬编码一个值。
+              */}
+              <div style={styles.row}>
+                <div style={styles.rowLabel}>
+                  <Zap size={14} color={settings.backgroundUpdate ? 'var(--accent-light)' : 'var(--text-muted)'} />
+                  <span>后台持续更新字幕</span>
+                </div>
+                <button
+                  onClick={() => set({ backgroundUpdate: !settings.backgroundUpdate })}
+                  style={{
+                    ...styles.toggle,
+                    background: settings.backgroundUpdate ? 'var(--accent)' : 'var(--bg-tertiary)',
+                  }}
+                  role="switch"
+                  aria-checked={!!settings.backgroundUpdate}
+                >
+                  <span
+                    style={{
+                      ...styles.toggleKnob,
+                      transform: settings.backgroundUpdate ? 'translateX(14px)' : 'translateX(0)',
+                    }}
+                  />
+                </button>
+              </div>
+              <div style={styles.hint}>
+                {settings.backgroundUpdate ? (
+                  <>开启后，切到浏览器看网课字幕仍会持续更新（推荐）。代价是后台会持续识别，耗电略高。</>
+                ) : (
+                  <>已关闭：主窗口切到后台后字幕会暂停更新，省电。想边看网课边看字幕请打开它。</>
+                )}
+              </div>
+
+              <Divider />
+
+              {/* 调整模式 / 重置位置 / 导出日志 */}
               <div style={styles.btnRow}>
                 <button
                   onClick={() => set({ clickThrough: !settings.clickThrough })}
@@ -159,10 +212,15 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                   <RotateCcw size={13} />
                   重置位置
                 </button>
+                <button onClick={() => void exportLogs()} style={styles.actionBtn}>
+                  <FileDown size={13} />
+                  导出日志
+                </button>
               </div>
+              {logNotice && <div style={styles.logNotice}>{logNotice}</div>}
               <div style={styles.hint}>
                 {settings.clickThrough ? (
-                  <>字幕默认<b>鼠标穿透</b>，不会挡住网课页面的按钮。点「调整模式」（或热键 <b>Alt+Shift+D</b>）可拖动窗口。</>
+                  <>字幕默认<b>鼠标穿透</b>，不会挡住网课页面的按钮。点「调整模式」（或热键 <b>Alt+Shift+D</b>）可拖动窗口。热键 <b>Alt+Shift+R</b> 可一键把窗口挪回屏幕底部居中。</>
                 ) : (
                   <>调整模式已开启：拖动悬浮窗顶部的紫色条移动位置，鼠标此时会恢复点击。</>
                 )}
@@ -267,7 +325,32 @@ const styles: Record<string, React.CSSProperties> = {
     width: 26, height: 22, padding: 0, border: '1px solid var(--border)',
     borderRadius: 4, background: 'transparent', cursor: 'pointer',
   },
-  btnRow: { display: 'flex', gap: 8 },
+  btnRow: { display: 'flex', gap: 8, flexWrap: 'wrap' },
+  toggle: {
+    width: 30,
+    height: 16,
+    borderRadius: 9,
+    padding: 2,
+    display: 'flex',
+    alignItems: 'center',
+    transition: 'background 0.15s',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  toggleKnob: {
+    width: 12,
+    height: 12,
+    borderRadius: '50%',
+    background: '#fff',
+    transition: 'transform 0.15s',
+  },
+  logNotice: {
+    fontSize: 10,
+    color: 'var(--accent-light)',
+    marginBottom: 6,
+    wordBreak: 'break-all',
+    lineHeight: 1.5,
+  },
   actionBtn: {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
     flex: 1, padding: '8px 0',

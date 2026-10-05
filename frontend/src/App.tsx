@@ -4,7 +4,10 @@ import CourseConfig from './pages/CourseConfig'
 import SubtitleOverlay from './pages/SubtitleOverlay'
 import DictionaryWindow from './pages/DictionaryWindow'
 import OverlayWindow from './pages/OverlayWindow'
+import ReviewPage from './pages/ReviewPage'
+import ReviewReminder from './components/ReviewReminder'
 import { useAppStore } from './stores/useAppStore'
+import { useHostHeartbeat } from './hooks/useHostHeartbeat'
 
 /**
  * 主应用视图切换
@@ -17,6 +20,9 @@ import { useAppStore } from './stores/useAppStore'
 function MainApp() {
   const { view } = useAppStore()
 
+  // 存活心跳：主窗口崩溃时悬浮窗要能明确提示，而不是永远停在最后一句字幕
+  useHostHeartbeat()
+
   switch (view) {
     case 'course-list':
       return <CourseList />
@@ -26,9 +32,21 @@ function MainApp() {
       return <SubtitleOverlay />
     case 'dictionary':
       return <DictionaryWindow />
+    case 'review':
+      return <ReviewPage />
     default:
       return <CourseList />
   }
+}
+
+/** 主应用外壳：所有视图共用（复习提醒与视图无关） */
+function MainShell() {
+  return (
+    <>
+      <MainApp />
+      <ReviewReminder />
+    </>
+  )
 }
 
 /**
@@ -48,7 +66,7 @@ export default function App() {
         {/* 桌面悬浮窗：纯字幕展示，无控制栏 */}
         <Route path="/overlay" element={<OverlayWindow />} />
         {/* 其余一切路径（含 /）都进主应用 */}
-        <Route path="*" element={<MainApp />} />
+        <Route path="*" element={<MainShell />} />
       </Routes>
     </HashRouter>
   )

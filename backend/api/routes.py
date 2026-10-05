@@ -4,11 +4,15 @@ API 路由
 """
 
 import json
+import csv
+import io
 import logging
 import asyncio
 import platform
+import time
 from collections import deque
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
 
@@ -68,6 +72,37 @@ class UpdateCourseRequest(BaseModel):
 class UpdateVocabularyRequest(BaseModel):
     isMemorized: Optional[bool] = None
     reviewCount: Optional[int] = None
+
+
+class CollectVocabularyRequest(BaseModel):
+    """划词采集生词时附带的即时上下文（前端查词已有这些数据，顺手一起提交）"""
+
+    translation: Optional[str] = ""
+    definition: Optional[str] = ""
+    contextSentence: Optional[str] = ""
+    sourceSubtitleId: Optional[str] = ""
+    sourceSrtTime: Optional[int] = 0
+
+
+class ReviewVocabularyRequest(BaseModel):
+    """
+    一次复习提交
+
+    排程字段由前端 SM2 算好；后端只做夹取兜底（见 DatabaseManager.review_vocabulary）。
+    """
+
+    rating: str                       # again | hard | good | easy
+    efactor: Optional[float] = None
+    interval: Optional[float] = None
+    repetitions: Optional[int] = None
+    nextReviewAt: Optional[int] = None
+    isMemorized: Optional[bool] = False
+
+
+class ImportVocabularyRequest(BaseModel):
+    """生词备份导入（兼容 GET backup.json 的原样回传）"""
+
+    items: list[dict] = []
 
 
 class ExplainRequest(BaseModel):
@@ -193,6 +228,17 @@ def _ms_to_srt_time(ms) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms_part:03d}"
 
 
+def _ms_to_date_str(ms) -> str:
+    """毫秒时间戳 → 本地日期时间（0/非法值返回空串，导出 CSV 时显示为空）"""
+    try:
+        ms = int(ms)
+    except (TypeError, ValueError):
+        return ""
+    if ms <= 0:
+        return ""
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ms / 1000))
+
+
 @router.get("/courses/{course_id}/export-srt")
 async def export_srt(course_id: str):
     """导出课程字幕为 SRT 格式"""
@@ -225,6 +271,121 @@ async def get_vocabulary(course_id: str):
     return await db.get_vocabulary(course_id)
 
 
+# ---- 生词复习闭环 ----
+#
+# 路由顺序警告：下面这些**静态路径**必须声明在 /vocabulary/{word} 之前。
+# FastAPI 按声明顺序匹配，先声明 {word} 的话 "stats" / "review-queue" /
+# "export.csv" 会被当成单词去查，直接 404 且很难看出原因。
+
+
+@router.get("/courses/{course_id}/vocabulary/stats")
+async def get_vocabulary_stats(course_id: str):
+    """生词本统计（仪表盘卡片）"""
+    if not await db.get_course(course_id):
+        raise HTTPException(status_code=404, detail="课程不存在")
+    return await db.get_vocabulary_stats(course_id)
+
+
+@router.get("/vocabulary/due-summary")
+async def get_due_summary():
+    """
+    跨课程的待复习概览（启动提醒 / 首页卡片用）
+
+    不挂在 /courses/{course_id}/ 下面，因为它的使用场景恰恰是「还没选课程」：
+    应用一启动就要知道「今天有没有词要复习」。
+    """
+    return await db.get_due_summary()
+
+
+@router.get("/courses/{course_id}/vocabulary/review-queue")
+async def get_vocabulary_review_queue(
+    course_id: str, limit: int = Query(default=30, ge=1, le=200)
+):
+    """待复习队列（已到期且未掌握，最欠复习的排最前）"""
+    if not await db.get_course(course_id):
+        raise HTTPException(status_code=404, detail="课程不存在")
+    items = await db.get_vocabulary_due(course_id, limit=limit)
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/courses/{course_id}/vocabulary/export.csv")
+async def export_vocabulary_csv(course_id: str):
+    """
+    导出生词为 CSV（供 Anki / 欧路词典等外部工具导入）
+
+    带 UTF-8 BOM：不加的话 Excel 会按 GBK 解码，中文释义全是乱码。
+    """
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    items = await db.get_vocabulary(course_id)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        ["单词", "释义", "英文释义", "领域", "来源句子", "复习次数", "难度因子", "间隔(天)", "下次复习", "已掌握"]
+    )
+    for it in items:
+        writer.writerow(
+            [
+                it.get("word", ""),
+                it.get("translation", ""),
+                it.get("definition", ""),
+                it.get("domain", ""),
+                (it.get("contextSentence") or "").replace("\n", " "),
+                it.get("reviewCount", 0),
+                it.get("efactor", 2.5),
+                it.get("interval", 0),
+                _ms_to_date_str(it.get("nextReviewAt") or 0),
+                "是" if it.get("isMemorized") else "否",
+            ]
+        )
+
+    return Response(
+        content="\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"vocabulary-{course_id[:8]}.csv\""
+        },
+    )
+
+
+@router.get("/courses/{course_id}/vocabulary/backup.json")
+async def export_vocabulary_backup(course_id: str):
+    """导出完整生词备份（含复习进度），用于重装后恢复"""
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    items = await db.get_vocabulary(course_id)
+    return {
+        "format": "tingkebanlv-vocabulary-backup",
+        "version": 1,
+        "exportedAt": int(time.time() * 1000),
+        "courseId": course_id,
+        "courseName": course.get("name", ""),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@router.post("/courses/{course_id}/vocabulary/backup.json")
+async def import_vocabulary_backup(course_id: str, req: ImportVocabularyRequest):
+    """
+    导入生词备份
+
+    只做 upsert（按 word 匹配），**不删除**导入前已有的词 ——
+    否则用户导入一份旧备份就会把后来新采集的词全冲掉。
+    """
+    if not await db.get_course(course_id):
+        raise HTTPException(status_code=404, detail="课程不存在")
+    if not req.items:
+        raise HTTPException(status_code=400, detail="备份内容为空")
+
+    result = await db.import_vocabulary(course_id, req.items)
+    return {"ok": True, **result}
+
+
 @router.get("/courses/{course_id}/vocabulary/{word}")
 async def get_vocabulary_word(course_id: str, word: str):
     """查询单个词汇"""
@@ -232,6 +393,82 @@ async def get_vocabulary_word(course_id: str, word: str):
     if not entry:
         raise HTTPException(status_code=404, detail="词汇未收录")
     return entry
+
+
+@router.post("/courses/{course_id}/vocabulary/{word}/collect")
+async def collect_vocabulary_word(course_id: str, word: str, req: CollectVocabularyRequest):
+    """
+    采集生词（划词入库）
+
+    与 PUT /vocabulary/{vocab_id} 的区别：以「单词」为标识 upsert，
+    重复采集同一个词只更新上下文与来源，不会产生重复条目。
+    """
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    clean = (word or "").strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail="单词不能为空")
+
+    entry = await db.upsert_vocabulary(
+        {
+            "course_id": course_id,
+            "word": clean,
+            "translation": req.translation or "",
+            "definition": req.definition or "",
+            "domain": course.get("domain", ""),
+            "context_sentence": req.contextSentence or "",
+            "source_subtitle_id": req.sourceSubtitleId or "",
+            "isAutoGenerated": False,
+        }
+    )
+    # 采集时记下字幕时间戳，复习阶段可回看原句出现的位置
+    if req.sourceSrtTime:
+        await db.db.execute(
+            "UPDATE vocabulary SET source_srt_time = ? WHERE id = ?",
+            (int(req.sourceSrtTime), entry["id"]),
+        )
+        await db.db.commit()
+        entry = await db.get_vocabulary_by_word(course_id, clean)
+    return entry
+
+
+@router.post("/courses/{course_id}/vocabulary/{word}/review")
+async def review_vocabulary_word(course_id: str, word: str, req: ReviewVocabularyRequest):
+    """
+    提交一次复习评分
+
+    排程由前端 SM2 算好（frontend/src/lib/sm2.ts）后传上来，后端落库并做兜底夹取。
+    """
+    entry = await db.get_vocabulary_by_word(course_id, word)
+    if not entry:
+        raise HTTPException(status_code=404, detail="生词不存在")
+
+    updated = await db.review_vocabulary(
+        entry["id"],
+        {
+            "rating": req.rating,
+            "efactor": req.efactor,
+            "interval": req.interval,
+            "repetitions": req.repetitions,
+            "nextReviewAt": req.nextReviewAt,
+            "isMemorized": req.isMemorized,
+        },
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="生词不存在")
+    return updated
+
+
+@router.delete("/courses/{course_id}/vocabulary/{word}")
+async def delete_vocabulary_word(course_id: str, word: str):
+    """从生词本移除单词"""
+    entry = await db.get_vocabulary_by_word(course_id, word)
+    if not entry:
+        raise HTTPException(status_code=404, detail="生词不存在")
+    ok = await db.delete_vocabulary(entry["id"])
+    return {"ok": ok}
 
 
 @router.put("/courses/{course_id}/vocabulary/{vocab_id}")

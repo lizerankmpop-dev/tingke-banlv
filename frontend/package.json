@@ -10,6 +10,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test": "node --test \"tests/**/*.test.*\"",
+    "test:smoke": "node scripts/smoke-overlay.cjs",
+    "verify": "npm run test && npm run build && npm run test:smoke",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "backend:build": "python -m PyInstaller ../packaging/backend_server.spec --noconfirm --distpath ../packaging/out --workpath ../packaging/build",
     "preflight:seed": "node scripts/preflight-seed.cjs",
@@ -100,7 +103,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "听课伴侣"
+      "shortcutName": "听课伴侣",
+      "deleteAppDataOnUninstall": false
     },
     "mac": {
       "target": [

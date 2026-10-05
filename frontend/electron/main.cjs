@@ -75,47 +75,196 @@ if (process.env.TINGKEBANLV_DEBUG_PORT) {
   app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TINGKEBANLV_DEBUG_PORT));
 }
 
+// (4) 单实例
+// 为什么必须挡：一个实例已经拉起后端、占住动态端口、并且在写同一份 overlay.json
+// 与日志。允许第二份实例的后果是「界面开了但拿不到端口 / 两个窗口来回覆盖设置」，
+// 表现为随机的空白页与设置不生效，排查成本极高。
+// 第二次启动时把已有窗口提到前台 —— 这符合用户「我再点一次图标」的预期。
+// 自动化验证需要同时跑多个实例时用 TINGKEBANLV_ALLOW_MULTI=1 放开。
+let singleInstanceOwner = true;
+if (process.env.TINGKEBANLV_ALLOW_MULTI !== '1') {
+  singleInstanceOwner = app.requestSingleInstanceLock();
+  if (!singleInstanceOwner) {
+    // 此刻日志文件还没初始化（initLogFile 在 whenReady 之前），只能走 stdout
+    console.log('[single-instance] 检测到已有实例在运行，本次启动直接退出');
+    app.quit();
+  }
+}
+
 let mainWindow = null;
 let overlayWindow = null; // 桌面字幕悬浮窗（独立 BrowserWindow）
 let backendProcess = null;
 let backendPort = null;
 let isQuitting = false;
 let backendLogTail = [];
+/** 主窗口当前是否处于「后台节流」状态；null = 还没应用过 */
+let mainThrottled = null;
+/** 主窗口渲染进程是否健在（悬浮窗据此显示断连提示） */
+let hostAlive = true;
 
 const HEALTH_TIMEOUT_MS = 90000; // 首次启动需加载模型/初始化数据库，给足时间
 const HEALTH_INTERVAL_MS = 500;
 
-// ============ 日志落盘 ============
+// ============ 日志（分级 + 按日期滚动 + 限大小） ============
 // 打包后的 Electron 在 Windows 上是 GUI 子系统程序，没有可用的 stdout，
 // console.log 会全部丢失 —— 出错时用户只看到弹窗，拿不到任何细节。
 // 因此关键事件同时写入 <TINGKEBANLV_HOME>/logs/electron.log，便于事后定位。
+//
+// 分级理由：排障时最需要的是「哪一行是异常」，而不是在几千行 info 里翻。
+// 级别由 TINGKEBANLV_LOG_LEVEL 控制（debug|info|warn|error，默认 info）。
+// 按日期滚动理由：单文件无限增长会让「导出日志发给我」这件事毫无用处 ——
+// 收上来的报告里 99% 是几个月前的旧内容。每天一个文件，只留 7 天。
+
+const LOG_LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
+const LOG_LEVEL = LOG_LEVELS[String(process.env.TINGKEBANLV_LOG_LEVEL || 'info').toLowerCase()]
+  || LOG_LEVELS.info;
+const LOG_MAX_BYTES = 2 * 1024 * 1024;
+const LOG_KEEP_DAYS = 7;
 
 let logFilePath = null;
 
+function logDir() {
+  const home = process.env.TINGKEBANLV_HOME || path.join(os.homedir(), '.tingkebanlv');
+  return path.join(home, 'logs');
+}
+
+function dayStamp(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** 清掉超过保留期的归档日志（不碰 electron.log 本身） */
+function pruneOldLogs(dir) {
+  try {
+    const cutoff = Date.now() - LOG_KEEP_DAYS * 86400000;
+    for (const name of fs.readdirSync(dir)) {
+      if (!/^electron-.+\.log$/.test(name) && !/^crash-.+\.json$/.test(name)) continue;
+      const full = path.join(dir, name);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) fs.unlinkSync(full);
+      } catch (_) {
+        /* 单个文件删不掉不影响其它 */
+      }
+    }
+  } catch (_) {
+    /* 目录读不到就算了 */
+  }
+}
+
 function initLogFile() {
   try {
-    const home = process.env.TINGKEBANLV_HOME || path.join(os.homedir(), '.tingkebanlv');
-    const dir = path.join(home, 'logs');
+    const dir = logDir();
     fs.mkdirSync(dir, { recursive: true });
     logFilePath = path.join(dir, 'electron.log');
-    // 简易轮转：超过 1MB 就转存为 .1，避免长期运行无限增长
-    if (fs.existsSync(logFilePath) && fs.statSync(logFilePath).size > 1024 * 1024) {
-      fs.renameSync(logFilePath, logFilePath + '.1');
+    // 跨天：昨天的日志改名归档，保证 electron.log 永远是「最近一次运行」
+    if (fs.existsSync(logFilePath)) {
+      const st = fs.statSync(logFilePath);
+      if (dayStamp(new Date(st.mtimeMs)) !== dayStamp(new Date())) {
+        try {
+          fs.renameSync(
+            logFilePath,
+            path.join(dir, `electron-${dayStamp(new Date(st.mtimeMs))}.log`)
+          );
+        } catch (_) {
+          /* 改名失败就继续往原文件追加，不影响功能 */
+        }
+      }
     }
+    // 限大小：同一天也可能连续跑很久
+    if (fs.existsSync(logFilePath) && fs.statSync(logFilePath).size > LOG_MAX_BYTES) {
+      try {
+        fs.renameSync(logFilePath, path.join(dir, `electron-${dayStamp(new Date())}.1.log`));
+      } catch (_) {
+        /* 同上 */
+      }
+    }
+    pruneOldLogs(dir);
   } catch (_) {
     logFilePath = null; // 落盘不可用不应影响应用运行
   }
 }
 
-function logLine(message) {
-  const line = `[${new Date().toISOString()}] ${message}`;
-  console.log(line);
+/**
+ * @param {string} message
+ * @param {'debug'|'info'|'warn'|'error'} [level='info'] 默认 info，历史调用点无需改动
+ */
+function logLine(message, level = 'info') {
+  const lv = LOG_LEVELS[level] ? level : 'info';
+  if (LOG_LEVELS[lv] < LOG_LEVEL) return;
+  const line = `[${new Date().toISOString()}] [${lv.toUpperCase()}] ${message}`;
+  if (lv === 'error') console.error(line);
+  else console.log(line);
   if (!logFilePath) return;
   try {
     fs.appendFileSync(logFilePath, line + '\n');
   } catch (_) {
     // 忽略：日志失败不能阻断主流程
   }
+}
+
+const logDebug = (msg) => logLine(msg, 'debug');
+const logWarn = (msg) => logLine(msg, 'warn');
+const logError = (msg) => logLine(msg, 'error');
+
+/**
+ * 崩溃现场留档
+ * 进程崩溃时日志可能只写到一半，甚至日志文件本身没来得及 flush。
+ * 单独落一个小 JSON（版本 / 平台 / 堆栈 / 当时的日志路径），
+ * 「导出日志」会一并打包，用户不必知道去哪找。
+ */
+function writeCrashReport(kind, err) {
+  try {
+    const dir = logDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const at = new Date();
+    const payload = {
+      kind,
+      at: at.toISOString(),
+      appVersion: app.getVersion(),
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      platform: process.platform,
+      osRelease: os.release(),
+      arch: process.arch,
+      compatMode: COMPAT_MODE,
+      message: err && err.message ? err.message : String(err),
+      stack: err && err.stack ? err.stack : null,
+      logFile: logFilePath,
+    };
+    fs.writeFileSync(
+      path.join(dir, `crash-${dayStamp(at)}-${at.getTime()}.json`),
+      JSON.stringify(payload, null, 2),
+      'utf8'
+    );
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// ============ 性能埋点（本地，绝不上传） ============
+// 只需要回答一个问题：这个应用在后台是不是真的还在干活。
+// 因此记的都是「事件计数 + 状态切换次数」，不含任何用户内容。
+const perfStats = {
+  startedAt: Date.now(),
+  subtitleForwards: 0,
+  settingsBroadcasts: 0,
+  throttleFlips: 0,
+  heartbeats: 0,
+  heartbeatMisses: 0,
+  displayCorrections: 0,
+  overlayOpens: 0,
+};
+
+function perfSnapshot() {
+  return {
+    ...perfStats,
+    uptimeMs: Date.now() - perfStats.startedAt,
+    throttled: typeof mainThrottled === 'boolean' ? mainThrottled : null,
+    overlayOpen: isOverlayOpen(),
+    hostAlive: typeof hostAlive === 'boolean' ? hostAlive : null,
+  };
 }
 
 // ============ 路径解析 ============
@@ -260,17 +409,22 @@ function resolvePythonCommand() {
 // 注意：悬浮窗**不自己轮询** /api/asr/poll（该端点取出即清空，两个窗口同时拉
 // 会互相抢消息）。字幕由主窗口经 IPC 转发，见 src/stores/useSubtitleStore.ts。
 
-/** 与 src/lib/overlayBridge.ts 的 DEFAULT_OVERLAY_SETTINGS 保持一致 */
-const DEFAULT_OVERLAY_SETTINGS = {
-  enabled: false,
-  fontSize: 24,
-  color: '#ffffff',
-  lineCount: 3,
-  textBgOpacity: 0.55,
-  windowOpacity: 1,
-  clickThrough: true,
-  bounds: { x: null, y: null, width: 900, height: 220 },
-};
+// 配置的解析 / 夹取 / 迁移 / 原子落盘全部收在 electron/overlay-settings.cjs 里 ——
+// 那段逻辑承载「用户设置不能丢」，历史上出过一次不报错的 bug
+// （Number(null)===0 把「未存位置」变成坐标 0）。放在这里既跑不了单测也没人看。
+// 纯逻辑、fs 由调用方注入，因此 frontend/tests/overlay-settings.test.cjs 能覆盖
+// 损坏文件 / 旧版本 / 越界值 / 写到一半崩溃 / 锁被占用等全部分支。
+const {
+  SCHEMA_VERSION,
+  DEFAULT_OVERLAY_SETTINGS,
+  normalizeOverlaySettings,
+  sameBounds,
+  isOnSomeDisplay,
+  computeAnchor,
+  resolveBoundsForDisplay,
+  writeConfigAtomic,
+  readConfig,
+} = require('./overlay-settings.cjs');
 
 let overlaySettings = null;
 
@@ -279,60 +433,31 @@ function overlaySettingsPath() {
   return path.join(home, 'overlay.json');
 }
 
-function clampNumber(value, lo, hi, fallback) {
-  // 空值一律走 fallback：Number(null) === 0 会把「没配」误判成「配了 0」，
-  // 结果是被夹到下界（例如字号变成 12）而不是默认值，用户无从理解。
-  if (value === null || value === undefined || value === '') return fallback;
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(hi, Math.max(lo, n));
-}
-
 /**
- * 归一化设置
- * 落盘文件可能被手工改坏（例如 color 写成 "white" 或 fontSize 给成 200），
- * 这里统一夹到安全区间 —— 越界值会让窗口变成不可见或铺满屏幕，很难靠用户自己恢复。
+ * 读设置（首次调用时加载并缓存）
+ *
+ * 三种来源都要能起来：文件正常 / 文件不存在 / 文件损坏。
+ * 损坏时把原文件改名保留为 .bad 再退默认 —— 直接删掉会让用户彻底无法自救，
+ * 留着至少还能人工改回。
  */
-function normalizeOverlaySettings(raw) {
-  const src = raw && typeof raw === 'object' ? raw : {};
-  const b = src.bounds && typeof src.bounds === 'object' ? src.bounds : {};
-  // 注意：不能写成 Number.isFinite(Number(v)) —— Number(null) === 0，
-  // 会把「首次运行、还没存过位置」的 null 静默转成 0，于是窗口永远被判定为
-  // 「已经在屏幕上（左上角）」，默认的底部居中位置一次都算不出来。
-  const intOrNull = (v) => {
-    if (v === null || v === undefined || v === '') return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? Math.round(n) : null;
-  };
-  return {
-    enabled: !!src.enabled,
-    fontSize: Math.round(clampNumber(src.fontSize, 12, 72, DEFAULT_OVERLAY_SETTINGS.fontSize)),
-    color: typeof src.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(src.color)
-      ? src.color
-      : DEFAULT_OVERLAY_SETTINGS.color,
-    lineCount: Math.round(clampNumber(src.lineCount, 1, 6, DEFAULT_OVERLAY_SETTINGS.lineCount)),
-    textBgOpacity: clampNumber(src.textBgOpacity, 0, 1, DEFAULT_OVERLAY_SETTINGS.textBgOpacity),
-    windowOpacity: clampNumber(src.windowOpacity, 0.2, 1, DEFAULT_OVERLAY_SETTINGS.windowOpacity),
-    clickThrough: src.clickThrough === undefined ? true : !!src.clickThrough,
-    bounds: {
-      x: intOrNull(b.x),
-      y: intOrNull(b.y),
-      width: Math.round(clampNumber(b.width, 320, 4000, DEFAULT_OVERLAY_SETTINGS.bounds.width)),
-      height: Math.round(clampNumber(b.height, 100, 2000, DEFAULT_OVERLAY_SETTINGS.bounds.height)),
-    },
-  };
-}
-
 function loadOverlaySettings() {
   if (overlaySettings) return overlaySettings;
-  try {
-    const file = overlaySettingsPath();
-    overlaySettings = fs.existsSync(file)
-      ? normalizeOverlaySettings(JSON.parse(fs.readFileSync(file, 'utf8')))
-      : normalizeOverlaySettings(null);
-  } catch (err) {
-    logLine(`[overlay] 读取设置失败，回退默认值: ${err.message}`);
-    overlaySettings = normalizeOverlaySettings(null);
+  const file = overlaySettingsPath();
+  const res = readConfig(fs, file);
+  if (res.reason === 'corrupt') {
+    logWarn(`[overlay] 配置文件损坏（${res.error}），已回退出厂默认；原文件另存为 ${path.basename(file)}.bad`);
+    try {
+      fs.renameSync(file, `${file}.bad`);
+    } catch (_) {
+      /* 改名失败也必须继续启动 */
+    }
+  } else if (res.reason === 'absent') {
+    logDebug('[overlay] 尚无配置文件，使用出厂默认');
+  }
+  overlaySettings = res.settings;
+  if (res.migrated) {
+    logLine(`[overlay] 配置已从旧版本迁移到 schemaVersion=${SCHEMA_VERSION}`);
+    saveOverlaySettings(); // 顺手落盘，避免每次启动都再迁一遍
   }
   return overlaySettings;
 }
@@ -340,11 +465,10 @@ function loadOverlaySettings() {
 function saveOverlaySettings() {
   if (!overlaySettings) return;
   try {
-    const file = overlaySettingsPath();
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(overlaySettings, null, 2), 'utf8');
+    fs.mkdirSync(path.dirname(overlaySettingsPath()), { recursive: true });
+    writeConfigAtomic(fs, overlaySettingsPath(), overlaySettings);
   } catch (err) {
-    logLine(`[overlay] 保存设置失败: ${err.message}`);
+    logError(`[overlay] 保存设置失败: ${err.message}`);
   }
 }
 
@@ -352,41 +476,35 @@ function isOverlayOpen() {
   return !!overlayWindow && !overlayWindow.isDestroyed();
 }
 
-function sameBounds(a, b) {
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
-}
-
-/** 悬浮窗尺寸是否与某个显示器工作区有足够重叠（否则就是「跑到屏幕外了」） */
-function isOnSomeDisplay(b) {
-  if (b.x === null || b.y === null) return false;
-  return screen.getAllDisplays().some((d) => {
-    const wa = d.workArea;
-    return (
-      b.x + 80 < wa.x + wa.width &&
-      b.x + b.width - 80 > wa.x &&
-      b.y + 20 < wa.y + wa.height &&
-      b.y + b.height - 20 > wa.y
-    );
-  });
-}
-
-/**
- * 修正落盘的窗口位置
- *
- * 两种必须兜底的情况：
- *   1. 首次运行（x/y 为 null）→ 贴主屏工作区底部居中
- *   2. 上次保存的位置已经不在任何显示器上（外接屏拔了、分辨率变了、用户拖出了屏幕）
- *      → 同样回到默认位。否则窗口会永久不可见，而它是鼠标穿透的，
- *        用户既点不到也没法拖回来，只能手工改 overlay.json。
- */
-function resolveBoundsForDisplay(bounds) {
-  const b = { ...bounds };
-  if (!isOnSomeDisplay(b)) {
-    const wa = screen.getPrimaryDisplay().workArea;
-    b.x = Math.round(wa.x + (wa.width - b.width) / 2);
-    b.y = Math.round(wa.y + wa.height - b.height - 80);
+/** 向悬浮窗推消息；窗口不在时静默返回 false（不抛，调用方无需层层判断） */
+function sendToOverlay(channel, payload) {
+  if (!isOverlayOpen()) return false;
+  try {
+    if (overlayWindow.webContents.isDestroyed()) return false;
+    overlayWindow.webContents.send(channel, payload);
+    return true;
+  } catch (err) {
+    logWarn(`[overlay] 推送 ${channel} 失败: ${err.message}`);
+    return false;
   }
-  return b;
+}
+
+function sendToMain(channel, payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  try {
+    mainWindow.webContents.send(channel, payload);
+    return true;
+  } catch (err) {
+    logWarn(`[window] 推送 ${channel} 失败: ${err.message}`);
+    return false;
+  }
+}
+
+/** 悬浮窗入口地址 */
+function overlayPageUrl() {
+  const dev = process.env.VITE_DEV_SERVER_URL;
+  if (dev) return `${dev.replace(/#.*$/, '')}#/overlay`;
+  return `http://127.0.0.1:${backendPort}#/overlay`;
 }
 
 /** 把设置里与窗口属性相关的部分真正作用到 BrowserWindow 上 */
@@ -415,25 +533,13 @@ function applyOverlaySettingsToWindow() {
 /** 把最新设置广播给两个渲染进程（悬浮窗用它渲染样式，主窗口用它同步 UI） */
 function broadcastOverlaySettings() {
   const s = loadOverlaySettings();
-  if (isOverlayOpen() && !overlayWindow.webContents.isDestroyed()) {
-    overlayWindow.webContents.send('overlay:settings', s);
-  }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('overlay:settings', s);
-  }
+  perfStats.settingsBroadcasts++;
+  sendToOverlay('overlay:settings', s);
+  sendToMain('overlay:settings', s);
 }
 
 function notifyOverlayState() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('overlay:state', { open: isOverlayOpen() });
-  }
-}
-
-/** 悬浮窗入口地址：hash 路由 /overlay（见 src/App.tsx） */
-function overlayPageUrl() {
-  const dev = process.env.VITE_DEV_SERVER_URL;
-  if (dev) return `${dev.replace(/#.*$/, '')}#/overlay`;
-  return `http://127.0.0.1:${backendPort}#/overlay`;
+  sendToMain('overlay:state', { open: isOverlayOpen() });
 }
 
 /**
@@ -470,9 +576,17 @@ function runOverlayDiagnostics() {
 function createOverlayWindow() {
   if (isOverlayOpen()) return overlayWindow;
 
-  const b = resolveBoundsForDisplay(loadOverlaySettings().bounds);
-  // 把修正后的位置落盘：否则下次启动还要再算一遍，且 overlay.json 里的位置长期是坏的
+  const s = loadOverlaySettings();
+  // 位置修正走「绝对位置 → 相对锚点 → 默认底部居中」三级兜底（详见 overlay-settings.cjs）
+  const b = resolveBoundsForDisplay(
+    s.bounds,
+    screen.getPrimaryDisplay().workArea,
+    screen.getAllDisplays(),
+    s.anchor
+  );
+  // 把修正后的位置与锚点落盘：否则下次启动还要再算一遍，且 overlay.json 里的位置长期是坏的
   overlaySettings.bounds = b;
+  overlaySettings.anchor = computeAnchor(b, screen.getDisplayMatching(b));
   saveOverlaySettings();
 
   overlayWindow = new BrowserWindow({
@@ -498,7 +612,8 @@ function createOverlayWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
-      // 学生切到浏览器看课时主窗口在后台，默认节流会把 500ms 轮询降到分钟级
+      // 悬浮窗自己绝不节流：它就是给「切到浏览器看网课」这个场景用的，
+      // 一旦节流，字幕会在用户最需要的时候停住。
       backgroundThrottling: false,
     },
   });
@@ -513,17 +628,23 @@ function createOverlayWindow() {
     if (!isOverlayOpen()) return;
     overlayWindow.showInactive(); // 不抢焦点，用户正在浏览器里打字时不该被打断
     applyOverlaySettingsToWindow();
-    logLine(`[overlay] 悬浮窗已显示（穿透=${loadOverlaySettings().clickThrough ? '开' : '关'}）`);
+    perfStats.overlayOpens++;
+    logLine(
+      `[overlay] 悬浮窗已显示（穿透=${loadOverlaySettings().clickThrough ? '开' : '关'}）`
+    );
+    applyMainWindowThrottling(); // 出口出现了，主窗口可以不用省电了
   });
 
   overlayWindow.webContents.once('did-finish-load', () => {
     logLine('[overlay] 页面加载完成');
     broadcastOverlaySettings();
+    // 主动推一次宿主状态：悬浮窗重启后不该停在「主窗口已断开」的陈旧提示上
+    sendToOverlay('overlay:host-status', { alive: hostAlive, reason: 'init', at: Date.now() });
     runOverlayDiagnostics();
   });
 
   overlayWindow.webContents.on('did-fail-load', (_e, errorCode, errorDesc, validatedURL) => {
-    logLine(`[overlay] 页面加载失败 code=${errorCode} desc=${errorDesc} url=${validatedURL}`);
+    logError(`[overlay] 页面加载失败 code=${errorCode} desc=${errorDesc} url=${validatedURL}`);
   });
 
   // 用户拖动 / 缩放后落盘，下次启动还原到同一位置
@@ -538,8 +659,13 @@ function createOverlayWindow() {
       if (nb.width < 100 || nb.height < 50) return;
       if (sameBounds(overlaySettings.bounds, nb)) return;
       overlaySettings.bounds = { x: nb.x, y: nb.y, width: nb.width, height: nb.height };
+      // 同步刷新相对锚点：下次显示器插拔/换分辨率就靠它把窗口搬回来
+      overlaySettings.anchor = computeAnchor(nb, screen.getDisplayMatching(nb));
       saveOverlaySettings();
-      logLine(`[overlay] 位置/尺寸已保存: ${nb.x},${nb.y} ${nb.width}x${nb.height}`);
+      logLine(
+        `[overlay] 位置/尺寸已保存: ${nb.x},${nb.y} ${nb.width}x${nb.height} ` +
+        `(锚点 屏${overlaySettings.anchor.displayId} ${overlaySettings.anchor.relX},${overlaySettings.anchor.relY})`
+      );
       broadcastOverlaySettings();
     }, 400);
   };
@@ -549,13 +675,14 @@ function createOverlayWindow() {
   overlayWindow.on('closed', () => {
     overlayWindow = null;
     notifyOverlayState();
+    applyMainWindowThrottling(); // 唯一出口没了 → 允许主窗口省电
   });
 
   const url = overlayPageUrl();
   const wa = screen.getPrimaryDisplay().workArea;
   logLine(
     `[overlay] 窗口位置: ${b.x},${b.y} ${b.width}x${b.height} ` +
-    `（主屏工作区 ${wa.x},${wa.y} ${wa.width}x${wa.height}）`
+    `（主屏工作区 ${wa.x},${wa.y} ${wa.width}x${wa.height}，显示器数 ${screen.getAllDisplays().length}）`
   );
   logLine(`[overlay] 加载入口: ${url}`);
   overlayWindow.loadURL(url);
@@ -580,6 +707,7 @@ function closeOverlayWindow() {
   saveOverlaySettings();
   destroyOverlayWindow();
   notifyOverlayState();
+  applyMainWindowThrottling();
 }
 
 function openOverlayWindow() {
@@ -587,6 +715,8 @@ function openOverlayWindow() {
   saveOverlaySettings();
   createOverlayWindow();
   notifyOverlayState();
+  // 立刻取消节流：窗口 ready-to-show 还要一小会儿，这期间字幕不该丢
+  applyMainWindowThrottling();
 }
 
 /** 调整模式：临时关掉鼠标穿透，让用户可以拖动窗口 */
@@ -598,6 +728,153 @@ function toggleOverlayInteractive() {
   applyOverlaySettingsToWindow();
   broadcastOverlaySettings();
   logLine(`[overlay] 鼠标穿透=${s.clickThrough ? '开' : '关（调整模式）'}`);
+}
+
+/** 悬浮窗挪回主屏底部居中（穿透窗口跑出屏幕后唯一的自救入口） */
+function resetOverlayPosition() {
+  const s = loadOverlaySettings();
+  const wa = screen.getPrimaryDisplay().workArea;
+  const target = {
+    x: Math.round(wa.x + (wa.width - s.bounds.width) / 2),
+    y: Math.round(wa.y + wa.height - s.bounds.height - 80),
+    width: s.bounds.width,
+    height: s.bounds.height,
+  };
+  s.bounds = target;
+  s.anchor = computeAnchor(target, screen.getPrimaryDisplay());
+  overlaySettings = s;
+  saveOverlaySettings();
+  if (isOverlayOpen()) {
+    try {
+      overlayWindow.setBounds(target);
+    } catch (err) {
+      logWarn(`[overlay] 重置位置失败: ${err.message}`);
+    }
+  }
+  broadcastOverlaySettings();
+  logLine(`[overlay] 位置已重置: ${target.x},${target.y}`);
+  return s;
+}
+
+// ============ 后台节流策略 ============
+//
+// 背景：字幕靠主窗口 500ms 轮询 /api/asr/poll 驱动，而学生一开始听课就会切到
+// 浏览器看网课 —— 主窗口随即进入后台。Chromium 默认把后台窗口的定时器降到
+// 分钟级，字幕会在切走的一瞬间整体停住。所以历史上这里是硬编码
+// `backgroundThrottling: false`。
+//
+// 但「永远不节流」的代价是主窗口在完全没人看的时候也在跑轮询（笔记本耗电、
+// 风扇转）。折中成可配置：
+//   1. 用户在设置里关掉「后台持续更新」→ 一律节流（明确选择，尊重）
+//   2. 开着（默认）→ 只有当确实没有任何窗口在展示字幕时才节流省电
+//      「出口」= 悬浮窗开着（它在屏幕上）或主窗口可见且未最小化
+// 状态切换会写日志（[perf]），方便事后解释「为什么 CPU 占用不同」。
+
+/** 当前是否存在能看到字幕的窗口 */
+function hasSubtitleOutlet() {
+  if (isOverlayOpen()) return true;
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  return mainWindow.isVisible() && !mainWindow.isMinimized();
+}
+
+function applyMainWindowThrottling() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const s = loadOverlaySettings();
+  const want = !(s.backgroundUpdate && hasSubtitleOutlet());
+  if (want === mainThrottled) return;
+  try {
+    // 立刻生效，不需要重建窗口
+    mainWindow.webContents.setBackgroundThrottling(want);
+  } catch (err) {
+    logWarn(`[perf] 设置后台节流失败: ${err.message}`);
+    return;
+  }
+  mainThrottled = want;
+  perfStats.throttleFlips++;
+  logLine(
+    `[perf] 后台节流=${want ? '开（省电）' : '关（字幕持续更新）'}` +
+    ` 出口=${isOverlayOpen() ? '悬浮窗' : (hasSubtitleOutlet() ? '主窗口' : '无')}` +
+    ` 用户开关 backgroundUpdate=${s.backgroundUpdate}`
+  );
+}
+
+// ============ 主窗口存活探测 ============
+//
+// 悬浮窗是独立渲染进程 + 独立窗口，主窗口崩溃时它**不会**跟着消失：
+// 用户看到的是一块永远停在最后一句字幕、也永远不更新的浮层，看起来像卡死。
+// 明确的「主窗口已断开，请重启应用」比沉默的静止要好得多。
+//
+// 判定策略：渲染进程的 render-process-gone / unresponsive 是权威信号；
+// 心跳是兜底（覆盖 JS 死循环这类事件不触发的情况）。
+
+const HEARTBEAT_STALE_MS = 8000;
+let lastHeartbeatAt = 0;
+let heartbeatTimer = null;
+
+function markHostAlive(alive, reason) {
+  if (alive === hostAlive) return;
+  hostAlive = alive;
+  const payload = { alive, reason, at: Date.now() };
+  if (alive) logLine(`[overlay] 主窗口已恢复（${reason}）`);
+  else logError(`[overlay] 主窗口失联（${reason}）→ 悬浮窗将提示用户`);
+  sendToOverlay('overlay:host-status', payload);
+  sendToMain('overlay:host-status', payload);
+}
+
+function startHeartbeatWatch() {
+  if (heartbeatTimer) return;
+  lastHeartbeatAt = Date.now();
+  heartbeatTimer = setInterval(() => {
+    // 只在悬浮窗开着时才判失联：悬浮窗开着 → 不节流 → 心跳必然按 2s 到达；
+    // 悬浮窗关着时主窗口本来就可能被节流，心跳变慢属于预期，报警只会是误报。
+    if (!isOverlayOpen()) {
+      lastHeartbeatAt = Date.now();
+      markHostAlive(true, '悬浮窗未开，跳过探测');
+      return;
+    }
+    if (Date.now() - lastHeartbeatAt > HEARTBEAT_STALE_MS) {
+      perfStats.heartbeatMisses++;
+      markHostAlive(false, `超过 ${HEARTBEAT_STALE_MS}ms 未收到渲染进程心跳`);
+    }
+  }, 2000);
+}
+
+// ============ 显示器变化自愈 ============
+//
+// 外接屏拔掉 / 分辨率从 100% 改成 150% / 投屏切换 —— 这些都会让落盘的绝对坐标
+// 落到「不存在的那块空间」里。悬浮窗是鼠标穿透的，用户既点不到也拖不回来，
+// 只能手工改 overlay.json。所以每次显示器集合或度量变化都必须重新校验一次。
+
+function handleDisplayChange(reason) {
+  if (!isOverlayOpen()) return;
+  const displays = screen.getAllDisplays();
+  if (isOnSomeDisplay(overlaySettings.bounds, displays)) return; // 位置还有效，不打扰用户
+  const fixed = resolveBoundsForDisplay(
+    overlaySettings.bounds,
+    screen.getPrimaryDisplay().workArea,
+    displays,
+    overlaySettings.anchor
+  );
+  overlaySettings.bounds = fixed;
+  overlaySettings.anchor = computeAnchor(fixed, screen.getDisplayMatching(fixed));
+  saveOverlaySettings();
+  try {
+    overlayWindow.setBounds(fixed);
+  } catch (err) {
+    logWarn(`[overlay] 显示器变化后设置位置失败: ${err.message}`);
+  }
+  perfStats.displayCorrections++;
+  logWarn(
+    `[overlay] 显示器变化(${reason})，位置已自动校正到 ${fixed.x},${fixed.y} ` +
+    `（当前显示器数 ${displays.length}）`
+  );
+  broadcastOverlaySettings();
+  sendToOverlay('overlay:position-corrected', {
+    x: fixed.x,
+    y: fixed.y,
+    reason,
+    at: Date.now(),
+  });
 }
 
 // ============ 端口分配 ============
@@ -906,15 +1183,46 @@ function createWindow(port) {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
-      // 关键：学生开始识别后就会切到浏览器看网课，主窗口随即进入后台。
-      // Chromium 默认会把后台窗口的定时器降到分钟级，而 ASR 字幕靠 500ms
-      // 轮询驱动 —— 不关掉节流，字幕会在切走的一瞬间整体停住。
+      // 初始不节流：窗口创建到 ready-to-show 之间页面还在加载，
+      // 这期间把定时器降级只会拖慢首屏。真正的策略在 ready-to-show 之后由
+      // applyMainWindowThrottling() 按「用户开关 + 有没有窗口在看字幕」决定。
       backgroundThrottling: false,
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
   });
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    applyMainWindowThrottling();
+  });
+
+  // 主窗口可见性变化会改变「还有没有出口在看字幕」，需要重算节流策略
+  for (const evt of ['show', 'hide', 'minimize', 'restore', 'maximize', 'unmaximize']) {
+    mainWindow.on(evt, () => applyMainWindowThrottling());
+  }
+
+  // 渲染进程崩溃 / 卡死：这是比心跳更权威的信号（心跳只覆盖 JS 逻辑卡住）
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    const info = details || {};
+    logError(
+      `[fatal] 主窗口渲染进程退出 reason=${info.reason} exitCode=${info.exitCode}`
+    );
+    writeCrashReport('render-process-gone', new Error(`reason=${info.reason} exitCode=${info.exitCode}`));
+    markHostAlive(false, `渲染进程退出（${info.reason}）`);
+  });
+  mainWindow.webContents.on('unresponsive', () => {
+    logWarn('[perf] 主窗口渲染进程无响应');
+    markHostAlive(false, '渲染进程无响应');
+  });
+  mainWindow.webContents.on('responsive', () => {
+    logLine('[perf] 主窗口渲染进程恢复响应');
+    markHostAlive(true, '渲染进程恢复响应');
+  });
+  // 每次页面重载都重置心跳基准，避免「刚 reload 完就被判失联」
+  mainWindow.webContents.on('did-finish-load', () => {
+    lastHeartbeatAt = Date.now();
+    markHostAlive(true, '页面加载完成');
+  });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   let cancelWatchdog = () => {};
@@ -970,9 +1278,12 @@ function registerOverlayShortcuts() {
   const bind = (accelerator, handler, label) => {
     try {
       const ok = globalShortcut.register(accelerator, handler);
-      logLine(`[overlay] 热键 ${accelerator}（${label}）注册${ok ? '成功' : '失败（可能被占用）'}`);
+      if (ok) logLine(`[overlay] 热键 ${accelerator}（${label}）注册成功`);
+      // 注册失败（被其它软件占用）不能影响主流程，但必须让用户知道
+      // 「这个快捷键没生效」—— 否则他会反复按、以为应用坏了。
+      else logWarn(`[overlay] 热键 ${accelerator}（${label}）注册失败：已被其它程序占用`);
     } catch (err) {
-      logLine(`[overlay] 热键 ${accelerator}（${label}）注册异常: ${err.message}`);
+      logWarn(`[overlay] 热键 ${accelerator}（${label}）注册异常: ${err.message}`);
     }
   };
   bind('Alt+Shift+O', () => {
@@ -980,6 +1291,24 @@ function registerOverlayShortcuts() {
     else openOverlayWindow();
   }, '开关悬浮窗');
   bind('Alt+Shift+D', toggleOverlayInteractive, '切换调整模式');
+  bind('Alt+Shift+R', () => {
+    resetOverlayPosition();
+    // 穿透状态下用户看不到任何反馈，必须主动提示一次
+    sendToOverlay('overlay:toast', { text: '位置已重置到屏幕底部居中', at: Date.now() });
+  }, '重置悬浮窗位置');
+  bind('Alt+Shift+]', () => nudgeFontSize(2), '字幕字号 +2');
+  bind('Alt+Shift+[', () => nudgeFontSize(-2), '字幕字号 -2');
+}
+
+/** 快捷键调字号：夹取由 normalizeOverlaySettings 负责，这里只管发意图 */
+function nudgeFontSize(delta) {
+  const s = loadOverlaySettings();
+  const next = normalizeOverlaySettings({ ...s, fontSize: s.fontSize + delta });
+  overlaySettings = next;
+  saveOverlaySettings();
+  broadcastOverlaySettings();
+  logLine(`[overlay] 字号 = ${next.fontSize}（快捷键 ${delta > 0 ? '+' : ''}${delta}）`);
+  sendToOverlay('overlay:toast', { text: `字号 ${next.fontSize}`, at: Date.now() });
 }
 
 /** 上次退出时悬浮窗是开着的 → 本次启动自动恢复 */
@@ -988,34 +1317,70 @@ function restoreOverlayIfEnabled() {
   try {
     createOverlayWindow();
   } catch (err) {
-    logLine(`[overlay] 自动恢复悬浮窗失败: ${err.message}`);
+    logError(`[overlay] 自动恢复悬浮窗失败: ${err.message}`);
   }
 }
 
-app.whenReady().then(async () => {
-  try {
-    const port = await launchBackend();
-    createWindow(port);
-    restoreOverlayIfEnabled();
-    registerOverlayShortcuts();
-  } catch (err) {
-    logLine(`[fatal] 启动失败: ${err.message}`);
-    dialog.showErrorBox(
-      '听课伴侣启动失败',
-      `${err.message}\n\n详细日志：${logFilePath || '(未能写入日志文件)'}`
-    );
-    app.quit();
-    return;
-  }
+/** 显示器集合 / 度量变化时重新校验悬浮窗位置（外接屏拔掉、改 DPI、投屏切换） */
+function registerDisplayWatchers() {
+  const onChange = (reason) => () => {
+    try {
+      handleDisplayChange(reason);
+    } catch (err) {
+      logWarn(`[overlay] 处理显示器变化(${reason})异常: ${err.message}`);
+    }
+  };
+  screen.on('display-added', onChange('显示器接入'));
+  screen.on('display-removed', onChange('显示器移除'));
+  screen.on('display-metrics-changed', onChange('显示器参数变化（分辨率/缩放）'));
+}
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0 && backendPort) {
-      createWindow(backendPort);
-      // macOS 关掉主窗口不退出应用，重新激活时按上次的 enabled 把悬浮窗一并还原
-      restoreOverlayIfEnabled();
+if (singleInstanceOwner) {
+  app.on('second-instance', () => {
+    logLine('[single-instance] 检测到第二次启动，将已有窗口提到前台');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
     }
   });
-});
+
+  app.whenReady().then(async () => {
+    try {
+      const port = await launchBackend();
+      createWindow(port);
+      restoreOverlayIfEnabled();
+      registerOverlayShortcuts();
+      registerDisplayWatchers();
+      startHeartbeatWatch();
+      applyMainWindowThrottling();
+    } catch (err) {
+      logError(`[fatal] 启动失败: ${err.message}`);
+      writeCrashReport('startup-failure', err);
+      dialog.showErrorBox(
+        '听课伴侣启动失败',
+        `${err.message}\n\n详细日志：${logFilePath || '(未能写入日志文件)'}`
+      );
+      app.quit();
+      return;
+    }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0 && backendPort) {
+        mainThrottled = null; // 新窗口要重新决策，否则会跳过 setBackgroundThrottling
+        createWindow(backendPort);
+        // macOS 关掉主窗口不退出应用，重新激活时按上次的 enabled 把悬浮窗一并还原
+        restoreOverlayIfEnabled();
+        applyMainWindowThrottling();
+      }
+    });
+  });
+} else {
+  // 非首实例：不启动后端、不建窗口。留一条日志便于事后确认「为什么没反应」。
+  app.whenReady().then(() => {
+    console.log('[single-instance] 非首实例，不做任何初始化');
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -1024,6 +1389,10 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true;
   destroyOverlayWindow();
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
   try {
     globalShortcut.unregisterAll();
   } catch (_) {
@@ -1033,8 +1402,16 @@ app.on('before-quit', () => {
 });
 
 // 兜底：异常退出路径也要清理，避免残留 uvicorn 占端口
+// 同时留一份崩溃现场（版本/平台/堆栈），「导出日志」会一并打包 ——
+// 用户不需要知道去哪找，也说不清「刚才报了什么错」。
 process.on('uncaughtException', (err) => {
-  logLine(`[fatal] 未捕获异常: ${err && err.stack ? err.stack : err}`);
+  logError(`[fatal] 未捕获异常: ${err && err.stack ? err.stack : err}`);
+  writeCrashReport('uncaughtException', err);
+});
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  logError(`[fatal] 未处理的 Promise 拒绝: ${err.stack || err.message}`);
+  writeCrashReport('unhandledRejection', err);
 });
 process.on('exit', killBackend);
 process.on('SIGINT', () => {
@@ -1092,6 +1469,8 @@ ipcMain.handle('overlay:set-settings', (_event, patch) => {
   }
 
   broadcastOverlaySettings();
+  // backgroundUpdate 可能刚被改过，节流策略要跟着走
+  applyMainWindowThrottling();
   return merged;
 });
 
@@ -1112,31 +1491,103 @@ ipcMain.handle('overlay:close', () => {
  * 于是 normalize 之后再回传 null 也无从区分「用户想把窗口放回默认位」。
  * 用户把窗口拖到屏幕外或拖到只露出一角时，这是唯一的自救入口。
  */
-ipcMain.handle('overlay:reset-position', () => {
-  const s = loadOverlaySettings();
-  const wa = screen.getPrimaryDisplay().workArea;
-  const target = {
-    x: Math.round(wa.x + (wa.width - s.bounds.width) / 2),
-    y: Math.round(wa.y + wa.height - s.bounds.height - 80),
-    width: s.bounds.width,
-    height: s.bounds.height,
-  };
-  s.bounds = target;
-  overlaySettings = s;
-  saveOverlaySettings();
-  if (isOverlayOpen()) {
-    try {
-      overlayWindow.setBounds(target);
-    } catch (err) {
-      logLine(`[overlay] 重置位置失败: ${err.message}`);
-    }
-  }
-  broadcastOverlaySettings();
-  return s;
-});
+ipcMain.handle('overlay:reset-position', () => resetOverlayPosition());
 
 // 字幕快照转发：主窗口（唯一轮询者）→ 主进程 → 悬浮窗
 ipcMain.on('overlay:subtitle', (_event, payload) => {
-  if (!isOverlayOpen() || overlayWindow.webContents.isDestroyed()) return;
-  overlayWindow.webContents.send('overlay:subtitle', payload);
+  perfStats.subtitleForwards++;
+  sendToOverlay('overlay:subtitle', payload);
+});
+
+// ---- 存活心跳 / 诊断 ----
+
+/**
+ * 渲染进程心跳（主窗口每 2s 一次）
+ * 用 ipcMain.on 而不是 handle：心跳是高频单向通知，走 handle 会让渲染侧
+ * 每 2 秒产生一个无用的 Promise 与 resolver，纯属浪费。
+ */
+ipcMain.on('app:heartbeat', () => {
+  lastHeartbeatAt = Date.now();
+  perfStats.heartbeats++;
+  if (!hostAlive) markHostAlive(true, '心跳恢复');
+});
+
+ipcMain.handle('app:get-host-status', () => ({
+  alive: hostAlive,
+  throttled: mainThrottled,
+  overlayOpen: isOverlayOpen(),
+}));
+
+/** 性能埋点快照（本地展示用，不联网） */
+ipcMain.handle('app:get-perf-stats', () => perfSnapshot());
+
+/**
+ * 导出诊断日志
+ *
+ * 目的只有一个：让用户能把「出了什么问题」变成一份可以直接发过来的文本。
+ * 因此不写 zip（多一个依赖、多一层会失败的环节），直接把 logs 目录里的
+ * 日志与崩溃快照拼成一个 txt，附上环境头信息。
+ */
+ipcMain.handle('app:export-logs', async () => {
+  const dir = logDir();
+  const stamp = dayStamp(new Date());
+  const defaultPath = path.join(app.getPath('desktop'), `听课伴侣日志-${stamp}.txt`);
+  let saveTarget = null;
+  try {
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    const res = win
+      ? await dialog.showSaveDialog(win, {
+        title: '导出诊断日志',
+        defaultPath,
+        filters: [{ name: '文本文件', extensions: ['txt'] }],
+      })
+      : await dialog.showSaveDialog({
+        title: '导出诊断日志',
+        defaultPath,
+        filters: [{ name: '文本文件', extensions: ['txt'] }],
+      });
+    if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+    saveTarget = res.filePath;
+  } catch (err) {
+    logError(`[diag] 选择导出路径失败: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+
+  try {
+    const parts = [
+      '听课伴侣 诊断日志',
+      `导出时间: ${new Date().toISOString()}`,
+      `应用版本: ${app.getVersion()}`,
+      `Electron: ${process.versions.electron}  Chromium: ${process.versions.chrome}  Node: ${process.versions.node}`,
+      `平台: ${process.platform} ${os.release()} (${process.arch})`,
+      `打包模式: ${app.isPackaged}  兼容模式: ${COMPAT_MODE}`,
+      `数据目录: ${process.env.TINGKEBANLV_HOME || path.join(os.homedir(), '.tingkebanlv')}`,
+      `运行时长: ${Math.round((Date.now() - perfStats.startedAt) / 1000)}s`,
+      '',
+      '---- 性能埋点 ----',
+      JSON.stringify(perfSnapshot(), null, 2),
+      '',
+    ];
+    let names = [];
+    try {
+      names = fs.readdirSync(dir).filter((n) => /\.(log|json)$/.test(n)).sort();
+    } catch (_) {
+      parts.push('(日志目录不可读)');
+    }
+    for (const name of names) {
+      parts.push(`===== ${name} =====`);
+      try {
+        parts.push(fs.readFileSync(path.join(dir, name), 'utf8'));
+      } catch (err) {
+        parts.push(`(读取失败: ${err.message})`);
+      }
+      parts.push('');
+    }
+    fs.writeFileSync(saveTarget, parts.join('\n'), 'utf8');
+    logLine(`[diag] 日志已导出: ${saveTarget}（含 ${names.length} 个文件）`);
+    return { ok: true, filePath: saveTarget, files: names.length };
+  } catch (err) {
+    logError(`[diag] 导出日志失败: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
 });

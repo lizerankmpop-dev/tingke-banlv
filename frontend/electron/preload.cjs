@@ -6,7 +6,8 @@
  *
  * 两个消费方：
  *   主应用窗口  —— getAppVersion / getBackendPort / overlay.*（控制面板 + 推送字幕）
- *   悬浮窗      —— overlay.getSettings / onSettings / onSubtitle（纯展示）
+ *                 / heartbeat / host-status / 导出日志 / 性能快照
+ *   悬浮窗      —— overlay.getSettings / onSettings / onSubtitle / onHostStatus
  */
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -21,6 +22,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   // 后端实际监听端口（自动分配），调试时可在控制台查看
   getBackendPort: () => ipcRenderer.invoke('get-backend-port'),
+
+  // ---- 存活心跳 / 诊断 ----
+  //
+  // 为什么要有心跳：悬浮窗是独立窗口，主窗口渲染进程崩掉时它并不会消失，
+  // 只会永远停在最后一句字幕上 —— 看起来像「字幕不动了」，用户根本不知道
+  // 该重启应用。心跳让悬浮窗能明确地说出「主窗口已断开」。
+  /** 渲染进程 → 主进程（每 2s 一次，单向通知） */
+  heartbeat: () => ipcRenderer.send('app:heartbeat'),
+  /** 主窗口失联/恢复通知（两侧都会收到） */
+  onHostStatus: (cb) => subscribe('overlay:host-status', cb),
+  getHostStatus: () => ipcRenderer.invoke('app:get-host-status'),
+  /** 显示器变化导致位置被自动校正时的通知（悬浮窗弹一行提示） */
+  onPositionCorrected: (cb) => subscribe('overlay:position-corrected', cb),
+  /** 悬浮窗轻提示（快捷键改字号 / 重置位置后的反馈） */
+  onToast: (cb) => subscribe('overlay:toast', cb),
+  /** 本地性能埋点快照（不上传） */
+  getPerfStats: () => ipcRenderer.invoke('app:get-perf-stats'),
+  /** 导出诊断日志（弹保存对话框，返回 { ok, filePath? , canceled? }） */
+  exportLogs: () => ipcRenderer.invoke('app:export-logs'),
 
   // 桌面字幕悬浮窗
   overlay: {

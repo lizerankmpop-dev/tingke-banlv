@@ -27,6 +27,52 @@ def _get_data_dir() -> Path:
 DB_DIR = _get_data_dir()
 DB_PATH = DB_DIR / "tingkebanlv.db"
 
+# ---------- 生词复习闭环（v3.4.0）字段定义 ----------
+#
+# 迁移原则（硬约束）：**只 ADD COLUMN，绝不 DROP / 改类型 / 重建表**。
+# 用户可能已经积累了上百个生词，任何「先清空再建」的做法都会让数据永久丢失。
+DEFAULT_EFACTOR = 2.5
+MIN_EFACTOR = 1.3
+MAX_EFACTOR = 5.0
+REVIEW_INTERVAL_MAX_DAYS = 3650.0  # 单次排程上限 10 年，防止异常值把用户排到几十年后
+DAY_MS = 86_400_000
+
+#: (列名, 列定义) —— 老库缺哪列补哪列
+VOCABULARY_MIGRATIONS: list[tuple[str, str]] = [
+    ("repetitions", "INTEGER DEFAULT 0"),      # SM2 连对次数，决定下一次间隔
+    ("efactor", "REAL DEFAULT 2.5"),           # SM2 难度因子
+    ("review_interval", "REAL DEFAULT 0"),     # 上次排程的间隔（天，允许小数）
+    ("next_review_at", "INTEGER DEFAULT 0"),   # 到期时间（毫秒），<= now 即在待复习队列
+    ("source_srt_time", "INTEGER DEFAULT 0"),  # 采集时对应的字幕时间戳，复习时可回看上下文
+    ("updated_at", "INTEGER DEFAULT 0"),
+]
+
+
+def _local_day_start_ms(now_ms: int) -> int:
+    """本地时区当天 0 点（「今日已复习」按用户本地日历算，不用 UTC）"""
+    lt = time.localtime(now_ms / 1000)
+    midnight = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    return int(midnight * 1000)
+
+
+def _safe_float(value, fallback: float, lo: float, hi: float) -> float:
+    """容错取浮点并夹到区间；NaN/±inf 一律回退（手改过的备份文件里很常见）"""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if n != n or n in (float("inf"), float("-inf")):
+        return fallback
+    return min(hi, max(lo, n))
+
+
+def _safe_int(value, fallback: int, lo: int, hi: int) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return min(hi, max(lo, n))
+
 
 class DatabaseManager:
     def __init__(self):
@@ -83,10 +129,16 @@ class DatabaseManager:
                 domain TEXT DEFAULT '',
                 context_sentence TEXT DEFAULT '',
                 source_subtitle_id TEXT DEFAULT '',
+                source_srt_time INTEGER DEFAULT 0,
                 is_auto_generated INTEGER DEFAULT 0,
                 is_memorized INTEGER DEFAULT 0,
                 review_count INTEGER DEFAULT 0,
+                repetitions INTEGER DEFAULT 0,
+                efactor REAL DEFAULT 2.5,
+                review_interval REAL DEFAULT 0,
+                next_review_at INTEGER DEFAULT 0,
                 created_at INTEGER NOT NULL,
+                updated_at INTEGER DEFAULT 0,
                 reviewed_at INTEGER NOT NULL,
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
             );
@@ -96,9 +148,14 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_vocabulary_word ON vocabulary(course_id, word);
         """)
         await self.db.commit()
+        # 注意：idx_vocabulary_due 不能在这里建。
+        # 老库的 vocabulary 表已经存在，CREATE TABLE IF NOT EXISTS 会被跳过，
+        # 此时 next_review_at 列还没加上 —— 在这里建索引会直接报
+        # `no such column: next_review_at`，后端启动即失败（所有老用户升级后打不开应用）。
+        # 它必须等到 _migrate() 的 ALTER TABLE 之后再建。
 
     async def _migrate(self):
-        """数据库迁移：为已有数据库补充新字段"""
+        """数据库迁移：为已有数据库补充新字段（只增列，不动老数据）"""
         # 检查 courses 表是否有 language 列
         cursor = await self.db.execute("PRAGMA table_info(courses)")
         columns = [row[1] for row in await cursor.fetchall()]
@@ -108,6 +165,46 @@ class DatabaseManager:
             )
             await self.db.commit()
             logger.info("数据库迁移：courses 表已添加 language 列")
+
+        # 生词复习闭环字段
+        cursor = await self.db.execute("PRAGMA table_info(vocabulary)")
+        existing = {row[1] for row in await cursor.fetchall()}
+        added = [name for name, _ in VOCABULARY_MIGRATIONS if name not in existing]
+        for name, ddl in VOCABULARY_MIGRATIONS:
+            if name in added:
+                await self.db.execute(f"ALTER TABLE vocabulary ADD COLUMN {name} {ddl}")
+
+        if added:
+            await self.db.commit()
+            logger.info("数据库迁移：vocabulary 表已添加列 %s", ", ".join(added))
+            # 回填历史数据。老词从来没有复习记录，让它们**立刻进入待复习队列**
+            # （next_review_at = created_at <= now），否则用户升级后会觉得生词本空了。
+            # efactor 用标准初值，repetitions 沿用已有复习次数。
+            await self.db.execute(
+                "UPDATE vocabulary SET efactor = ? WHERE efactor IS NULL OR efactor <= 0",
+                (DEFAULT_EFACTOR,),
+            )
+            await self.db.execute(
+                "UPDATE vocabulary SET repetitions = review_count "
+                "WHERE repetitions IS NULL OR repetitions = 0"
+            )
+            await self.db.execute(
+                "UPDATE vocabulary SET next_review_at = created_at "
+                "WHERE next_review_at IS NULL OR next_review_at = 0"
+            )
+            await self.db.execute(
+                "UPDATE vocabulary SET updated_at = created_at "
+                "WHERE updated_at IS NULL OR updated_at = 0"
+            )
+            await self.db.commit()
+            logger.info("数据库迁移：历史生词已回填复习字段，直接进入待复习队列")
+
+        # 待复习队列按 (course_id, next_review_at) 检索，词量大时是关键索引。
+        # 必须放在加列之后（见 _create_tables 里的说明）。
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_vocabulary_due ON vocabulary(course_id, next_review_at)"
+        )
+        await self.db.commit()
 
     # ============ 课程 CRUD ============
 
@@ -292,11 +389,12 @@ class DatabaseManager:
         existing = self._row_to_dict(rows[0])
         await self.db.execute(
             """UPDATE vocabulary
-               SET is_memorized = ?, review_count = ?, reviewed_at = ?
+               SET is_memorized = ?, review_count = ?, reviewed_at = ?, updated_at = ?
                WHERE id = ?""",
             (
                 1 if data.get("isMemorized", existing["is_memorized"]) else 0,
                 data.get("reviewCount", existing["review_count"]),
+                int(time.time() * 1000),
                 int(time.time() * 1000),
                 vocab_id,
             ),
@@ -306,6 +404,214 @@ class DatabaseManager:
             "SELECT * FROM vocabulary WHERE id = ?", (vocab_id,)
         )
         return self._row_to_dict(rows[0])
+
+    # ============ 生词复习闭环 ============
+
+    async def get_vocabulary_due(
+        self, course_id: str, limit: int = 50, now: int | None = None
+    ) -> list[dict]:
+        """待复习队列：未掌握且已到期，按到期时间升序（最欠复习的排最前）"""
+        now = int(time.time() * 1000) if now is None else now
+        rows = await self.db.execute_fetchall(
+            """SELECT * FROM vocabulary
+               WHERE course_id = ? AND is_memorized = 0 AND next_review_at <= ?
+               ORDER BY next_review_at ASC
+               LIMIT ?""",
+            (course_id, now, limit),
+        )
+        return [self._row_to_dict(r) for r in rows]
+
+    async def get_vocabulary_stats(self, course_id: str) -> dict:
+        """生词本统计（仪表盘卡片用），单条 SQL 聚合避免多次往返"""
+        now = int(time.time() * 1000)
+        day_start = _local_day_start_ms(now)
+        rows = await self.db.execute_fetchall(
+            """SELECT
+                 COUNT(*)                                                        AS total,
+                 COALESCE(SUM(CASE WHEN is_memorized = 1 THEN 1 ELSE 0 END), 0)   AS memorized,
+                 COALESCE(SUM(CASE WHEN is_memorized = 0 AND next_review_at <= ?
+                                   THEN 1 ELSE 0 END), 0)                        AS due,
+                 COALESCE(SUM(CASE WHEN review_count > 0 THEN 1 ELSE 0 END), 0)   AS learned,
+                 -- 「今日复习」必须带 review_count > 0 这个前提：
+                 -- 新建生词时 reviewed_at 会被写成创建时间（历史行为，且该列 NOT NULL），
+                 -- 只看 reviewed_at 会把今天新采集、一次都没复习的词算成「已复习」。
+                 COALESCE(SUM(CASE WHEN review_count > 0 AND reviewed_at >= ?
+                                   THEN 1 ELSE 0 END), 0)                        AS reviewed_today,
+                 COALESCE(AVG(efactor), ?)                                        AS avg_efactor
+               FROM vocabulary WHERE course_id = ?""",
+            (now, day_start, DEFAULT_EFACTOR, course_id),
+        )
+        row = dict(rows[0]) if rows else {}
+        total = int(row.get("total") or 0)
+        memorized = int(row.get("memorized") or 0)
+        return {
+            "courseId": course_id,
+            "total": total,
+            "due": int(row.get("due") or 0),
+            "memorized": memorized,
+            "learned": int(row.get("learned") or 0),
+            "reviewedToday": int(row.get("reviewed_today") or 0),
+            "avgEfactor": round(float(row.get("avg_efactor") or DEFAULT_EFACTOR), 2),
+            "masteryRate": round(memorized / total, 4) if total else 0.0,
+            "daysUntilReviewed": 0,
+            "now": now,
+        }
+
+    async def get_due_summary(self, now: int | None = None) -> dict:
+        """
+        全局待复习概览（跨课程）
+
+        为什么必须单独一个方法：启动提醒发生在用户选课程**之前** —— 那时还不知道
+        course_id。逐个课程查 stats 是 N 次数据库往返，课程一多就会把启动拖慢，
+        而这个提醒本身只是个「锦上添花」的提示。
+        """
+        now = int(time.time() * 1000) if now is None else now
+        day_start = _local_day_start_ms(now)
+        rows = await self.db.execute_fetchall(
+            """SELECT
+                 COALESCE(SUM(CASE WHEN is_memorized = 0 AND next_review_at <= ?
+                                   THEN 1 ELSE 0 END), 0)                    AS due,
+                 COUNT(*)                                                      AS total,
+                 COALESCE(SUM(CASE WHEN review_count > 0 AND reviewed_at >= ?
+                                   THEN 1 ELSE 0 END), 0)                    AS reviewed_today
+               FROM vocabulary""",
+            (now, day_start),
+        )
+        row = dict(rows[0]) if rows else {}
+        # 待复习最多的那门课：提醒卡片上的「去复习」按钮据此直达最有价值的那一课
+        top = await self.db.execute_fetchall(
+            """SELECT course_id, COUNT(*) AS due FROM vocabulary
+               WHERE is_memorized = 0 AND next_review_at <= ?
+               GROUP BY course_id ORDER BY due DESC LIMIT 1""",
+            (now,),
+        )
+        top_row = dict(top[0]) if top else {}
+        return {
+            "due": int(row.get("due") or 0),
+            "total": int(row.get("total") or 0),
+            "reviewedToday": int(row.get("reviewed_today") or 0),
+            "topCourseId": top_row.get("course_id"),
+            "topCourseDue": int(top_row.get("due") or 0),
+            "now": now,
+        }
+
+    async def review_vocabulary(self, vocab_id: str, schedule: dict) -> dict | None:
+        """
+        记录一次复习结果
+
+        排程本身由前端 SM2 算好（见 frontend/src/lib/sm2.ts），这里只负责落库 +
+        **兜底夹取**：前端算错、手工改包、或旧客户端传来异常值都可能把用户排到
+        几十年后再复习，那等于这个词永远消失了，必须在下游挡住。
+        """
+        rows = await self.db.execute_fetchall(
+            "SELECT * FROM vocabulary WHERE id = ?", (vocab_id,)
+        )
+        if not rows:
+            return None
+
+        now = int(time.time() * 1000)
+        efactor = _safe_float(schedule.get("efactor"), DEFAULT_EFACTOR, MIN_EFACTOR, MAX_EFACTOR)
+        interval = _safe_float(schedule.get("interval"), 0.0, 0.0, REVIEW_INTERVAL_MAX_DAYS)
+        repetitions = _safe_int(schedule.get("repetitions"), 0, 0, 1000)
+
+        # 允许最多 10 年的排程；不允许「排到过去」（那会导致每次复习都立刻再次到期）
+        next_review_at = _safe_int(
+            schedule.get("nextReviewAt"), now, now, now + int(REVIEW_INTERVAL_MAX_DAYS * DAY_MS)
+        )
+
+        await self.db.execute(
+            """UPDATE vocabulary
+               SET efactor = ?, review_interval = ?, repetitions = ?, next_review_at = ?,
+                   review_count = review_count + 1, reviewed_at = ?, updated_at = ?,
+                   is_memorized = ?
+               WHERE id = ?""",
+            (
+                efactor,
+                interval,
+                repetitions,
+                next_review_at,
+                now,
+                now,
+                1 if schedule.get("isMemorized") else 0,
+                vocab_id,
+            ),
+        )
+        await self.db.commit()
+        rows = await self.db.execute_fetchall(
+            "SELECT * FROM vocabulary WHERE id = ?", (vocab_id,)
+        )
+        return self._row_to_dict(rows[0])
+
+    async def delete_vocabulary(self, vocab_id: str) -> bool:
+        cursor = await self.db.execute("DELETE FROM vocabulary WHERE id = ?", (vocab_id,))
+        await self.db.commit()
+        return cursor.rowcount > 0
+
+    async def import_vocabulary(self, course_id: str, items: list[dict]) -> dict:
+        """
+        导入生词备份（JSON）
+
+        与 upsert_vocabulary 的区别：**保留复习进度**（efactor/interval/repetitions/
+        next_review_at）。用户重装应用后导入备份，不该从零开始背。
+        """
+        now = int(time.time() * 1000)
+        created = updated = skipped = 0
+        max_next = now + int(REVIEW_INTERVAL_MAX_DAYS * DAY_MS)
+
+        for item in items:
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
+            word = str(item.get("word") or "").strip()
+            if not word:
+                skipped += 1
+                continue
+
+            payload = (
+                str(item.get("translation") or ""),
+                str(item.get("definition") or ""),
+                str(item.get("domain") or ""),
+                str(item.get("contextSentence") or item.get("context_sentence") or ""),
+                str(item.get("sourceSubtitleId") or item.get("source_subtitle_id") or ""),
+                _safe_int(item.get("sourceSrtTime") or item.get("source_srt_time"), 0, 0, 2**53),
+                1 if item.get("isAutoGenerated") else 0,
+                1 if item.get("isMemorized") else 0,
+                _safe_int(item.get("reviewCount"), 0, 0, 1_000_000),
+                _safe_int(item.get("repetitions"), 0, 0, 1000),
+                _safe_float(item.get("efactor"), DEFAULT_EFACTOR, MIN_EFACTOR, MAX_EFACTOR),
+                _safe_float(item.get("interval"), 0.0, 0.0, REVIEW_INTERVAL_MAX_DAYS),
+                _safe_int(item.get("nextReviewAt"), now, 0, max_next),
+            )
+            created_at = _safe_int(item.get("createdAt"), now, 0, 2**53)
+            reviewed_at = _safe_int(item.get("reviewedAt"), now, 0, 2**53)
+
+            existing = await self.get_vocabulary_by_word(course_id, word)
+            if existing:
+                await self.db.execute(
+                    """UPDATE vocabulary
+                       SET translation = ?, definition = ?, domain = ?, context_sentence = ?,
+                           source_subtitle_id = ?, source_srt_time = ?, is_auto_generated = ?,
+                           is_memorized = ?, review_count = ?, repetitions = ?, efactor = ?,
+                           review_interval = ?, next_review_at = ?, updated_at = ?, reviewed_at = ?
+                       WHERE id = ?""",
+                    (*payload, now, reviewed_at, existing["id"]),
+                )
+                updated += 1
+            else:
+                await self.db.execute(
+                    """INSERT INTO vocabulary
+                       (id, course_id, word, translation, definition, domain, context_sentence,
+                        source_subtitle_id, source_srt_time, is_auto_generated, is_memorized,
+                        review_count, repetitions, efactor, review_interval, next_review_at,
+                        created_at, updated_at, reviewed_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (str(uuid.uuid4()), course_id, word, *payload, created_at, now, reviewed_at),
+                )
+                created += 1
+
+        await self.db.commit()
+        logger.info("生词导入完成：新增 %d，更新 %d，跳过 %d", created, updated, skipped)
+        return {"created": created, "updated": updated, "skipped": skipped}
 
     # ============ 工具方法 ============
 
@@ -342,4 +648,24 @@ class DatabaseManager:
         for field in ["is_final", "is_auto_generated", "is_memorized", "auto_extract_terms"]:
             if field in d:
                 d[field] = bool(d[field])
+
+        # ---------- 词汇字段的 camelCase 别名 ----------
+        # 前端（WordPanel / VocabularyBook）读的是 camelCase，但历史实现只给 courses
+        # 的字段做了改名 —— 结果 wordEntry.contextSentence 一直是 undefined，
+        # 单词卡片里的「来源字幕句子」从来没显示过（与 custom_terms 静默丢弃是同一类问题）。
+        # 这里**补别名而不是改名**：manager 内部还在读 existing["is_memorized"] /
+        # existing["review_count"]，直接改名会连带改坏它们。
+        for snake, camel in (
+            ("context_sentence", "contextSentence"),
+            ("source_subtitle_id", "sourceSubtitleId"),
+            ("source_srt_time", "sourceSrtTime"),
+            ("is_auto_generated", "isAutoGenerated"),
+            ("is_memorized", "isMemorized"),
+            ("review_count", "reviewCount"),
+            ("reviewed_at", "reviewedAt"),
+            ("review_interval", "interval"),
+            ("next_review_at", "nextReviewAt"),
+        ):
+            if snake in d:
+                d[camel] = d[snake]
         return d

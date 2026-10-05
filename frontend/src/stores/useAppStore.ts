@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 
-export type AppView = 'course-list' | 'course-config' | 'subtitle-overlay' | 'dictionary'
+export type AppView =
+  | 'course-list'
+  | 'course-config'
+  | 'subtitle-overlay'
+  | 'dictionary'
+  | 'review'
 
 interface AppState {
   view: AppView
