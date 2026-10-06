@@ -174,8 +174,31 @@ export interface OverlaySettings {
    * false = 主窗口进后台后交给 Chromium 节流，省电但字幕会停。
    */
   backgroundUpdate?: boolean
+  /**
+   * 术语提示词自动降级（防重复循环兜底）
+   * true（默认）= 检测到字幕重复输出时自动把术语提示词截断到 200 字符并打 WARN；
+   * false = 完整保留术语表（识别质量优先，接受偶发重复循环）。
+   */
+  termAutoDegrade?: boolean
   bounds: OverlayBounds
   anchor?: OverlayAnchor
+}
+
+/**
+ * 术语提示词防循环的运行时快照
+ *
+ * 来源：/api/asr/poll 附带响应里的 stats.whisper（不是单独开接口 ——
+ * 那个端点本来就在 500ms 轮询，顺带带回即可，零额外请求）。
+ */
+export interface TermGuardStats {
+  /** 兜底开关是否打开（用户在控制面板里的选择，经主进程同步到后端） */
+  autoDegrade: boolean
+  /** 是否已经因为检测到重复循环而把提示词截断了 */
+  degraded: boolean
+  /** 当前实际生效的提示词字符数（降级后是截断值） */
+  promptChars: number | null
+  /** 本次运行是否至少触发过一次重复循环判定 */
+  repetitionDetected: boolean
 }
 
 /** 主进程 → 两侧：宿主（主窗口）存活状态 */

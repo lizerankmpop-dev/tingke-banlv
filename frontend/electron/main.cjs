@@ -517,6 +517,44 @@ function saveOverlaySettings() {
   }
 }
 
+/**
+ * 把「术语提示词自动降级」开关推给后端
+ *
+ * 为什么要多这一跳：开关的真理源在 overlay.json（主进程），而真正执行降级的
+ * 是后端 Python 里的 WhisperEngine。渲染进程不直接调后端 —— 它只在 Electron 里
+ * 才有 IPC，浏览器里调试时 window.electronAPI 是 undefined，那时开关就静默失效了。
+ * 统一从主进程推，路径只有一条。
+ *
+ * 幂等：值没变就不重复 POST。这个函数会在「后端就绪」和「每次设置变更」时被调，
+ * 不缓存的话用户每拖一次滑块就打一次后端。
+ */
+let pushedTermAutoDegrade = null;
+
+function pushTermGuards(force) {
+  if (!backendPort) return false;
+  if (!overlaySettings) return false;
+  const want = overlaySettings.termAutoDegrade !== false;
+  if (!force && pushedTermAutoDegrade === want) return false;
+  pushedTermAutoDegrade = want;
+  // fetch 是 Node 20+ 的内置实现（Electron 31），不需要额外依赖。
+  // 走 127.0.0.1 不经系统代理：undici 默认不读 HTTP_PROXY，这里天然安全。
+  fetch(`http://127.0.0.1:${backendPort}/api/asr/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ termAutoDegrade: want }),
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      logLine(`[overlay] 术语提示词自动降级已同步到后端: ${want ? '开启' : '关闭'}`);
+    })
+    .catch((err) => {
+      // 推送失败不能影响任何交互：后端没起来时本来就会失败，下次设置变更会再推
+      pushedTermAutoDegrade = null;
+      logWarn(`[overlay] 同步术语降级开关失败: ${err.message}`);
+    });
+  return true;
+}
+
 function isOverlayOpen() {
   return !!overlayWindow && !overlayWindow.isDestroyed();
 }
@@ -1153,6 +1191,11 @@ async function launchBackend() {
       await waitForBackend(port);
       backendPort = port;
       logLine(`[backend] 就绪: http://127.0.0.1:${port}`);
+      // 后端刚起来时 overlay.json 可能还没读过（读配置在 restoreOverlayIfEnabled 里），
+      // 缺了就先读一次再推。已经读过就绝不再读 —— 重复读会把内存里刚改的设置
+      // 用磁盘上的旧值覆盖掉（用户在启动过程中改了开关就会丢）。
+      if (!overlaySettings) loadOverlaySettings();
+      pushTermGuards(true);
       return port;
     } catch (err) {
       lastError = err;
@@ -1568,6 +1611,8 @@ ipcMain.handle('overlay:set-settings', (_event, patch) => {
   broadcastOverlaySettings();
   // backgroundUpdate 可能刚被改过，节流策略要跟着走
   applyMainWindowThrottling();
+  // termAutoDegrade 归后端执行，本地存下来后必须同步过去（值没变时内部会跳过）
+  pushTermGuards(false);
   return merged;
 });
 

@@ -742,6 +742,9 @@ class WhisperEngine:
             "termPromptDegraded": self._prompt_degraded,
             "termAutoDegrade": self._auto_degrade,
             "repetitionDetected": self._repetition_events > 0,
+            # 次数而非仅布尔：评估脚本要判断「是否触发降级告警」，
+            # 以及一次运行里是偶发一次还是持续触发（后者说明术语表本身就过长）
+            "repetitionEvents": self._repetition_events,
             "inSegments": self._stat_in_segments,
             "outSegments": self._stat_out_segments,
         }

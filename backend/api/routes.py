@@ -28,6 +28,14 @@ router = APIRouter()
 # 活跃的 ASR 管道（按课程 ID）
 active_pipelines: dict[str, ASRPipeline] = {}
 
+# 术语提示词自动降级兜底的全局默认值
+#
+# 真理源在桌面端的 overlay.json（用户设置要跨重启保留），由主进程在
+# 配置变更与后端就绪时经 POST /api/asr/config 推过来。这里只做进程内缓存，
+# 目的是让「后启动的管道」也套用同一个值 —— 否则用户关掉开关、停课后
+# 再开始听课，开关又变回开启了。
+term_auto_degrade_default: bool = True
+
 # 轮询消息队列（按课程 ID）
 #
 # 用 deque 而非 list：生产者是 ASR 的工作线程，消费者是事件循环里的 /asr/poll，
@@ -803,7 +811,7 @@ async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
     现象就是「点开始听课，整个应用卡死」。
     """
     enqueue = _make_enqueue(course_id)
-    return await asyncio.to_thread(
+    pipeline = await asyncio.to_thread(
         ASRPipeline,
         course_id=course_id,
         course_config=_course_config_for_asr(course),
@@ -812,6 +820,10 @@ async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
         on_status=lambda status, msg: enqueue("asr_status", {"status": status, "message": msg}),
         on_term_extracted=_make_term_handler(course_id, loop),
     )
+    # 套用已持久化的降级开关（引擎默认是开，用户可能关过）
+    if not term_auto_degrade_default:
+        pipeline.set_term_auto_degrade(False)
+    return pipeline
 
 
 @router.post("/asr/start")
@@ -854,6 +866,41 @@ async def stop_asr(course_id: str = Query(...)):
             logger.error(f"停止 ASR 管道时出错: {e}")
     asr_message_queues.pop(course_id, None)
     return {"status": "stopped"}
+
+
+class AsrConfigRequest(BaseModel):
+    """
+    ASR 运行时配置
+
+    刻意做成「全部字段可选」：以后加开关时不必要求老客户端一次传全，
+    缺的字段按「不动」处理，避免把用户已经关掉的开关又冲回默认值。
+    """
+    termAutoDegrade: Optional[bool] = None
+
+
+@router.post("/asr/config")
+async def config_asr(req: AsrConfigRequest):
+    """
+    更新 ASR 运行时配置（不需要重启管道）
+
+    同时写进全局默认值：当前没有管道在跑时也要记住，否则用户「先改设置、
+    后开始听课」这条最自然的操作路径会失效（改动被丢掉，开关看着没反应）。
+    """
+    global term_auto_degrade_default
+    applied: dict[str, bool] = {}
+
+    if req.termAutoDegrade is not None:
+        term_auto_degrade_default = bool(req.termAutoDegrade)
+        # 逐个管道套用；某个管道失败不影响其它管道，也不该让整个请求 500
+        for cid, pipeline in list(active_pipelines.items()):
+            try:
+                pipeline.set_term_auto_degrade(term_auto_degrade_default)
+            except Exception as e:
+                logger.error(f"课程 {cid} 应用术语降级开关失败: {e}")
+        applied["termAutoDegrade"] = term_auto_degrade_default
+        logger.info(f"术语提示词自动降级 = {'开启' if term_auto_degrade_default else '关闭'}")
+
+    return {"status": "ok", "applied": applied, "activePipelines": len(active_pipelines)}
 
 
 @router.get("/asr/poll")

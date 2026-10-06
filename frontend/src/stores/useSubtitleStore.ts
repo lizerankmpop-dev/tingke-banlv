@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { SubtitleLine, VocabularyEntry, ASRStatus } from '../types'
+import type { SubtitleLine, VocabularyEntry, ASRStatus, TermGuardStats } from '../types'
 import { useCourseStore } from './useCourseStore'
 import { overlayBridge } from '../lib/overlayBridge'
 
@@ -20,6 +20,13 @@ interface SubtitleState {
   reconnectTimer: ReturnType<typeof setTimeout> | null
   intentionalClose: boolean
   notRunningCount: number
+  /**
+   * 术语提示词防循环的运行时状态（来自 /api/asr/poll 附带的 whisper stats）
+   *
+   * 放在 store 而不是面板内部：轮询者只有这里（main 窗口）一个，
+   * 控制面板自己不轮询，否则会和白名单里的「单轮询者」原则冲突。
+   */
+  termGuard: TermGuardStats | null
 
   connectASR: (courseId: string) => void
   disconnectASR: () => void
@@ -89,6 +96,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   reconnectTimer: null,
   intentionalClose: false,
   notRunningCount: 0,
+  termGuard: null,
 
   connectASR: (courseId: string) => {
     // 先断开旧连接（会设置 intentionalClose = true）
@@ -102,6 +110,8 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       intentionalClose: false,
       reconnectAttempts: 0,
       notRunningCount: 0,
+      // 换课后旧的降级状态不该继续显示（新管道的提示词长度可能完全不同）
+      termGuard: null,
     })
     // 让悬浮窗同步清空上一节课的残留字幕
     pushOverlay(get)
@@ -135,6 +145,19 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
         // 正常运行，重置重连计数
         if (get().reconnectAttempts > 0) {
           set({ reconnectAttempts: 0 })
+        }
+
+        // 顺手把引擎的防循环状态同步进 store（控制面板据此显示「已自动降级」）
+        const whisper = data.stats?.whisper
+        if (whisper) {
+          set({
+            termGuard: {
+              autoDegrade: whisper.termAutoDegrade !== false,
+              degraded: !!whisper.termPromptDegraded,
+              promptChars: typeof whisper.termPromptChars === 'number' ? whisper.termPromptChars : null,
+              repetitionDetected: !!whisper.repetitionDetected,
+            },
+          })
         }
 
         for (const msg of data.messages || []) {
@@ -208,6 +231,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       asrMessage: '',
       reconnectAttempts: 0,
       notRunningCount: 0,
+      termGuard: null,
     })
     pushOverlay(get)
     const courseId = useCourseStore.getState().activeCourseId

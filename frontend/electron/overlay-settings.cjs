@@ -13,7 +13,7 @@
  */
 
 /** 配置结构版本：新增/变更字段时 +1，并在 migrateConfig 里写清迁移规则 */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const DEFAULT_OVERLAY_SETTINGS = {
   schemaVersion: SCHEMA_VERSION,
@@ -32,6 +32,19 @@ const DEFAULT_OVERLAY_SETTINGS = {
    * 这是产品权衡，必须让用户自己选（设置面板里带功耗提示）。
    */
   backgroundUpdate: true,
+  /**
+   * 术语提示词自动降级（防重复循环兜底）
+   *
+   * 背景：术语热词是作为 Whisper 的 initial_prompt 注入的，长列表会被模型当成
+   * 「上文」继续往下编 —— 实测 794 字符的术语表会让字幕数超过音频片段数，
+   * 出现重复循环，单次识别 RTF 从 0.42 涨到 1.18（突破实时）。
+   *
+   * true（默认）= 检测到「输出字幕数 > 输入片段数」且累计比值超阈值时，
+   * 自动把提示词截断到 200 字符并打 WARN，把损伤范围限制住。
+   * 降级是**事后反应**：它挡不住首次发生，只能让后续片段恢复正常。
+   * 关掉它 = 完全保留术语表的原貌（识别质量优先，接受偶发重复）。
+   */
+  termAutoDegrade: true,
   bounds: { x: null, y: null, width: 900, height: 220 },
   /**
    * 相对坐标锚点（多显示器 / 高 DPI 自愈用）
@@ -68,6 +81,19 @@ function isFiniteNumber(v) {
 }
 
 /**
+ * 保护性开关的布尔归一：默认 true，只有**显式**的假值才算关闭
+ *
+ * 与 backgroundUpdate 的 `=== undefined ? true : !!v` 刻意不同，原因是失败方向：
+ * 这个开关是防「字幕重复循环」的兜底，配置被写坏（值变成 null / ''）时
+ * 宁可多截一次提示词，也不能静默失去保护能力 —— 用户看到的是「字幕开始重复」
+ * 且没有任何提示。反过来多开一次兜底，最坏只是术语表短了一点。
+ */
+function boolOrTrue(value) {
+  if (value === undefined || value === null || value === '') return true;
+  return !!value;
+}
+
+/**
  * 版本迁移
  *
  * v1（无 schemaVersion）：没有 backgroundUpdate 概念，当时代码里是硬编码
@@ -76,6 +102,8 @@ function isFiniteNumber(v) {
  * v2 → v3：新增 anchor（多显示器相对坐标）。老配置没有它 → 留空，
  *   由 normalizeOverlaySettings 补成 { displayId: null, relX: null, relY: null }，
  *   下次拖窗口时自然写上新值，无需回填历史位置。
+ * v3 → v4：新增 termAutoDegrade（术语提示词自动降级）。引擎里的默认值一直是
+ *   开启（`AUTO_DEGRADE_ENABLED`），所以老配置补 true，升级后行为不变。
  */
 function migrateConfig(raw) {
   const src = raw && typeof raw === 'object' ? { ...raw } : {};
@@ -85,6 +113,9 @@ function migrateConfig(raw) {
   }
   if (version < 3 && src.anchor === undefined) {
     src.anchor = null;
+  }
+  if (version < 4 && (src.termAutoDegrade === undefined || src.termAutoDegrade === null)) {
+    src.termAutoDegrade = true;
   }
   src.schemaVersion = SCHEMA_VERSION;
   return src;
@@ -108,6 +139,7 @@ function normalizeOverlaySettings(raw) {
     clickThrough: src.clickThrough === undefined ? true : !!src.clickThrough,
     backgroundUpdate:
       src.backgroundUpdate === undefined ? true : !!src.backgroundUpdate,
+    termAutoDegrade: boolOrTrue(src.termAutoDegrade),
     bounds: {
       x: intOrNull(b.x),
       y: intOrNull(b.y),
@@ -405,6 +437,7 @@ module.exports = {
   clampNumber,
   intOrNull,
   isFiniteNumber,
+  boolOrTrue,
   migrateConfig,
   normalizeOverlaySettings,
   defaultSettings,

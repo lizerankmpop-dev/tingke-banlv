@@ -199,6 +199,50 @@ test('默认锚点为空（首次运行没有可还原的相对位置）', () =>
   assert.deepEqual(defaultSettings().anchor, { displayId: null, relX: null, relY: null });
 });
 
+// ============ v3 → v4：术语提示词自动降级 ============
+
+test('v3 配置迁移到 v4：补上 termAutoDegrade 且保持原有行为', () => {
+  // 引擎侧的 AUTO_DEGRADE_ENABLED 默认一直是 true，所以老配置必须补 true，
+  // 否则升级后用户的防循环兜底会被静默关掉
+  const v3 = {
+    schemaVersion: 3,
+    enabled: true,
+    backgroundUpdate: false,
+    bounds: { x: 404, y: 719, width: 900, height: 220 },
+    anchor: { displayId: 1, relX: 0.236673, relY: 0.705594 },
+  };
+  const migrated = migrateConfig(v3);
+  assert.equal(migrated.schemaVersion, SCHEMA_VERSION);
+  assert.equal(migrated.termAutoDegrade, true);
+
+  const s = normalizeOverlaySettings(v3);
+  assert.equal(s.termAutoDegrade, true);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  // 迁移不得动其它字段
+  assert.equal(s.backgroundUpdate, false);
+  assert.equal(s.enabled, true);
+  assert.equal(s.bounds.x, 404);
+  assert.equal(s.anchor.displayId, 1);
+});
+
+test('v4 配置里显式关闭 termAutoDegrade 必须被尊重', () => {
+  const s = normalizeOverlaySettings({ schemaVersion: 4, termAutoDegrade: false });
+  assert.equal(s.termAutoDegrade, false);
+  // 迁移函数也不能把它当成「缺字段」补回 true
+  assert.equal(migrateConfig({ schemaVersion: 4, termAutoDegrade: false }).termAutoDegrade, false);
+  assert.equal(defaultSettings().termAutoDegrade, true);
+});
+
+test('termAutoDegrade 只认布尔语义（脏值一律归为开启，不能误关兜底）', () => {
+  // 兜底开关的失败方向必须是「开着」：配置被写坏时宁可多截一次提示词，
+  // 也不能静默失去防重复循环的能力
+  assert.equal(normalizeOverlaySettings({ termAutoDegrade: undefined }).termAutoDegrade, true);
+  assert.equal(normalizeOverlaySettings({ termAutoDegrade: null }).termAutoDegrade, true);
+  assert.equal(normalizeOverlaySettings({ termAutoDegrade: '' }).termAutoDegrade, true);
+  assert.equal(normalizeOverlaySettings({ termAutoDegrade: false }).termAutoDegrade, false);
+  assert.equal(normalizeOverlaySettings({ termAutoDegrade: 0 }).termAutoDegrade, false);
+});
+
 // ============ 显示器 / 位置自愈 ============
 
 test('isOnDisplay 判断与工作区的重叠', () => {

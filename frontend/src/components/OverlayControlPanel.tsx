@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
   X, Eye, Move, RotateCcw, AlertCircle, PictureInPicture2, Type, Zap, FileDown,
+  ShieldCheck, ShieldAlert,
 } from 'lucide-react'
 import { useOverlayStore } from '../stores/useOverlayStore'
+import { useSubtitleStore } from '../stores/useSubtitleStore'
 import { hostBridge } from '../lib/overlayBridge'
 
 /**
@@ -18,6 +20,8 @@ const PRESET_COLORS = ['#ffffff', '#ffeaa7', '#a29bfe', '#74b9ff', '#55efc4', '#
 
 export default function OverlayControlPanel({ onClose }: { onClose: () => void }) {
   const { available, open, settings, loading, error, init, patch, toggle, resetPosition } = useOverlayStore()
+  // 引擎侧的实时降级状态由主窗口的 500ms 轮询带回来（面板自己不发请求）
+  const termGuard = useSubtitleStore((s) => s.termGuard)
   const [busy, setBusy] = useState(false)
   const [logNotice, setLogNotice] = useState<string | null>(null)
 
@@ -194,6 +198,75 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
 
               <Divider />
 
+              {/*
+                术语提示词自动降级（防重复循环兜底）
+
+                为什么必须有这个开关：术语热词是作为 Whisper 的 initial_prompt 注入的，
+                长列表会被模型当成「上文」继续往下编，实测会出现字幕重复循环
+                （字幕条数 > 音频片段数，单次识别 RTF 从 0.42 冲到 1.18）。
+                兜底策略是自动把提示词截断到 200 字符。
+
+                默认开启，但必须可关：这是个「事后反应」的补救措施，它挡不住首次发生。
+                用户在专业术语密集的课上可能宁可接受偶发重复，也要保住完整术语表的识别收益。
+              */}
+              <div style={styles.row}>
+                <div style={styles.rowLabel}>
+                  <ShieldCheck
+                    size={14}
+                    color={settings.termAutoDegrade ? 'var(--accent-light)' : 'var(--text-muted)'}
+                  />
+                  <span>术语提示词自动防循环降级</span>
+                </div>
+                <button
+                  onClick={() => set({ termAutoDegrade: !settings.termAutoDegrade })}
+                  style={{
+                    ...styles.toggle,
+                    background: settings.termAutoDegrade ? 'var(--accent)' : 'var(--bg-tertiary)',
+                  }}
+                  role="switch"
+                  aria-checked={!!settings.termAutoDegrade}
+                >
+                  <span
+                    style={{
+                      ...styles.toggleKnob,
+                      transform: settings.termAutoDegrade ? 'translateX(14px)' : 'translateX(0)',
+                    }}
+                  />
+                </button>
+              </div>
+              <div style={styles.hint}>
+                当检测到字幕重复输出时，自动缩减术语提示词，防止识别变慢、重复字幕。
+              </div>
+              {termGuard && (
+                <div style={termGuard.degraded ? styles.guardWarn : styles.guardOk}>
+                  {termGuard.degraded ? (
+                    <>
+                      <ShieldAlert size={12} />
+                      <span>
+                        已触发降级：检测到字幕重复输出，提示词已缩减到
+                        {termGuard.promptChars !== null ? ` ${termGuard.promptChars} 字符` : '较短长度'}。
+                        重新开始听课后会恢复完整术语表。
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck size={12} />
+                      <span>
+                        未检测到重复输出{termGuard.promptChars !== null ? `（当前提示词 ${termGuard.promptChars} 字符）` : ''}。
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
+              {!settings.termAutoDegrade && (
+                <div style={styles.guardWarn}>
+                  <ShieldAlert size={12} />
+                  <span>已关闭兜底：术语表保持完整。若出现重复字幕或识别变慢，请重新打开它。</span>
+                </div>
+              )}
+
+              <Divider />
+
               {/* 调整模式 / 重置位置 / 导出日志 */}
               <div style={styles.btnRow}>
                 <button
@@ -310,6 +383,24 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#fff', transition: 'transform 0.2s',
   },
   hint: { fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 8 },
+  /**
+   * 防循环状态条
+   *
+   * 降级已经发生时必须显眼（用户看到字幕重复会以为软件坏了），
+   * 正常时只用极低对比度的一行，不抢视线。
+   */
+  guardOk: {
+    display: 'flex', gap: 6, alignItems: 'flex-start',
+    fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5,
+    marginBottom: 8, opacity: 0.75,
+  },
+  guardWarn: {
+    display: 'flex', gap: 6, alignItems: 'flex-start',
+    fontSize: 11, color: 'var(--warning)', lineHeight: 1.5,
+    marginBottom: 8, padding: '6px 8px', borderRadius: 6,
+    background: 'rgba(253,203,110,0.10)',
+    border: '1px solid rgba(253,203,110,0.35)',
+  },
   error: { fontSize: 12, color: 'var(--danger)', marginTop: 4 },
   notice: {
     display: 'flex', gap: 10, alignItems: 'flex-start',

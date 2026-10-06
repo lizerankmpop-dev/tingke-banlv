@@ -22,7 +22,7 @@ import type {
  * tsc 的类型检查共同约束（此处的类型是 OverlaySettings，缺字段会报错）。
  */
 export const DEFAULT_OVERLAY_SETTINGS: OverlaySettings = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   enabled: false,
   fontSize: 24,
   color: '#ffffff',
@@ -31,6 +31,8 @@ export const DEFAULT_OVERLAY_SETTINGS: OverlaySettings = {
   windowOpacity: 1,
   clickThrough: true,
   backgroundUpdate: true,
+  // 与 overlay-settings.cjs 的默认值一致：引擎侧的默认一直是开启，这里不能改成 false
+  termAutoDegrade: true,
   bounds: { x: null, y: null, width: 900, height: 220 },
   anchor: { displayId: null, relX: null, relY: null },
 }

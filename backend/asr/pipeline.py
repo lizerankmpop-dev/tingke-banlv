@@ -148,6 +148,24 @@ class ASRPipeline:
         """返回当前术语库信息（供 API 查询）"""
         return self._terminology
 
+    def set_term_auto_degrade(self, enabled: bool) -> bool:
+        """
+        开关术语提示词的自动降级兜底（无需重启管道）
+
+        设置面板里的「术语提示词自动防循环降级」。关掉它不代表术语表失效，
+        只是不再在检测到重复循环时自动截断 —— 用户明确选择「识别质量优先」。
+
+        注意：**只改开关，不重置已发生的降级**。引擎侧刻意不在开关打开时
+        自动恢复完整提示词（会在重复循环的边界上反复抖动），要恢复得显式
+        调 `restore_full_prompt()`；下次重启管道时自然回到完整提示词。
+        """
+        try:
+            self._whisper.set_auto_degrade(enabled)
+            return True
+        except Exception as e:
+            logger.error(f"设置术语降级开关失败: {e}")
+            return False
+
     def get_stats(self) -> dict:
         """
         运行时健康度（供 /api/health 与排障）
