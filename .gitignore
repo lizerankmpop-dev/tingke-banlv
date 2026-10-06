@@ -42,3 +42,10 @@ tests/audio/
 
 # ASR 质量评估报告（由 scripts/eval_asr_quality.py 生成）
 packaging/eval/
+
+# 中文专业课评估素材：真实课程音频体积大（10min 单声道 16k 约 20MB），不入库；
+# 逐字稿 reference.txt 与 metadata.json 体积极小，属于核心资产，照常入库
+testset/**/*.wav
+testset/**/*.mp3
+testset/**/*.m4a
+testset/**/*.flac

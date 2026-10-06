@@ -1,0 +1,22 @@
+{
+  "kind": "PROXY",
+  "warning": "代理集：神经 TTS 合成，无背景噪声、无口音、无口误、无混响。只能用于回答「长术语表是否触发重复循环」这类与录音质量无关的问题；WER 绝对值显著偏乐观，不得作为中文场景的最终结论。",
+  "source": "Microsoft Edge 神经 TTS（edge-tts）",
+  "voice": "zh-CN-YunyangNeural",
+  "textSource": "scripts/make_chinese_testset.py 内置讲稿（卷积神经网络基础）",
+  "sampleRate": 16000,
+  "channels": 1,
+  "subtype": "PCM_16",
+  "durationSeconds": 626.41,
+  "durationMinutes": 10.44,
+  "paragraphs": 30,
+  "referenceChars": 3153,
+  "rmsDbfs": -27.2,
+  "estimatedSnrDb": 42.8,
+  "peakDbfs": -1.4,
+  "generatedAt": "2026-10-06T19:13:16",
+  "files": {
+    "audio": "long_zhlecture_cnn.wav",
+    "reference": "long_zhlecture_cnn.txt"
+  }
+}

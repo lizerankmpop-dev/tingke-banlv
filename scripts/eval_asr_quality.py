@@ -523,6 +523,15 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
         "drained": completed,
         "recognition": recognized,
         "reference": ref_text,
+        # ---- 术语提示词防循环（P3 核心观测项）----
+        # 全都是差值：engine 是多个文件共用的，读累计值会让第一个文件
+        # 之后的每个文件都「继承」上一个文件触发过的降级
+        "termPromptChars": stats_after.get("termPromptChars"),
+        "termPromptDegraded": bool(stats_after.get("termPromptDegraded")),
+        "termAutoDegrade": bool(stats_after.get("termAutoDegrade")),
+        "repetitionEvents": delta("repetitionEvents"),
+        "inSegments": delta("inSegments"),
+        "outSegments": delta("outSegments"),
         "paired": bool(paired),
         "latency": {
             "mean": round(statistics.fmean(latencies), 3) if latencies else None,
@@ -585,6 +594,19 @@ def summarize(results: list[dict]) -> dict:
         "totalMerged": sum(r["mergedCalls"] for r in ok),
         "totalSegments": sum(r["segments"] for r in ok),
         "totalSubtitles": sum(r["subtitles"] for r in ok),
+        # ---- 术语提示词防循环（P3 核心观测项）----
+        # 「字幕数 > 片段数」是重复循环最直观的结构信号：一条音频片段正常只产出
+        # 一条字幕，多出来的就是模型把提示词当上文继续往下编的产物。
+        "totalInSegments": sum(r.get("inSegments", 0) for r in ok),
+        "totalOutSegments": sum(r.get("outSegments", 0) for r in ok),
+        "totalRepetitionEvents": sum(r.get("repetitionEvents", 0) for r in ok),
+        "degradedFiles": [r["file"] for r in ok if r.get("termPromptDegraded")],
+        "filesWithMoreSubtitlesThanSegments": [
+            r["file"] for r in ok if r["subtitles"] > r["segments"]
+        ],
+        "termPromptChars": next(
+            (r["termPromptChars"] for r in ok if r.get("termPromptChars") is not None), None
+        ),
         "peakLatency": round(max([l["max"] for l in lat if l["max"] is not None]), 3) if lat else None,
         "meanLatency": round(statistics.fmean([l["mean"] for l in lat]), 3) if lat else None,
         "byScenario": {
@@ -711,6 +733,19 @@ def print_report(results: list[dict], summary: dict, notes: list[str]) -> None:
         f"收尾最长 {summary['maxTailSeconds']}s｜峰值延迟 {summary['peakLatency']}s｜"
         f"丢弃 {summary['totalDropped']}｜合并 {summary['totalMerged']}"
     )
+    # 术语提示词防循环：这几行是 P3 判断「中文长术语表会不会触发重复循环」的直接依据
+    print(
+        f"      术语提示词 {summary.get('termPromptChars')} 字符｜"
+        f"送入 {summary.get('totalInSegments')} 段 → 产出 {summary.get('totalOutSegments')} 条字幕｜"
+        f"重复循环判定 {summary.get('totalRepetitionEvents')} 次"
+    )
+    if summary.get("filesWithMoreSubtitlesThanSegments"):
+        print(
+            "      ⚠ 字幕数 > 片段数的文件: "
+            + ", ".join(summary["filesWithMoreSubtitlesThanSegments"])
+        )
+    if summary.get("degradedFiles"):
+        print("      ⚠ 已触发自动降级（提示词被截断）的文件: " + ", ".join(summary["degradedFiles"]))
     for name, stat in summary["byScenario"].items():
         print(
             f"  · {name:<8} {stat['files']} 个文件｜WER {stat['meanWer']}｜"
@@ -732,6 +767,20 @@ def main() -> int:
     parser.add_argument("--language", default="auto", help="auto|zh|en")
     parser.add_argument("--terms", choices=("on", "off"), default="on", help="是否注入术语热词")
     parser.add_argument("--domain", default="", help="术语领域（配合 --terms on）")
+    parser.add_argument(
+        "--custom-terms",
+        default="",
+        help="逗号分隔的自定义术语（配合 --terms on）。"
+        "中文课程要验证「术语表能不能帮上忙」时必须用它 —— "
+        "内置领域术语表全是英文，注入不到中文专业词上。",
+    )
+    parser.add_argument(
+        "--autodegrade",
+        choices=("on", "off"),
+        default=None,
+        help="术语提示词防循环兜底开关；不传则沿用引擎默认（开）。"
+        "关掉它可以观察「完全不干预时重复循环能持续多久」——只在评估里用。",
+    )
     parser.add_argument("--max-wer", type=float, default=None, help="WER 阈值，超过则失败")
     parser.add_argument("--report", default="packaging/eval/report.json")
     parser.add_argument("--drain-timeout", type=float, default=600.0)
@@ -767,10 +816,15 @@ def main() -> int:
         try:
             from dictionary.terminology import build_terminology
 
-            term = build_terminology(domain=args.domain, custom_terms=[])
+            custom = [x.strip() for x in (args.custom_terms or "").split(",") if x.strip()]
+            term = build_terminology(domain=args.domain, custom_terms=custom)
             prompt = term["prompt"]
             total = term["stats"]["total"]
-            print(f"  术语热词: {total} 个" + ("（未指定 --domain，仅词表多词短语）" if total == 0 else ""))
+            print(
+                f"  术语热词: {total} 个"
+                + (f"（含自定义 {len(custom)} 个）" if custom else "")
+                + ("（未指定 --domain，仅词表多词短语）" if total == 0 else "")
+            )
             print(f"  提示词  : {term['promptChars']} 字符")
         except Exception as exc:
             print(f"  ⚠ 术语热词构建失败，按不注入处理: {exc}")
@@ -779,6 +833,16 @@ def main() -> int:
     engine = build_engine(args, router, prompt)
     if args.model is None:
         args.model = engine.model_size
+
+    # 防循环兜底开关只在评估时暴露：产品里它的真理源在桌面端的 overlay.json
+    # （经 POST /api/asr/config 下发），脚本直接改引擎，不绕那一条链。
+    if args.autodegrade == "off":
+        engine.set_auto_degrade(False)
+        print("防循环兜底：已关闭（可观察不受干预的重复循环）")
+    elif args.autodegrade == "on":
+        engine.set_auto_degrade(True)
+        print("防循环兜底：已强制开启")
+    print(f"术语提示词：{len(engine.initial_prompt or '')} 字符，兜底开关={'开' if engine.get_stats()['termAutoDegrade'] else '关'}")
 
     results: list[dict] = []
     try:
