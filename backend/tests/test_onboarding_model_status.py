@@ -21,7 +21,22 @@
 
 from fastapi.testclient import TestClient
 
-from main import app
+import pytest
+
+# 副本仓库的 backend/ 只同步了 api/ 与 tests/（没有 asr/）—— 缺引擎模块时
+# 整组跳过（与该副本里其它依赖引擎的用例同一待遇），主仓库照常全跑。
+pytest.importorskip("asr")
+
+try:
+    # 主仓库：完整后端，直接用真实 app（校验的是它真实的路由挂载）
+    from main import app
+except ModuleNotFoundError:  # 精简副本：backend/ 下没有 main.py
+    from fastapi import FastAPI
+
+    from api.routes import router
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
 
 
 def test_contract_fields_are_minimal():
