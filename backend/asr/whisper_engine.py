@@ -196,6 +196,17 @@ SIMP_HINT = "以下是普通话的句子，请使用简体中文转写。"
 SIMP_HINT_LANGS = frozenset({"zh", "zh-cn", "zh-tw"})
 
 
+def get_simp_hint() -> str:
+    """
+    当前生效的简体引导语
+
+    文案可用 `TINGKEBANLV_SIMP_HINT` 覆盖 —— 一是方便做「只换引导语、其它全不动」
+    的单变量对照实验（改文案要重新编译常量就没法对照了），二是产品侧以后可以
+    按课程配置。空值/纯空白视为未设置，回落到内置默认文案。
+    """
+    return (os.environ.get("TINGKEBANLV_SIMP_HINT") or "").strip() or SIMP_HINT
+
+
 @dataclass
 class WordTimestamp:
     word: str
@@ -851,7 +862,7 @@ class WhisperEngine:
 
         # 中文才注入简体引导语；其它语种简繁不分，加了纯属浪费 token 预算
         hint = (
-            SIMP_HINT
+            get_simp_hint()
             if (self.language or "").lower() in SIMP_HINT_LANGS
             else ""
         )

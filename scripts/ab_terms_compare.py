@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -69,6 +70,20 @@ COMMON_TERMS = ["深度学习", "神经网络", "卷积神经网络", "注意力
 # Whisper 的 language="zh" 不区分简繁，模型倾向输出繁体。业界常用的做法是往
 # initial_prompt 里塞一句简体中文，把输出风格拉回简体。这里用它做单一变量对照。
 SIMP_HINT = "以下是普通话的句子，请使用简体中文转写。"
+
+# 备选引导语（用户指定原文）—— 与上面那句做单变量对照，看简繁效果是否等价
+SIMP_HINT_ORIGINAL = "下面的内容为简体中文课堂讲课内容，输出全部使用简体中文，不要使用繁体汉字。"
+
+# 「只换引导语、其它全不动」的对照条件 → 下发给子进程的环境变量。
+#
+# 为什么不复用 `simp` 条件那种「把引导语当自定义术语注入」的做法：那条路径走的是
+# 术语层（`--terms on`），引导语会同时出现在**术语层和 hint 层**，不是纯单变量。
+# 这里改用 `--terms off` + `TINGKEBANLV_SIMP_HINT`，与 `off` 条件完全同构，
+# 唯一差异就是那一句引导语的文本。
+SIMP_HINT_VARIANTS: dict[str, dict[str, str]] = {
+    "simp-current": {"TINGKEBANLV_SIMP_HINT": SIMP_HINT},
+    "simp-original": {"TINGKEBANLV_SIMP_HINT": SIMP_HINT_ORIGINAL},
+}
 
 
 def load_domain_terms(domain: str) -> list[str]:
@@ -131,7 +146,8 @@ def term_stats(terms: list[str], reference: str, hypothesis: str) -> dict:
     }
 
 
-def run_condition(args, cond: str, report: Path, custom: list[str]) -> dict:
+def run_condition(args, cond: str, report: Path, custom: list[str],
+                  env_extra: dict | None = None) -> dict:
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "eval_asr_quality.py"),
@@ -153,6 +169,9 @@ def run_condition(args, cond: str, report: Path, custom: list[str]) -> dict:
 
     if cond == "off":
         cmd += ["--terms", "off"]
+    elif cond in SIMP_HINT_VARIANTS:
+        # 简体引导语对照：与 off 完全同构（无术语），只靠环境变量换那一句引导语
+        cmd += ["--terms", "off"]
     elif cond == "on":
         cmd += ["--terms", "on", "--autodegrade", "on"]
     elif cond == "on-noguard":
@@ -161,6 +180,10 @@ def run_condition(args, cond: str, report: Path, custom: list[str]) -> dict:
         # 只注入一段简体中文引导语、不注入任何术语表（domain 置空，见下方 domain_c）：
         # 用来单独检验「提示词里的简体中文能不能把 Whisper 从繁体拉回来」，
         # 与术语收益解耦。兜底关闭，避免引导语被当成重复循环截断。
+        #
+        # ⚠ 历史遗留条件，不推荐再用：它把引导语当**自定义术语**注入，走的是术语层，
+        # 而引擎在中文语种下还会在 hint 层再注入一次 → 引导语出现两遍，不是纯单变量。
+        # 做引导语对照请用 `simp-current` / `simp-original`。
         cmd += ["--terms", "on", "--autodegrade", "off"]
     else:
         raise SystemExit(f"未知条件: {cond}")
@@ -172,16 +195,23 @@ def run_condition(args, cond: str, report: Path, custom: list[str]) -> dict:
     # 看着像成功，实际 55 个中文术语一个都没注入，整轮 A/B 白跑。
     custom_c = [SIMP_HINT] if cond == "simp" else custom
     domain_c = "" if cond == "simp" else args.domain
+    if cond in SIMP_HINT_VARIANTS:
+        custom_c, domain_c = [], ""      # 引导语对照条件不注入任何术语
     if custom_c:
         cmd += ["--custom-terms", ",".join(custom_c)]
     if domain_c:
         cmd += ["--domain", domain_c]
 
+    tail = f"  [{env_extra}]" if env_extra else ""
     print("\n" + "#" * 90)
-    print(f"# 条件 [{cond}]  {' '.join(cmd[2:])}")
+    print(f"# 条件 [{cond}]  {' '.join(cmd[2:])}{tail}")
     print("#" * 90, flush=True)
     started = time.time()
-    proc = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+    proc = subprocess.run(
+        cmd,
+        cwd=str(PROJECT_ROOT),
+        env={**os.environ, **(env_extra or {})},
+    )
     elapsed = time.time() - started
     if not report.is_file():
         raise SystemExit(f"条件 [{cond}] 未产出报告（退出码 {proc.returncode}）")
@@ -191,6 +221,8 @@ def run_condition(args, cond: str, report: Path, custom: list[str]) -> dict:
     # 把真实下发过的命令行记进报告：参数拼错时（比如哨兵没展开）从报告就能看出来，
     # 不用去翻日志。踩过坑，所以留证。
     data["_cmd"] = cmd
+    if env_extra:
+        data["_env"] = env_extra
     return data
 
 
@@ -249,7 +281,9 @@ def main() -> int:
     runs: dict[str, dict] = {}
     for cond in conds:
         report = out_path.with_name(f"_ab_{cond}.json")
-        runs[cond] = run_condition(args, cond, report, custom)
+        runs[cond] = run_condition(
+            args, cond, report, custom, SIMP_HINT_VARIANTS.get(cond)
+        )
 
     def summary(cond):
         return runs[cond].get("summary", {})
