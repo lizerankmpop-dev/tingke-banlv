@@ -1,6 +1,6 @@
 # M3 · 首启向导（Onboarding Wizard）设计与文案
 
-> 状态：**设计稿（未实现）**
+> 状态：**已实现（2026-10-07）**，实现说明见文末「§十、实现说明（M3 交付）」
 > 目标版本：M3
 > 前置依赖：无（可独立实现）
 > 相关文档：[`icon_asset_spec.md`](./icon_asset_spec.md)、[`backlog_b1_b2_b3.md`](./backlog_b1_b2_b3.md)
@@ -39,8 +39,14 @@
 
 存储位置：`<userData>/onboarding.json`
 
-> `userData` 实际路径 = `%APPDATA%/听课伴侣/`（打包后 productName 为「听课伴侣」）。
-> 与现有 `overlay.json`、`crash-marker`、`logs/electron.log` 同级。
+> ⚠️ **实现偏离（已按实际项目结构落地）**：实际存放于 `dataHome()/onboarding.json`，
+> 即与 `overlay.json`、`logs/electron.log` 同级（默认 `~/.tingkebanlv`，可用
+> `TINGKEBANLV_HOME` 环境变量覆盖）—— **不是** `%APPDATA%/听课伴侣/`。
+> 设计稿当时把「userData」与「现有状态目录」当成了同一个位置，实际项目里全部状态
+> 一直在 `dataHome()`。决定性理由：冒烟脚本与实装验证都靠 `TINGKEBANLV_HOME` 把
+> 状态隔离到临时目录；若改用 `app.getPath('userData')`，跑一次冒烟就会读到
+> **开发者本机真实的** onboarding 状态（向导不弹、用例假通过），并把 `completed: true`
+> 写进真实用户配置。见 `frontend/electron/onboarding-state.cjs` 顶部注释。
 
 ### 2.2 建议结构
 
@@ -461,3 +467,63 @@
 | 2 | 步骤数 6 步是否过长 | 建议保留 6 步，但第 1、2、3 步可合并为「一屏内滚动」，减少点击次数 |
 | 3 | 是否在兼容模式下完全禁用 | 建议**推迟而非禁用**（§2.3） |
 | 4 | 是否需要「重新查看引导」以外的入口 | 建议先只做一处，观察埋点数据再决定 |
+
+---
+
+## 十、实现说明（M3 交付，2026-10-07）
+
+### 10.1 代码落点
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 状态纯逻辑 | `frontend/electron/onboarding-state.cjs` | 13 个导出：normalize / read / write / `shouldShowWizard` / `describeEvent` 等，**不 require electron**，`tests/onboarding-state.test.cjs` 覆盖全部分支（含 `Number(null)` 陷阱与 force 优先级） |
+| 主进程 | `frontend/electron/main.cjs` | `onboardingPath()` / `recordOnboardingEvent()` / `createOnboardingWindow()`（560×660，`parent: mainWindow` 但 **`modal: false`**）/ 6 个 IPC handler |
+| 预加载 | `frontend/electron/preload.cjs` | `window.electronAPI.onboarding` |
+| 文案唯一来源 | `frontend/src/lib/onboarding.ts` | 6 步全部文案 + 热键表 + `modelPhase` 状态机；组件只排版，**不写第二份字面量** |
+| 桥接 | `frontend/src/lib/onboardingBridge.ts` | IPC 包装（try/catch 静默）+ `probeBackend()`（先 `/api/ping` 再 `/api/asr/model-status`，只看 `ok`） |
+| 组件 | `frontend/src/pages/OnboardingWizard.tsx` | 6 步 + `FaqItem` + `Kbd`；第 3 步不定长进度条（`aria-hidden`）+ `role="status"` 文字行；第 6 步开关 `role="switch"` + `aria-labelledby`（B2 的坑，不用字面量 aria-label） |
+| 路由 | `frontend/src/App.tsx` | `#/onboarding` → `OnboardingWizard` |
+| 后端 | `backend/api/routes.py` | 新增 `GET /api/asr/model-status`，判据复用 `check_installed(DEFAULT_MODEL, deep=False)`，**只返回 `{ok, model}`**（刻意不返回 reason/action，防止调用方按中文字符串分支）；`backend/tests/test_onboarding_model_status.py` 4 项 |
+
+### 10.2 与设计稿的三处有意偏离
+
+1. **存储位置**：`dataHome()` 而非 `userData`（理由见 §2.1 偏离说明）。
+2. **兼容模式语义**：§2.3 的「推迟」实现为 `shouldShowWizard` 里 `force` 排最前 ——
+   「重新查看引导」入口（force 语义）在兼容模式下**仍然可用**；`compatMode` 只拦截
+   **自动**弹出。把 force 放到后面写，手动入口会静默失效且无报错。
+3. **模态**：窗口 `parent: mainWindow` 但 `modal: false`。Windows 上 modal 会卡住
+   主窗口关闭按钮，一旦向导页面渲染失败就是死锁。
+
+### 10.3 语义约定（易错点）
+
+- `onboarding:close`（右上角 ×）**不写任何标记**，下次启动仍会弹 —— 关闭窗口
+  ≠ 拒绝引导；`onboarding:dismiss`（「跳过，直接使用」按钮）才写 `dismissedAt`。
+- 主窗口被关闭时向导窗口随之销毁，**同样不写标记**（用户只是关了主窗口）。
+- `stepReached` 只增不减，衡量「卡在哪」而不是「当前在哪」；跳过时保留步号。
+- 第 3 步「进程没起来」与「模型没准备好」是**两句不同的话**，对应两个请求
+  （`/api/ping` + `/api/asr/model-status`）而不是一个布尔；`!pingOk && attempts >= 60`
+  判 `failed`，避免无限转圈。
+
+### 10.4 文案红线（自动化守卫）
+
+`tests/onboarding-copy.test.mts` 直接 import `onboarding.ts` 遍历全部字符串：
+
+- 禁实现术语：`token / 预算 / 截断 / 提示词 / initial_prompt`（与 B4 后控制面板同口径）
+- 禁不承诺行为的说法：`智能降级` 等
+- 必须有恢复说明：`重新开始听课（停止识别再开始）就会恢复完整术语表`
+- 热键表与 `main.cjs` 的 `bind('Alt+Shift+…')` **去空格对拍**（引导教错快捷键
+  是用户无法自救的错误）
+- 变异验证在进程内构造（往文案里塞禁词再跑审计），不需要临时改文件
+
+### 10.5 回归基线（实现后）
+
+| 项目 | 结果 |
+|---|---|
+| 后端 pytest | **118 通过 / 1 跳过**（114 + 新增 4） |
+| 前端 npm test | **144 通过**（103 + 41） |
+| tsc | 0 错 |
+| CDP 冒烟 | **12/12**（9 + 3 项向导用例：自动弹出 / 路由正确 / React 挂载） |
+| 真机日志 | `[env] AppUserModelId=com.tingkebanlv.app`、`[onboarding] 向导已打开` 均命中 |
+
+§8 验收表中第 2/3/4/5/6 条（完成/跳过后不再弹、重看入口、失败分支、兼容模式）
+需要**重启级人工验证**，本机单次冒烟无法覆盖，留待实装验证（`verify_install.py`）。

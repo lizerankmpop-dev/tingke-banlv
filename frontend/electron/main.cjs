@@ -139,6 +139,14 @@ if (process.env.TINGKEBANLV_ALLOW_MULTI !== '1') {
 
 let mainWindow = null;
 let overlayWindow = null; // 桌面字幕悬浮窗（独立 BrowserWindow）
+// 首启向导（独立 BrowserWindow）
+//
+// 为什么不复用悬浮窗：悬浮窗是 frame:false + transparent + 鼠标穿透的置顶窗口，
+// 它的存在意义就是「点不到」。向导恰恰相反，必须可点、可聚焦、可关。
+// 两者共用一个窗口会立刻在 setIgnoreMouseEvents 上打架。
+// 也不做成主窗口内的浮层：向导要能在主窗口被最小化时依然存在（首次启动时
+// 主窗口可能还在白屏），独立窗口的生命周期更好推理。
+let onboardingWindow = null;
 let backendProcess = null;
 let backendPort = null;
 let isQuitting = false;
@@ -489,6 +497,14 @@ const {
 // 把决策收拢到该模块后，各入口只需声明自己是谁，行为一致由结构保证 ——
 // 且因为该模块不 require('electron')，可以被 node --test 直接覆盖。
 const overlayActions = require('./overlay-actions.cjs');
+
+// 首启向导状态（onboarding.json）
+//
+// 与上面两个模块同一套路：决定「要不要弹向导 / 走到第几步 / 完成后还弹不弹」
+// 的判断全在这个不 require('electron') 的纯模块里，于是能被 node --test 覆盖。
+// 这段逻辑一旦写错（比如判断顺序反了），表现是「用户每次开机都被弹一遍」，
+// 而它只能靠重启应用来人工验证 —— 不值得赌。
+const onboardingState = require('./onboarding-state.cjs');
 
 let overlaySettings = null;
 
@@ -1392,6 +1408,9 @@ function createWindow(port) {
       // applyMainWindowThrottling() 按「用户开关 + 有没有窗口在看字幕」决定。
       backgroundThrottling: false,
     },
+    // 开发模式下让任务栏/Alt+Tab 也显示真实图标（打包后由 exe 自带，APP_ICON 为
+    // undefined → 该选项等于没写）。悬浮窗不设 icon：它 frame:false 且不进任务栏。
+    icon: APP_ICON,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
   });
 
@@ -1456,7 +1475,204 @@ function createWindow(port) {
     // 主窗口是悬浮窗的唯一入口与生命周期锚点：主窗口没了就必须销毁悬浮窗，
     // 否则会留下一个永远置顶、点不掉、也没有 UI 能关掉它的孤儿窗口。
     destroyOverlayWindow(overlayActions.TRIGGER_SOURCES.host);
+    // 向导同理：它 parent 挂在主窗口上，主窗口关了还留着就是一个无主的模态孤儿。
+    // 此时不应该写「跳过」标记 —— 用户只是关了主窗口，不是拒绝了引导。
+    destroyOnboardingWindow('主窗口已关闭');
   });
+}
+
+// ============ 应用图标与 Windows 任务栏标识（M3）============
+
+/**
+ * 应用用户模型 id（AppUserModelID）
+ *
+ * **必须与 `frontend/package.json` 的 `build.appId` 逐字一致。**
+ * electron-builder 会把 appId 写进快捷方式，而运行时的进程 AUMID 由代码决定；
+ * 两者不一致时 Windows 认为「这是两个不同的应用」，表现为：
+ *   · 任务栏出现两个图标（一个钉住的、一个运行中的）
+ *   · 从钉住的图标启动，任务栏却在旁边新开一个
+ *   · 将来做原生通知时，通知来源显示错误
+ * 这类不一致没有任何报错，只会让用户觉得「这软件有点怪」。
+ * 因此 `tests/onboarding-aumid` 那组用例会把它和 package.json 对拍（见测试文件）。
+ */
+const APP_USER_MODEL_ID = 'com.tingkebanlv.app';
+
+/**
+ * 开发模式下传给 BrowserWindow 的图标路径
+ *
+ * 两个坑都必须处理，且**两个都不报错**（只是图标不出现，很难发现）：
+ *
+ * 1. `build/` 是 electron-builder 的 buildResources 目录，**不会**被打进
+ *    app.asar —— 它只在构建期被用来给 exe 内嵌图标。因此打包后
+ *    `__dirname/../build/icon.ico` 必然不存在，传进去毫无意义：
+ *    打包版的图标由 exe 自带，不需要也不应该再传 icon。
+ * 2. 开发模式下美术资源可能尚未产出（`build/icon.ico` 不存在），
+ *    传一个不存在的路径同样静默失效。所以这里显式区分「有」和「没有」，
+ *    并在启动日志里写明 —— 否则「图标为什么没生效」只能靠猜。
+ *
+ * 返回 undefined 时 Electron 使用自身默认图标，不会崩。
+ */
+function resolveAppIconPath() {
+  if (app.isPackaged) return undefined; // 打包版由 exe 内嵌图标决定
+  const p = path.join(__dirname, '..', 'build', 'icon.ico');
+  try {
+    return fs.existsSync(p) ? p : undefined;
+  } catch (_) {
+    return undefined;
+  }
+}
+
+const APP_ICON = resolveAppIconPath();
+
+// ============ 首启向导（M3）============
+
+/**
+ * 向导状态文件
+ *
+ * 放在 `dataHome()`（与 `overlay.json` / `logs/` 同级），**不是**
+ * `app.getPath('userData')`。设计稿 §2.1 把这两者当成同一个位置写，
+ * 实际上 `userData` 在打包后是 `%APPDATA%/听课伴侣/`，而本项目所有状态
+ * 一直都在 `dataHome()`（默认 `~/.tingkebanlv`，可用 `TINGKEBANLV_HOME` 覆盖）。
+ *
+ * 选 `dataHome()` 的决定性理由：冒烟脚本与实装验证都靠 `TINGKEBANLV_HOME`
+ * 把状态隔离到临时目录（`smoke-overlay.cjs` 里那句「临时数据目录」）。
+ * 若改用 `userData`，跑一次冒烟就会读到**开发者本机真实的** onboarding 状态
+ * （向导不会弹，用例假通过），并把 `completed: true` 写进真实用户配置里。
+ */
+function onboardingPath() {
+  return path.join(dataHome(), 'onboarding.json');
+}
+
+function loadOnboardingState() {
+  const res = onboardingState.readOnboarding(fs, onboardingPath());
+  if (res.reason === 'corrupt') {
+    logWarn(
+      `[onboarding] 状态文件损坏（${res.error}）→ 按「从未引导过」处理；` +
+      '最坏后果只是向导再弹一次，不够格像 overlay.json 那样另存 .bad'
+    );
+  }
+  return res.state;
+}
+
+function saveOnboardingState(state) {
+  try {
+    fs.mkdirSync(path.dirname(onboardingPath()), { recursive: true });
+    onboardingState.writeOnboarding(fs, onboardingPath(), state);
+  } catch (err) {
+    logError(`[onboarding] 保存状态失败: ${err.message}`);
+  }
+}
+
+/** 记录一次向导事件：算新状态 → 落盘 → 打日志。调用点只声明「发生了什么」 */
+function recordOnboardingEvent(event, payload) {
+  const fx = onboardingState.describeEvent(loadOnboardingState(), event, payload);
+  saveOnboardingState(fx.state);
+  logLine(fx.log);
+  return fx.state;
+}
+
+function isOnboardingOpen() {
+  return !!onboardingWindow && !onboardingWindow.isDestroyed();
+}
+
+function onboardingPageUrl() {
+  const dev = process.env.VITE_DEV_SERVER_URL;
+  if (dev) return `${dev.replace(/#.*$/, '')}#/onboarding`;
+  return `http://127.0.0.1:${backendPort}#/onboarding`;
+}
+
+/**
+ * 是否应当自动弹出
+ *
+ * 判据（含判断顺序）全在 `onboarding-state.cjs`，这里只负责把运行时事实喂进去。
+ * 之所以不在这里写 if，是因为「顺序写错」的后果是「用户每次开机都被弹一遍」，
+ * 而那种 bug 只能靠重启应用来发现。
+ */
+function shouldAutoShowOnboarding(force) {
+  return onboardingState.shouldShowWizard(loadOnboardingState(), {
+    force: force === true,
+    compatMode: COMPAT_MODE,
+    backendReady: !!backendPort,
+  });
+}
+
+function createOnboardingWindow() {
+  if (isOnboardingOpen()) {
+    onboardingWindow.show();
+    onboardingWindow.focus();
+    return onboardingWindow;
+  }
+
+  onboardingWindow = new BrowserWindow({
+    width: 560,
+    height: 660,
+    minWidth: 460,
+    minHeight: 520,
+    title: '欢迎使用听课伴侣',
+    show: false, // 与主窗口一致：等渲染完再显示，避免白屏闪一下
+    autoHideMenuBar: true,
+    // 与页面底色一致（--bg-primary），否则显示瞬间会闪一块别的颜色
+    backgroundColor: '#0f0f0f',
+    // parent 但**不加 modal**：modal 在 Windows 上会把主窗口的关闭按钮一起卡住，
+    // 一旦向导页面渲染失败就变成「打不开也关不掉」的死锁。向导不该锁死主窗口。
+    parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+    modal: false,
+    // 向导不是悬浮窗：不置顶、不穿透、不隐藏边框 —— 它必须可点、可聚焦、可关
+    alwaysOnTop: false,
+    resizable: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.cjs'),
+      // 第 3 步要轮询后端状态；窗口在后台时不能把定时器降级，否则会停在「正在启动」
+      backgroundThrottling: false,
+    },
+  });
+
+  onboardingWindow.once('ready-to-show', () => {
+    if (isOnboardingOpen()) onboardingWindow.show();
+  });
+
+  onboardingWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    logWarn(`[onboarding] 页面加载失败 code=${code} desc=${desc} url=${url}`);
+  });
+
+  onboardingWindow.on('closed', () => {
+    onboardingWindow = null;
+  });
+
+  onboardingWindow.loadURL(onboardingPageUrl());
+  logLine(`[onboarding] 向导窗口已创建（${onboardingPageUrl()}）`);
+  return onboardingWindow;
+}
+
+function destroyOnboardingWindow(reason) {
+  if (!isOnboardingOpen()) return;
+  try {
+    onboardingWindow.destroy();
+  } catch (err) {
+    logWarn(`[onboarding] 关闭向导窗口失败: ${err.message}`);
+  }
+  onboardingWindow = null;
+  logLine(`[onboarding] 向导窗口已关闭（${reason}）`);
+}
+
+/**
+ * 首次启动时按需弹出
+ *
+ * 时机很关键：必须在**后端就绪之后**调用。第 3 步要读真实的模型状态，
+ * 后端没起来就只能显示一个假的进度条 —— 而「不要用假进度条」是设计稿里
+ * 明确写下的要求（宁可不显示，也不骗人）。
+ */
+function maybeShowOnboarding(force) {
+  const decision = shouldAutoShowOnboarding(force);
+  if (!decision.show) {
+    logLine(`[onboarding] 本次不弹出（原因：${decision.reason}）`);
+    return false;
+  }
+  recordOnboardingEvent('start', {});
+  createOnboardingWindow();
+  return true;
 }
 
 // ============ 生命周期 ============
@@ -1472,6 +1688,20 @@ logLine(
 logLine(
   `[env] 运行模式=${COMPAT_MODE ? '兼容模式（Chromium 沙箱已关闭）' : '标准模式'}` +
   (FORCED_COMPAT ? `（来自记忆标记 ${path.basename(COMPAT_MARKER)}，跳过标准模式重试）` : '')
+);
+
+// Windows 任务栏的窗口归组与图标归属由 AppUserModelID 决定，且必须在
+// **创建任何窗口之前**设置（因而放在 whenReady 之前、紧邻日志初始化）。
+// 打包后由 electron-builder 写进快捷方式的是同一个值；这里不设的话，
+// 运行时进程与快捷方式对不上，就是「钉一个、跑起来又多一个」的成因。
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+}
+logLine(
+  `[env] AppUserModelId=${process.platform === 'win32' ? APP_USER_MODEL_ID : '(非 Windows，未设置)'}`
+);
+logLine(
+  `[env] 应用图标=${APP_ICON || '未找到 build/icon.ico（开发模式下用 Electron 默认图标；打包版由 exe 自带）'}`
 );
 
 /**
@@ -1561,6 +1791,10 @@ if (singleInstanceOwner) {
       registerDisplayWatchers();
       startHeartbeatWatch();
       applyMainWindowThrottling();
+      // 首启向导放在最后：此时后端已就绪（第 3 步要读真实模型状态），
+      // 主窗口也已开始渲染 —— 先让用户看到主界面，再弹出引导，不会出现
+      // 「向导盖着一块白屏」的观感。
+      maybeShowOnboarding();
     } catch (err) {
       logError(`[fatal] 启动失败: ${err.message}`);
       writeCrashReport('startup-failure', err);
@@ -1579,6 +1813,9 @@ if (singleInstanceOwner) {
         // macOS 关掉主窗口不退出应用，重新激活时按上次的 enabled 把悬浮窗一并还原
         restoreOverlayIfEnabled();
         applyMainWindowThrottling();
+        // 首次激活时如果没有渲染进程崩溃过，上面那次 maybeShowOnboarding 已经弹过；
+        // 这里的判断是幂等的（completed/dismissed 会直接返回 false）。
+        maybeShowOnboarding();
       }
     });
   });
@@ -1596,6 +1833,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true;
   destroyOverlayWindow(overlayActions.TRIGGER_SOURCES.host);
+  destroyOnboardingWindow('应用退出');
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
@@ -1713,6 +1951,60 @@ ipcMain.handle('overlay:reset-position', () =>
 ipcMain.on('overlay:subtitle', (_event, payload) => {
   perfStats.subtitleForwards++;
   sendToOverlay('overlay:subtitle', payload);
+});
+
+// ---- 首启向导 ----
+
+/**
+ * 向导的 IPC 全部走主进程
+ *
+ * 真理源是 `<数据目录>/onboarding.json`，而渲染进程没有 fs。
+ * 渲染层只负责「现在第几步、用户点了什么」，落盘与判断都在主进程 ——
+ * 否则向导窗口与主窗口各记一份状态必然打架。
+ */
+ipcMain.handle('onboarding:get-state', () => {
+  const decision = shouldAutoShowOnboarding(false);
+  return { state: loadOnboardingState(), autoShow: decision.show, reason: decision.reason, totalSteps: onboardingState.TOTAL_STEPS };
+});
+
+/** 每进入一步上报一次：stepReached 只增不减，用于定位「用户卡在第几步」 */
+ipcMain.handle('onboarding:step', (_event, step) => recordOnboardingEvent('step', { step }));
+
+ipcMain.handle('onboarding:complete', () => {
+  const state = recordOnboardingEvent('complete', {});
+  destroyOnboardingWindow('走完全部步骤');
+  return state;
+});
+
+ipcMain.handle('onboarding:dismiss', () => {
+  const state = recordOnboardingEvent('dismiss', {});
+  destroyOnboardingWindow('用户跳过');
+  return state;
+});
+
+/**
+ * 关闭向导窗口但**不写任何标记**
+ *
+ * 右上角的 × 与「跳过」语义不同：跳过是「别再来烦我」（写 dismissedAt），
+ * × 是「现在不想看」（什么都不写）→ 下次启动还会弹出一次。
+ * 这是刻意的：用户并没有表达拒绝，替他记成拒绝就没有回头路了。
+ */
+ipcMain.handle('onboarding:close', () => {
+  destroyOnboardingWindow('用户关闭窗口（未表态，下次启动仍会弹出）');
+  return { open: isOnboardingOpen() };
+});
+
+/**
+ * 「重新查看新手引导」
+ *
+ * 用户跳过后必须留一条找回路径，否则那个按钮等于一次性 —— 点了就再也见不到
+ * 向导（设计稿 §7）。force 会越过 completed/dismissed，也会越过兼容模式的
+ * 「推迟」判断：推迟针对的是**自动**弹出，不是禁止用户主动打开。
+ */
+ipcMain.handle('onboarding:reopen', () => {
+  recordOnboardingEvent('start', {});
+  createOnboardingWindow();
+  return { open: isOnboardingOpen() };
 });
 
 // ---- 存活心跳 / 诊断 ----

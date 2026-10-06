@@ -51,6 +51,17 @@ html.overlay-transparent body {
   50% { opacity: 0.3; }
 }
 
+/* 首启向导第 3 步的「模型准备中」进度条。
+   刻意做成不定长（来回滑动）而不是按百分比填充：模型准备的真实进度后端没有
+   暴露，画一个百分比就是编数字，设计稿明确禁止假进度条。
+   translateX 从 -100% 到 250%，配合 progressBar 自身 38% 的宽度，
+   在轨道里形成「一段光条来回跑」的观感。 */
+@keyframes onboarding-slide {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(120%); }
+  100% { transform: translateX(-100%); }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
 }

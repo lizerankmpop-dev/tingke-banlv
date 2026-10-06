@@ -307,3 +307,45 @@ export interface OverlaySubtitlePayload {
   message: string
   courseName: string
 }
+
+// ============ 首启向导（M3）============
+
+/**
+ * 向导状态（真理源：`<数据目录>/onboarding.json`）
+ *
+ * 字段与 `frontend/electron/onboarding-state.cjs` 的 `normalizeOnboarding()`
+ * **必须逐字段对应**。这里刻意把每个字段都写成必填（而不是可选）：
+ * 主进程归一后一定会给出全部字段，写成可选会让渲染层到处写 `?.`，
+ * 反而掩盖「主进程漏了某个字段」这种真问题。
+ */
+export interface OnboardingState {
+  schemaVersion: number
+  /** 用户第一次看到向导的时间（ISO 8601） */
+  startedAt: string | null
+  /**
+   * 走到过的**最深**一步（1..6，0 = 还没开始）
+   *
+   * 只增不减，且**比 completed 更有用**：绝大多数用户停在同一步时，
+   * 说明那一步内容过载；只看「完成率 30%」得不出这个结论。
+   */
+  stepReached: number
+  /** 走完最后一步 */
+  completed: boolean
+  /** 点过「跳过」的时间（与 completed 一样算「不再自动弹出」） */
+  dismissedAt: string | null
+  durationMs: number | null
+  lastShownVersion: string | null
+  seenHotkeys: Record<string, boolean>
+}
+
+/** `onboarding:get-state` 的返回：状态 + 「本次是否会自动弹出」的判断结果 */
+export interface OnboardingStatePayload {
+  state: OnboardingState
+  autoShow: boolean
+  /**
+   * autoShow 的原因，便于排障：
+   * `first-run` / `forced` / `completed` / `dismissed` / `compat-mode` / `backend-not-ready`
+   */
+  reason: string
+  totalSteps: number
+}

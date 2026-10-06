@@ -826,6 +826,36 @@ async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
     return pipeline
 
 
+@router.get("/asr/model-status")
+async def asr_model_status():
+    """
+    语音模型是否可用（首启向导第 3 步用）
+
+    **判据必须复用 `model_bootstrap.check_installed`** —— 引擎启动时用的就是它
+    （`whisper_engine.py` 的 `is_model_available`）。向导若自己写一套探测，
+    就会出现「引导说模型已就绪、点开始听课却报模型缺失」这种最尴尬的错位，
+    而两处判断还都「看起来是对的」。
+
+    契约：调用方只看 `ok`，**不要**解析 `reason` / `action` / 错误文本。
+    因此这里刻意不返回它们 —— 一旦返回，迟早会有人按中文字符串做分支，
+    而 `action` 可能是 copied / reused / verified（都是成功），
+    历史上正是按 action 判断，把「播种后 sha256 仍不通」误报成通过。
+
+    deep=False：只比文件大小（毫秒级）。向导会在启动路径上轮询它，
+    这里绝不能做 sha256（秒级），否则「正在准备」会被卡成「一直没反应」。
+    深度校验留给 `--selftest` 与「损坏自动修复」路径。
+    """
+    from asr.model_bootstrap import check_installed
+    from asr.whisper_engine import DEFAULT_MODEL
+
+    detail = check_installed(DEFAULT_MODEL, deep=False)
+    ok = bool(detail["ok"])
+    if not ok:
+        # 细节只进后端日志：用户看不到，排障时能拿到
+        logger.warning(f"首启向导探测模型不可用: model={DEFAULT_MODEL} problems={detail.get('problems')}")
+    return {"ok": ok, "model": DEFAULT_MODEL}
+
+
 @router.post("/asr/start")
 async def start_asr(course_id: str = Query(...)):
     """启动 ASR 管道（轮询模式）"""

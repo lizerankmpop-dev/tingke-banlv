@@ -61,4 +61,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** 主窗口侧：订阅悬浮窗开关状态（热键也能改，UI 必须跟着走） */
     onStateChanged: (cb) => subscribe('overlay:state', cb),
   },
+
+  // 首启向导
+  //
+  // 向导是独立窗口，但状态（onboarding.json）的唯一读写点在主进程 ——
+  // 渲染层只上报「用户做了什么」，不做任何持久化，避免两个窗口各记一份。
+  onboarding: {
+    getState: () => ipcRenderer.invoke('onboarding:get-state'),
+    reportStep: (step) => ipcRenderer.invoke('onboarding:step', step),
+    complete: () => ipcRenderer.invoke('onboarding:complete'),
+    dismiss: () => ipcRenderer.invoke('onboarding:dismiss'),
+    /** 关闭窗口但不写标记（下次启动仍会提示） */
+    close: () => ipcRenderer.invoke('onboarding:close'),
+    /** 「重新查看新手引导」入口 */
+    reopen: () => ipcRenderer.invoke('onboarding:reopen'),
+  },
 });

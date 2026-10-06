@@ -332,10 +332,31 @@ async function main() {
     }
 
     const overlay = pages.find((p) => (p.url || '').includes('#/overlay'))
-    const main = pages.find((p) => p !== overlay)
+    // 向导窗口在 whenReady 末尾才创建，可能晚于主窗口/悬浮窗出现在目标列表里
+    // （waitForTargets 只要凑够 2 个页面就返回），所以要单独等它出现 ——
+    // 等不到就是「首启自动弹出」这条验收失败，不能静默跳过。
+    let wizard = null
+    {
+      const deadline = Date.now() + Math.min(TIMEOUT_SEC, 60) * 1000
+      while (Date.now() < deadline) {
+        try {
+          const list = await getJson(`http://127.0.0.1:${DEBUG_PORT}/json/list`)
+          const all = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page')
+          const found = all.find((p) => (p.url || '').includes('#/onboarding'))
+          if (found) {
+            wizard = found
+            pages = all
+            break
+          }
+        } catch (_) { /* /json/list 偶发失败下一轮重试 */ }
+        await new Promise((r) => setTimeout(r, 1000))
+      }
+    }
+    const main = pages.find((p) => p !== overlay && p !== wizard)
 
     check('悬浮窗目标存在', !!overlay, overlay ? overlay.url : `页面数 ${pages.length}，无 #/overlay`)
     check('主窗口目标存在', !!main, main ? main.url : '缺失')
+    check('首启向导已自动弹出（全新数据目录）', !!wizard, wizard ? wizard.url : '等待超时仍无 #/onboarding 目标')
 
     if (!overlay) {
       log('---- 现有页面 ----')
@@ -380,6 +401,16 @@ async function main() {
       )
       check('主窗口不在 /overlay（两个入口未串）', mainInfo.hash !== '#/overlay', `实际 ${mainInfo.hash || '(空)'}`)
       check('主窗口 React 已挂载', mainInfo.rootChildren > 0, `子节点数 ${mainInfo.rootChildren}`)
+    }
+
+    if (wizard) {
+      // 向导窗口与主窗口共用同一套渲染探针：能挂载出子节点就说明
+      // #/onboarding 路由真正渲染了向导（而不是退回主应用整块界面）
+      const wizardInfo = await waitForProbe(wizard, (r) => r.rootChildren > 0, 60, '向导完成渲染').catch(
+        () => evaluate(wizard, PROBE).catch(() => ({}))
+      )
+      check('向导路由落在 #/onboarding', wizardInfo.hash === '#/onboarding', `实际 ${wizardInfo.hash || '(空)'}`)
+      check('向导 React 已挂载', wizardInfo.rootChildren > 0, `子节点数 ${wizardInfo.rootChildren}`)
     }
   } finally {
     cleanup()

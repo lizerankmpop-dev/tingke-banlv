@@ -1,6 +1,9 @@
 # M3 · 应用图标资源规范（Icon Asset Spec）
 
-> 状态：**设计稿（未实现）**
+> 状态：**加载链路已实现（2026-10-07）**；`icon.ico` 当前为**占位版本**（生成器
+> `frontend/scripts/make-placeholder-icon.py`，语义＝深紫底 + 字幕条，符合 §3/§4
+> 全部格式要求），正式美术资源交付后直接覆盖 `frontend/build/icon.ico` 即可。
+> 交付清单与验收方式见 `frontend/build/README.md` 与本文 §六。
 > 目标版本：M3
 > 前置依赖：需要先产出美术资源（见 §4）
 > 相关文档：[`onboarding_wizard.md`](./onboarding_wizard.md)、[`backlog_b1_b2_b3.md`](./backlog_b1_b2_b3.md)
@@ -276,3 +279,35 @@ mainWindow = new BrowserWindow({
 | 3 | 图标美术资源由谁产出 | 需确认（自绘 / AI 生成 / 外包）。若走 AI 生成，需注意 16px 可辨识性通常不达标，必须人工重绘小尺寸 |
 | 4 | 是否同时做托盘（Tray）图标 | 当前**无托盘功能**，不建议在 M3 引入 |
 | 5 | `release/` 中已有旧构建产物 | 换图标后需**清理 `frontend/release/`** 再重新构建，避免缓存导致 exe 仍是旧图标 |
+
+---
+
+## 八、实现说明（M3 交付，2026-10-07）
+
+### 8.1 已落地的链路
+
+| 项 | 实现 |
+|---|---|
+| `app.setAppUserModelId` | `main.cjs` 顶部（建窗前 / `whenReady` 前）：`APP_USER_MODEL_ID = 'com.tingkebanlv.app'`，与 `package.json` 的 `build.appId` 逐字一致；`tests/onboarding-aumid.test.cjs` 做对拍 + 9 条变异用例（含「调用时机被挪到 whenReady 之后」） |
+| 窗口 icon | `createWindow()` 传 `icon: APP_ICON`；悬浮窗（frame:false + transparent）**刻意不传**（不出现在任务栏） |
+| 缺失兜底 | `resolveAppIconPath()`：打包后返回 `undefined`（build/ 不进 asar，exe 自带图标）；开发模式 `fs.existsSync` 判断 + try/catch，缺文件时回落 Electron 默认图标**不崩溃**，启动日志写明 |
+| 打包配置 | `package.json` 新增 `build.win.icon = 'build/icon.ico'`；三个 NSIS 图标字段**刻意不加**（§七 待决策项 2：只做一份 icon.ico，让 NSIS 全部回落，减少资源数与格式转换风险） |
+| ico 本体 | `frontend/build/icon.ico`：7 档尺寸（16/24/32/48/64/128/256，256 档 PNG 压缩，32 位 RGBA + 全透明背景），约 102 KB；由 `frontend/scripts/make-placeholder-icon.py` 生成（纯标准库，不依赖 Pillow） |
+| 守卫 | `tests/onboarding-aumid.test.cjs` 另有 ico 容器头解析：档位数、宽高一致、256 档必须 PNG |
+
+### 8.2 真机证据（2026-10-07 冒烟）
+
+```
+[env] AppUserModelId=com.tingkebanlv.app
+[env] 应用图标=C:\...\frontend\build\icon.ico
+```
+
+### 8.3 待办（依赖美术资源交付）
+
+- 覆盖占位 `icon.ico`（交付清单见 `frontend/build/README.md`：7 档、256 PNG、
+  32 位 RGBA、sRGB、1024 母版下采样、16px 目视可辨识）
+- `npm run electron:build` 验证「无 `default Electron icon is used` 警告」+
+  清理 `frontend/release/` 后重建
+- §6.2 实装六处落点目检 + §6.3 AUMID 钉住图标准入验证（第 3 步是 AUMID
+  生效的唯一可靠判据）
+- 纳入 `scripts/verify_install.py` 清单（§6.4）

@@ -1,5 +1,7 @@
 import type {
   HostStatusPayload,
+  OnboardingState,
+  OnboardingStatePayload,
   OverlaySettings,
   OverlaySubtitlePayload,
   OverlayToastPayload,
@@ -44,10 +46,24 @@ export interface ElectronHostAPI {
   exportLogs: () => Promise<{ ok: boolean; filePath?: string; files?: number; canceled?: boolean; error?: string }>
 }
 
+/** 首启向导能力（向导窗口与主窗口都会用） */
+export interface ElectronOnboardingAPI {
+  getState: () => Promise<OnboardingStatePayload>
+  /** 上报「已进入第 N 步」；stepReached 只增不减 */
+  reportStep: (step: number) => Promise<OnboardingState>
+  complete: () => Promise<OnboardingState>
+  dismiss: () => Promise<OnboardingState>
+  /** 关闭窗口但不写标记（下次启动仍会提示） */
+  close: () => Promise<{ open: boolean }>
+  /** 「重新查看新手引导」：越过 completed/dismissed 与兼容模式的自动弹出限制 */
+  reopen: () => Promise<{ open: boolean }>
+}
+
 export type ElectronAPI = ElectronHostAPI & {
   getAppVersion: () => Promise<string>
   getBackendPort: () => Promise<number | null>
   overlay?: ElectronOverlayAPI
+  onboarding?: ElectronOnboardingAPI
 }
 
 declare global {

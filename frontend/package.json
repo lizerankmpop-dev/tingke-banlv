@@ -95,6 +95,7 @@
           ]
         }
       ],
+      "icon": "build/icon.ico",
       "artifactName": "tingkebanlv-${version}-setup.${ext}"
     },
     "nsis": {

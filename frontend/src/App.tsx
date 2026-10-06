@@ -5,6 +5,7 @@ import SubtitleOverlay from './pages/SubtitleOverlay'
 import DictionaryWindow from './pages/DictionaryWindow'
 import OverlayWindow from './pages/OverlayWindow'
 import ReviewPage from './pages/ReviewPage'
+import OnboardingWizard from './pages/OnboardingWizard'
 import ReviewReminder from './components/ReviewReminder'
 import { useAppStore } from './stores/useAppStore'
 import { useHostHeartbeat } from './hooks/useHostHeartbeat'
@@ -65,6 +66,10 @@ export default function App() {
       <Routes>
         {/* 桌面悬浮窗：纯字幕展示，无控制栏 */}
         <Route path="/overlay" element={<OverlayWindow />} />
+        {/* 首启向导（M3）：独立 BrowserWindow 打开，必须走自己的路由 ——
+            否则向导窗口里渲染的是整个主应用（一块不透明的完整界面），
+            表现为「窗口打开了、加载也成功了，但内容完全不对」。 */}
+        <Route path="/onboarding" element={<OnboardingWizard />} />
         {/* 其余一切路径（含 /）都进主应用 */}
         <Route path="*" element={<MainShell />} />
       </Routes>
