@@ -176,8 +176,16 @@ export interface OverlaySettings {
   backgroundUpdate?: boolean
   /**
    * 术语提示词自动降级（防重复循环兜底）
-   * true（默认）= 检测到字幕重复输出时自动把术语提示词截断到 200 字符并打 WARN；
-   * false = 完整保留术语表（识别质量优先，接受偶发重复循环）。
+   *
+   * true / 缺省 = 检出字幕重复输出时，把术语提示词的 token 预算调小并打 WARN；
+   * false       = 完整保留术语表（识别质量优先，接受偶发重复循环）。
+   *
+   * 注意缺省值是 **true** —— 后端 `_auto_degrade` 与 overlay-settings 的
+   * DEFAULT_OVERLAY_SETTINGS 都是 true。UI 判断请统一用 `!== false`，
+   * 不要用真值判断，否则「字段缺失」会被误显示成「已关闭」。
+   *
+   * 降级**不是**「把提示词截断到 200 字符」—— 那是 P0-3 之前的做法，
+   * 见 backend/asr/prompt_budget.py。
    */
   termAutoDegrade?: boolean
   bounds: OverlayBounds
@@ -193,12 +201,43 @@ export interface OverlaySettings {
 export interface TermGuardStats {
   /** 兜底开关是否打开（用户在控制面板里的选择，经主进程同步到后端） */
   autoDegrade: boolean
-  /** 是否已经因为检测到重复循环而把提示词截断了 */
+  /**
+   * 是否**已经真的执行过**降级（把术语提示词的 token 预算调小）。
+   *
+   * 注意与 `repetitionDetected` 区分：关掉兜底开关时这里恒为 false，
+   * 但检出仍然会发生。两者不能合并成一个布尔，否则「检出了但没处理」
+   * 这一态就没法表达（详见 lib/termGuard.ts 的说明）。
+   */
   degraded: boolean
-  /** 当前实际生效的提示词字符数（降级后是截断值） */
-  promptChars: number | null
-  /** 本次运行是否至少触发过一次重复循环判定 */
+  /**
+   * 本次运行是否**至少检出过一次**重复输出（与是否降级无关）。
+   *
+   * 由 P0-2 埋点提供。它的意义是：即使保护被关掉，
+   * 「到底有没有复读」也必须是可观测的，而不是只能靠猜。
+   */
   repetitionDetected: boolean
+  /**
+   * 本次实际送入模型的提示词 token 数。
+   *
+   * P0-3 起这才是「有多少内容真的进了模型」的指标 ——
+   * faster-whisper 只保留末尾 223 个 token，字符数看不出被截掉多少。
+   */
+  promptTokens?: number | null
+  /** 本次的 token 预算上限（降级后会用更小的值） */
+  promptBudget?: number | null
+  /** 因预算不足被丢弃的术语条数 */
+  droppedTermCount?: number
+  /**
+   * @deprecated 提示词**字符串**长度，降级**不会**改变它。
+   *
+   * P0-3 之前降级靠裁剪字符串（794 → 200 字符），该字段才等于「当前生效长度」；
+   * P0-3 起降级只调 token 预算，字符串原样保留，于是这个值恒为完整长度。
+   * 曾经因此让面板显示「提示词已缩减到 794 字符」这种自相矛盾的文案（Backlog B4）。
+   *
+   * **不要**用它判断降级效果，改用 `promptBudget` / `droppedTermCount`。
+   * 保留字段仅为兼容其他消费方。
+   */
+  promptChars: number | null
 }
 
 /** 主进程 → 两侧：宿主（主窗口）存活状态 */

@@ -708,6 +708,81 @@ class TestTermPromptGuard:
         assert stats["promptBudget"] == DEGRADE_TOKEN_BUDGET
         assert stats["promptTokens"] <= DEGRADE_TOKEN_BUDGET
 
+    def test_term_prompt_chars_is_not_a_degradation_indicator(self):
+        """
+        B4 回归守卫：`termPromptChars` **不能**用来判断降级效果。
+
+        P0-3 之前降级靠裁剪字符串（794 → 200 字符），该字段才等于「当前生效长度」；
+        P0-3 起降级只调 token 预算、提示词字符串原样保留，于是它恒为**完整长度**。
+        悬浮窗控制面板曾据此显示「提示词已缩减到 794 字符」—— 794 正是完整长度，
+        自相矛盾（Backlog B4）。
+
+        这条用例把语义钉住：**判断降级效果要看 promptBudget / droppedTerms**。
+        如果有人把降级「顺手」改回裁剪字符串，这里会失败 —— 那正是需要
+        重新审视前端文案（frontend/src/lib/termGuard.ts）的时候，
+        而不是简单地把断言改掉。
+        """
+        from asr.whisper_engine import DEGRADE_TOKEN_BUDGET, PROMPT_TOKEN_BUDGET
+
+        # 30 个中文术语 ≈ 300+ token（按 1.7 token/字估算），远超 70 的降级预算，
+        # 保证既触发降级、又真的丢掉一批术语
+        terms = [f"卷积神经网络变体{i}" for i in range(30)]
+        # 同时给 initial_prompt 与 sections：前者只为占住「字符串长度」这个口径，
+        # 后者才是实际参与组装的分层结构（与 pipeline 的真实用法一致）
+        engine = _bare_engine(initial_prompt=LONG_PROMPT, sections=[("custom", terms)])
+
+        engine._build_prompt()
+        before = engine.get_stats()
+        assert before["promptBudget"] == PROMPT_TOKEN_BUDGET
+        assert before["termPromptChars"] == len(LONG_PROMPT), "前置条件：降级前长度=完整长度"
+
+        engine._note_produced_text(REPEAT_TANDEM)
+        assert engine._prompt_degraded is True
+
+        engine._build_prompt()          # 降级对下一轮组装生效
+        after = engine.get_stats()
+
+        # ① 字符串长度**不变** —— B4 的根因，必须钉住
+        assert after["termPromptChars"] == before["termPromptChars"], (
+            "降级不应改变提示词字符串长度。若此处失败，说明降级又变回了裁剪字符串，"
+            "前端文案（lib/termGuard.ts）与 types 里的 @deprecated 说明需同步重新审视"
+        )
+
+        # ② 真正会变的是预算与丢弃清单 —— 前端应当依赖这两个
+        assert after["promptBudget"] == DEGRADE_TOKEN_BUDGET
+        assert after["promptBudget"] < before["promptBudget"]
+        assert isinstance(after["droppedTerms"], list)
+        assert after["droppedTerms"], "预算从 220 骤降到 70 后应当有术语被丢弃"
+        assert after["promptTokens"] <= DEGRADE_TOKEN_BUDGET
+
+        # ③ 分层保留数也要能看见 —— 前端文案里的「N 个低优先级术语未参与」
+        #    就来自 droppedTerms.length，两侧口径必须同源
+        assert after["promptSections"].get("custom", 0) < len(terms)
+        assert len(after["droppedTerms"]) == len(terms) - after["promptSections"]["custom"]
+
+    def test_stats_expose_fields_the_panel_consumes(self):
+        """
+        控制面板消费的字段必须在 stats 里齐备 —— 少一个就会静默退化成
+        「不显示」或「显示旧字段」，那正是 B4 的成因（后端换了语义、
+        前端还在读老字段，而没有任何测试会发现）。
+        """
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._build_prompt()
+        stats = engine.get_stats()
+
+        for key in (
+            "termPromptDegraded", "termAutoDegrade", "repetitionDetected",
+            "promptTokens", "promptBudget", "droppedTerms", "promptSections",
+        ):
+            assert key in stats, f"stats 缺少控制面板依赖的字段 {key}"
+
+        assert isinstance(stats["droppedTerms"], list)
+        assert isinstance(stats["promptSections"], dict)
+        assert stats["promptBudget"] > 0
+        # 未产出文本时不应误报「已检出重复」
+        assert stats["repetitionDetected"] is False
+        assert stats["lastRepeat"] is None
+
     def test_empty_text_not_counted_as_subtitle(self):
         """空文本不会变成字幕，不该计入产出数，也不该污染重复检测的缓冲"""
         engine = _bare_engine(initial_prompt=LONG_PROMPT)

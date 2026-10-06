@@ -3,6 +3,16 @@ import type { SubtitleLine, VocabularyEntry, ASRStatus, TermGuardStats } from '.
 import { useCourseStore } from './useCourseStore'
 import { overlayBridge } from '../lib/overlayBridge'
 
+/**
+ * 数值字段兜底：非有限数一律当作「未上报」（null），不要让它变成 0。
+ *
+ * 用 `typeof x === 'number'` 判断是不够的 —— `NaN` 也是 number，
+ * 一旦漏进来，UI 上就会出现「NaN 个术语未参与」这种文案。
+ */
+function numOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
 interface SubtitleState {
   subtitleLines: SubtitleLine[]
   currentWords: { word: string; start: number; end: number; confidence: number }[]
@@ -154,8 +164,16 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
             termGuard: {
               autoDegrade: whisper.termAutoDegrade !== false,
               degraded: !!whisper.termPromptDegraded,
-              promptChars: typeof whisper.termPromptChars === 'number' ? whisper.termPromptChars : null,
               repetitionDetected: !!whisper.repetitionDetected,
+              // P0-3 埋点：降级改的是 token 预算，字符串长度不再变化，
+              // 所以展示口径必须换成 token / 丢弃条数（见 types 里的 @deprecated 说明）
+              promptTokens: numOrNull(whisper.promptTokens),
+              promptBudget: numOrNull(whisper.promptBudget),
+              droppedTermCount: Array.isArray(whisper.droppedTerms)
+                ? whisper.droppedTerms.length
+                : 0,
+              // 保留透传，仅供其它消费方；面板UI已不使用
+              promptChars: numOrNull(whisper.termPromptChars),
             },
           })
         }

@@ -19,7 +19,8 @@
     供上层决定用词典还是走 AI 讲解。
 
 环境变量：
-    TINGKEBANLV_TERM_PROMPT_MAX   initial_prompt 最大字符数（默认 800）
+    TINGKEBANLV_TERM_PROMPT_MAX   术语层的**字符**粗筛上限（默认 800），
+                                  不是最终约束 —— 见下方 DEFAULT_PROMPT_MAX_CHARS
 """
 
 import json
@@ -33,9 +34,20 @@ logger = logging.getLogger(__name__)
 
 VOCAB_PATH = Path(__file__).parent / "basic_vocab.json"
 
-# initial_prompt 长度上限
-# Whisper 的 prompt 会占用上下文窗口，太长会挤压实际音频的识别质量。
-# 经验值：800 字符左右（约 130 个英文词）是收益与代价的平衡点。
+# initial_prompt 的**字符**上限 —— 只是粗筛，不是最终约束
+#
+# ⚠️ P0-3 起，真正决定「哪些术语进模型」的是 **token 预算**
+#    （`WhisperEngine.PROMPT_TOKEN_BUDGET`，默认 220 token，见 asr/prompt_budget.py）。
+#    本字符上限只在术语层先砍一刀，省后续的 token 计数开销。
+#
+# 为什么它当不了约束：中文的 token 密度约 1.8 token/字（byte-level BPE 对
+# 常用字表外的专业词会回退到 UTF-8 字节序列），800 字符 ≈ 1480 token，
+# 远超 220 的预算 —— 也就是说**对中文课程这个上限永远不会生效**。
+# 调它观察不到任何效果，不要在这里调参，改预算请用
+# TINGKEBANLV_TERM_PROMPT_TOKENS / TINGKEBANLV_TERM_DEGRADE_TOKENS。
+#
+# 保留它的原因：英文场景下 800 字符 ≈ 208 token，与预算同量级，
+# 能先挡掉明显超长的列表。
 DEFAULT_PROMPT_MAX_CHARS = 800
 
 
@@ -48,7 +60,13 @@ def get_prompt_max_chars() -> int:
 
 # ============ 领域术语表 ============
 # 每个领域的术语按"识别难度 × 出现频率"排序：
-# 越容易被 Whisper 听错、越常在课堂出现的词，越靠前 —— 因为靠前的词才会被塞进 prompt。
+# 越容易被 Whisper 听错、越常在课堂出现的词，越靠前 —— 因为 `prompt_budget.assemble`
+# 是按列表顺序贪心填预算的，靠前的词**优先拿到** token 配额，也就优先被塞进 prompt。
+#
+# 注意别把「优先」和「位置」搞混：P0-3 的拼接是低优先级段在前、高优先级段贴尾，
+# 所以本列表里最靠前的词最终会出现在**领域段的开头**（即字符串的靠前位置）。
+# 位置靠前不危险 —— 我们自己把总量压到 220 token、低于库保留的 223，
+# 库不会再截；真正决定取舍的是 assemble 的填充顺序，而那个顺序是「靠前优先」。
 
 DOMAIN_TERMS: dict[str, list[str]] = {
     "计算机": [

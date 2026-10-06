@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   X, Eye, Move, RotateCcw, AlertCircle, PictureInPicture2, Type, Zap, FileDown,
   ShieldCheck, ShieldAlert,
@@ -6,6 +6,7 @@ import {
 import { useOverlayStore } from '../stores/useOverlayStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
 import { hostBridge } from '../lib/overlayBridge'
+import { buildTermGuardRows } from '../lib/termGuard'
 
 /**
  * 悬浮窗控制面板
@@ -24,6 +25,29 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
   const termGuard = useSubtitleStore((s) => s.termGuard)
   const [busy, setBusy] = useState(false)
   const [logNotice, setLogNotice] = useState<string | null>(null)
+
+  /**
+   * 防循环降级开关的**有效值**。
+   *
+   * `termAutoDegrade` 在类型上是可选字段，但缺省语义是「开启」
+   * （后端 `_auto_degrade` 与 overlay-settings 的 DEFAULT 都是 true）。
+   * 统一用 `!== false` 归一，避免「字段缺失」被真值判断误显示成「已关闭」——
+   * 那会让状态行与开关外观互相矛盾。
+   */
+  const termAutoDegrade = settings.termAutoDegrade !== false
+
+  /**
+   * 防循环降级的状态行（0~2 行）。
+   *
+   * 文案由 lib/termGuard.ts 的纯函数生成 —— 那里有单测，且明确禁止把
+   * 「缩减到 N 字符」这类会随实现漂移的固定数值写进 UI。
+   * 历史上这里直接渲染 `termGuard.promptChars`，P0-3 改成 token 预算后
+   * 就变成了「已缩减到 794 字符」这种自相矛盾的展示（Backlog B4）。
+   */
+  const termGuardRows = useMemo(
+    () => buildTermGuardRows(termGuard, termAutoDegrade),
+    [termGuard, termAutoDegrade],
+  )
 
   useEffect(() => {
     void init()
@@ -203,8 +227,16 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
 
                 为什么必须有这个开关：术语热词是作为 Whisper 的 initial_prompt 注入的，
                 长列表会被模型当成「上文」继续往下编，实测会出现字幕重复循环
-                （字幕条数 > 音频片段数，单次识别 RTF 从 0.42 冲到 1.18）。
-                兜底策略是自动把提示词截断到 200 字符。
+                （单次识别 RTF 从 0.42 冲到 1.18，突破实时）。
+
+                兜底策略：检出「本段转写文本出现长距离重复」时（判据见
+                backend/asr/repetition.py，默认 min_repeat_chars=35），把术语提示词的
+                **token 预算**从 PROMPT_TOKEN_BUDGET 降到 DEGRADE_TOKEN_BUDGET，超出预算的
+                低优先级术语被丢弃。
+
+                注意：**不再**是「把提示词截断到 200 字符」—— 那是 P0-3 之前的做法，
+                按字符砍尾巴等于砍掉优先级最高的术语。提示词字符串现在原样保留，
+                变的只是组装时的预算。详见 backend/asr/prompt_budget.py。
 
                 默认开启，但必须可关：这是个「事后反应」的补救措施，它挡不住首次发生。
                 用户在专业术语密集的课上可能宁可接受偶发重复，也要保住完整术语表的识别收益。
@@ -213,57 +245,39 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                 <div style={styles.rowLabel}>
                   <ShieldCheck
                     size={14}
-                    color={settings.termAutoDegrade ? 'var(--accent-light)' : 'var(--text-muted)'}
+                    color={termAutoDegrade ? 'var(--accent-light)' : 'var(--text-muted)'}
                   />
                   <span>术语提示词自动防循环降级</span>
                 </div>
                 <button
-                  onClick={() => set({ termAutoDegrade: !settings.termAutoDegrade })}
+                  onClick={() => set({ termAutoDegrade: !termAutoDegrade })}
                   style={{
                     ...styles.toggle,
-                    background: settings.termAutoDegrade ? 'var(--accent)' : 'var(--bg-tertiary)',
+                    background: termAutoDegrade ? 'var(--accent)' : 'var(--bg-tertiary)',
                   }}
                   role="switch"
-                  aria-checked={!!settings.termAutoDegrade}
+                  aria-checked={termAutoDegrade}
                 >
                   <span
                     style={{
                       ...styles.toggleKnob,
-                      transform: settings.termAutoDegrade ? 'translateX(14px)' : 'translateX(0)',
+                      transform: termAutoDegrade ? 'translateX(14px)' : 'translateX(0)',
                     }}
                   />
                 </button>
               </div>
               <div style={styles.hint}>
-                当检测到字幕重复输出时，自动缩减术语提示词，防止识别变慢、重复字幕。
+                当检测到字幕重复输出时，自动缩减参与识别的术语范围，防止识别变慢、重复字幕。
               </div>
-              {termGuard && (
-                <div style={termGuard.degraded ? styles.guardWarn : styles.guardOk}>
-                  {termGuard.degraded ? (
-                    <>
-                      <ShieldAlert size={12} />
-                      <span>
-                        已触发降级：检测到字幕重复输出，提示词已缩减到
-                        {termGuard.promptChars !== null ? ` ${termGuard.promptChars} 字符` : '较短长度'}。
-                        重新开始听课后会恢复完整术语表。
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <ShieldCheck size={12} />
-                      <span>
-                        未检测到重复输出{termGuard.promptChars !== null ? `（当前提示词 ${termGuard.promptChars} 字符）` : ''}。
-                      </span>
-                    </>
-                  )}
+              {termGuardRows.map((row) => (
+                <div
+                  key={row.text}
+                  style={row.tone === 'warn' ? styles.guardWarn : styles.guardOk}
+                >
+                  {row.tone === 'warn' ? <ShieldAlert size={12} /> : <ShieldCheck size={12} />}
+                  <span>{row.text}</span>
                 </div>
-              )}
-              {!settings.termAutoDegrade && (
-                <div style={styles.guardWarn}>
-                  <ShieldAlert size={12} />
-                  <span>已关闭兜底：术语表保持完整。若出现重复字幕或识别变慢，请重新打开它。</span>
-                </div>
-              )}
+              ))}
 
               <Divider />
 
