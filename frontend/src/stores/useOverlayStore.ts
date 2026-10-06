@@ -22,7 +22,14 @@ interface OverlayState {
   refresh: () => Promise<void>
   patch: (patch: Partial<OverlaySettings>) => Promise<void>
   toggle: () => Promise<void>
-  resetPosition: () => Promise<void>
+  /**
+   * 重置悬浮窗位置。
+   *
+   * 返回需要给用户看的反馈文案（来自主进程的**唯一**来源），
+   * 或 null 表示调用失败。悬浮窗关着时 toast 无处显示，
+   * 调用方（控制面板）应当用这个文案做内联提示 —— 否则按钮点了没反应。
+   */
+  resetPosition: () => Promise<string | null>
 }
 
 // StrictMode 下 effect 会执行两次；订阅常驻到窗口关闭为止，无需取消，
@@ -84,7 +91,14 @@ export const useOverlayStore = create<OverlayState>((set, get) => ({
   },
 
   resetPosition: async () => {
-    const applied = await overlayBridge.resetPosition()
-    if (applied) set({ settings: applied, error: null })
+    const res = await overlayBridge.resetPosition()
+    if (!res) {
+      set({ error: '重置位置失败（悬浮窗不可用）' })
+      return null
+    }
+    set({ settings: res.settings, error: null })
+    // toastShown=false 表示悬浮窗当时是关着的、toast 没送到，
+    // 交给调用方在面板内联提示兜底。文案两边共用主进程那一份。
+    return res.toastShown ? null : res.notice
   },
 }))

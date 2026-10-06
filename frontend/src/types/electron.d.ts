@@ -5,6 +5,7 @@ import type {
   OverlayToastPayload,
   PerfStats,
   PositionCorrectedPayload,
+  ResetPositionResult,
 } from './index'
 
 /**
@@ -20,7 +21,7 @@ export interface ElectronOverlayAPI {
   open: () => Promise<{ open: boolean }>
   close: () => Promise<{ open: boolean }>
   /** 把悬浮窗挪回默认位置（拖到屏幕外时的自救入口） */
-  resetPosition: () => Promise<OverlaySettings>
+  resetPosition: () => Promise<ResetPositionResult>
   /** 主渲染进程 → 悬浮窗 的字幕推送（单向，不等待） */
   pushSubtitle: (payload: OverlaySubtitlePayload) => void
   /** 订阅字幕（悬浮窗侧使用），返回取消订阅函数 */

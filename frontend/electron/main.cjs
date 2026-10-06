@@ -143,6 +143,15 @@ let backendProcess = null;
 let backendPort = null;
 let isQuitting = false;
 let backendLogTail = [];
+
+/**
+ * 主进程 → 悬浮窗的轻提示频道。
+ *
+ * 提成常量是因为它有**多个**发射点（重置位置、快捷键调字号），
+ * 而接收端在 preload.cjs 里按字符串订阅 —— 任一处写错都不会报错，
+ * 只会「什么提示都不出现」。这类静默失败值得用常量挡一下。
+ */
+const TOAST_CHANNEL = 'overlay:toast';
 /** 主窗口当前是否处于「后台节流」状态；null = 还没应用过 */
 let mainThrottled = null;
 /** 主窗口渲染进程是否健在（悬浮窗据此显示断连提示） */
@@ -472,6 +481,15 @@ const {
   readConfig,
 } = require('./overlay-settings.cjs');
 
+// 悬浮窗动作的「副作用决策」（日志文案 / toast 载荷 / 触发来源归一）
+//
+// 同一个动作有多个入口（控制面板 / 热键 / 启动恢复 / 显示器自愈），
+// 原先各自在调用点实现「要不要弹 toast、要不要打日志」，于是漏了两处
+// （Backlog B1：按钮无 toast；B3：热键开关无日志）。
+// 把决策收拢到该模块后，各入口只需声明自己是谁，行为一致由结构保证 ——
+// 且因为该模块不 require('electron')，可以被 node --test 直接覆盖。
+const overlayActions = require('./overlay-actions.cjs');
+
 let overlaySettings = null;
 
 function overlaySettingsPath() {
@@ -781,34 +799,61 @@ function createOverlayWindow() {
   return overlayWindow;
 }
 
-/** 仅销毁窗口，不改动 enabled（用于主窗口关闭 / 应用退出） */
-function destroyOverlayWindow() {
+/**
+ * 仅销毁窗口，不改动 enabled（用于主窗口关闭 / 应用退出）
+ *
+ * 成功路径也打日志：这里原先只在**失败**时 logLine，于是「悬浮窗怎么自己没了」
+ * 在日志里查不出来（与 B3 同一类问题 —— 只记了失败，没记成功）。
+ */
+function destroyOverlayWindow(triggerSource) {
   if (!isOverlayOpen()) return;
   const win = overlayWindow;
   overlayWindow = null; // 先置空：closed 回调据此判断是否还需广播状态
   try {
     win.destroy();
+    logLine(overlayActions.describeDestroy(triggerSource).log);
   } catch (err) {
     logLine(`[overlay] 销毁悬浮窗失败: ${err.message}`);
   }
 }
 
-/** 用户主动关闭：同时记住「不要再自动打开」 */
-function closeOverlayWindow() {
+/**
+ * 用户主动关闭：同时记住「不要再自动打开」
+ *
+ * 日志放在函数内部而不是调用点 —— 这是 B3 的修法。原先 `Alt+Shift+O`
+ * 的开关动作成功时一行日志都没有，用户按了没反应时，日志里
+ * 「热键注册成功」之后就是空的，无法区分「按键没生效」和「窗口没显示出来」。
+ */
+function closeOverlayWindow(triggerSource) {
   loadOverlaySettings().enabled = false;
   saveOverlaySettings();
-  destroyOverlayWindow();
+  destroyOverlayWindow(triggerSource);
   notifyOverlayState();
   applyMainWindowThrottling();
+  logLine(overlayActions.describeClose(triggerSource).log);
 }
 
-function openOverlayWindow() {
+function openOverlayWindow(triggerSource) {
   loadOverlaySettings().enabled = true;
   saveOverlaySettings();
   createOverlayWindow();
   notifyOverlayState();
   // 立刻取消节流：窗口 ready-to-show 还要一小会儿，这期间字幕不该丢
   applyMainWindowThrottling();
+  logLine(overlayActions.describeOpen(triggerSource).log);
+}
+
+/**
+ * 开关悬浮窗 —— 热键与其它入口共用的**唯一**决策点。
+ *
+ * 「当前开着吗 → 该开还是该关」这段判断放在这里，而不是散在每个入口里。
+ * 各入口只需要声明自己是谁（triggerSource），日志与文案由
+ * open/closeOverlayWindow 内部统一产出，结构上不可能再出现
+ * 「一条路径有日志、另一条没有」。
+ */
+function toggleOverlayWindow(triggerSource) {
+  if (isOverlayOpen()) closeOverlayWindow(triggerSource);
+  else openOverlayWindow(triggerSource);
 }
 
 /** 调整模式：临时关掉鼠标穿透，让用户可以拖动窗口 */
@@ -822,8 +867,23 @@ function toggleOverlayInteractive() {
   logLine(`[overlay] 鼠标穿透=${s.clickThrough ? '开' : '关（调整模式）'}`);
 }
 
-/** 悬浮窗挪回主屏底部居中（穿透窗口跑出屏幕后唯一的自救入口） */
-function resetOverlayPosition() {
+/**
+ * 悬浮窗挪回主屏底部居中（穿透窗口跑出屏幕后唯一的自救入口）
+ *
+ * ⚠️ toast 必须**在函数内部**发，不能在调用点发 —— 这是 B1 的修法。
+ * 原先热键回调里写了 `sendToOverlay('overlay:toast', ...)`，而控制面板的
+ * 「重置位置」按钮直接调本函数、绕过了那一行，于是按钮点了没有任何反馈。
+ * 只要还有第二个调用点，放在调用点就一定会再漏一次。
+ *
+ * Returns:
+ *   `{ settings, notice, toastShown }`
+ *   - `notice`：给用户看的文案，来自 overlay-actions 的**唯一**常量。
+ *     渲染层在 `toastShown === false` 时用它做面板内联提示 ——
+ *     这样文案不会在渲染层再写一遍（重复字面量正是 B1/B4 的共同成因）。
+ *   - `toastShown`：toast 是否真的送到了悬浮窗。悬浮窗没开着时
+ *     `sendToOverlay` 会静默返回 false，此时用户看不到任何反馈。
+ */
+function resetOverlayPosition(triggerSource) {
   const s = loadOverlaySettings();
   const wa = screen.getPrimaryDisplay().workArea;
   const target = {
@@ -836,7 +896,9 @@ function resetOverlayPosition() {
   s.anchor = computeAnchor(target, screen.getPrimaryDisplay());
   overlaySettings = s;
   saveOverlaySettings();
-  if (isOverlayOpen()) {
+
+  const opened = isOverlayOpen();
+  if (opened) {
     try {
       overlayWindow.setBounds(target);
     } catch (err) {
@@ -844,8 +906,13 @@ function resetOverlayPosition() {
     }
   }
   broadcastOverlaySettings();
-  logLine(`[overlay] 位置已重置: ${target.x},${target.y}`);
-  return s;
+
+  const fx = overlayActions.describeReset({ opened, x: target.x, y: target.y }, triggerSource);
+  logLine(fx.log);
+  // 穿透状态下用户看不到任何反馈，必须主动提示一次
+  const toastShown = !!sendToOverlay(TOAST_CHANNEL, { text: fx.toast.text, at: Date.now() });
+
+  return { settings: s, notice: fx.toast.text, toastShown };
 }
 
 // ============ 后台节流策略 ============
@@ -1388,7 +1455,7 @@ function createWindow(port) {
     mainWindow = null;
     // 主窗口是悬浮窗的唯一入口与生命周期锚点：主窗口没了就必须销毁悬浮窗，
     // 否则会留下一个永远置顶、点不掉、也没有 UI 能关掉它的孤儿窗口。
-    destroyOverlayWindow();
+    destroyOverlayWindow(overlayActions.TRIGGER_SOURCES.host);
   });
 }
 
@@ -1426,16 +1493,13 @@ function registerOverlayShortcuts() {
       logWarn(`[overlay] 热键 ${accelerator}（${label}）注册异常: ${err.message}`);
     }
   };
-  bind('Alt+Shift+O', () => {
-    if (isOverlayOpen()) closeOverlayWindow();
-    else openOverlayWindow();
-  }, '开关悬浮窗');
+  // 各入口只声明「我是谁」；日志与文案由 open/close/reset 内部统一产出。
+  // 这样热键路径与 UI 路径的副作用由**结构**保证一致，不再靠人记得写。
+  bind('Alt+Shift+O', () => toggleOverlayWindow(overlayActions.TRIGGER_SOURCES.hotkey), '开关悬浮窗');
   bind('Alt+Shift+D', toggleOverlayInteractive, '切换调整模式');
-  bind('Alt+Shift+R', () => {
-    resetOverlayPosition();
-    // 穿透状态下用户看不到任何反馈，必须主动提示一次
-    sendToOverlay('overlay:toast', { text: '位置已重置到屏幕底部居中', at: Date.now() });
-  }, '重置悬浮窗位置');
+  bind('Alt+Shift+R',
+    () => resetOverlayPosition(overlayActions.TRIGGER_SOURCES.hotkey),
+    '重置悬浮窗位置');
   bind('Alt+Shift+]', () => nudgeFontSize(2), '字幕字号 +2');
   bind('Alt+Shift+[', () => nudgeFontSize(-2), '字幕字号 -2');
 }
@@ -1448,7 +1512,7 @@ function nudgeFontSize(delta) {
   saveOverlaySettings();
   broadcastOverlaySettings();
   logLine(`[overlay] 字号 = ${next.fontSize}（快捷键 ${delta > 0 ? '+' : ''}${delta}）`);
-  sendToOverlay('overlay:toast', { text: `字号 ${next.fontSize}`, at: Date.now() });
+  sendToOverlay(TOAST_CHANNEL, { text: `字号 ${next.fontSize}`, at: Date.now() });
 }
 
 /** 上次退出时悬浮窗是开着的 → 本次启动自动恢复 */
@@ -1456,6 +1520,9 @@ function restoreOverlayIfEnabled() {
   if (!loadOverlaySettings().enabled) return;
   try {
     createOverlayWindow();
+    // 只补日志、不改行为：这里刻意不改成调 openOverlayWindow()，
+    // 免得顺带引入 notifyOverlayState / 写配置这些启动期副作用。
+    logLine(overlayActions.describeOpen(overlayActions.TRIGGER_SOURCES.startup).log);
   } catch (err) {
     logError(`[overlay] 自动恢复悬浮窗失败: ${err.message}`);
   }
@@ -1528,7 +1595,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
-  destroyOverlayWindow();
+  destroyOverlayWindow(overlayActions.TRIGGER_SOURCES.host);
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
@@ -1617,12 +1684,12 @@ ipcMain.handle('overlay:set-settings', (_event, patch) => {
 });
 
 ipcMain.handle('overlay:open', () => {
-  openOverlayWindow();
+  openOverlayWindow(overlayActions.TRIGGER_SOURCES.ui);
   return { open: isOverlayOpen() };
 });
 
 ipcMain.handle('overlay:close', () => {
-  closeOverlayWindow();
+  closeOverlayWindow(overlayActions.TRIGGER_SOURCES.ui);
   return { open: isOverlayOpen() };
 });
 
@@ -1632,8 +1699,15 @@ ipcMain.handle('overlay:close', () => {
  * 为什么需要单独的通道：设置里的 bounds.x/y 允许为 null（表示「没存过位置」），
  * 于是 normalize 之后再回传 null 也无从区分「用户想把窗口放回默认位」。
  * 用户把窗口拖到屏幕外或拖到只露出一角时，这是唯一的自救入口。
+ *
+ * 返回 `{ settings, notice, toastShown }`：toast 已经在
+ * `resetOverlayPosition()` 内部发过（所以热键与按钮两条路径必然一致），
+ * 这里额外把 `notice` 回给渲染层 —— 悬浮窗没开着时 toast 无处显示
+ * （`toastShown === false`），控制面板据此改用自己的内联提示，
+ * 文案直接复用主进程这一份，避免渲染层再写一遍字面量。
  */
-ipcMain.handle('overlay:reset-position', () => resetOverlayPosition());
+ipcMain.handle('overlay:reset-position', () =>
+  resetOverlayPosition(overlayActions.TRIGGER_SOURCES.ui));
 
 // 字幕快照转发：主窗口（唯一轮询者）→ 主进程 → 悬浮窗
 ipcMain.on('overlay:subtitle', (_event, payload) => {

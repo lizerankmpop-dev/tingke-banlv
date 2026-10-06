@@ -5,6 +5,7 @@ import type {
   OverlayToastPayload,
   PerfStats,
   PositionCorrectedPayload,
+  ResetPositionResult,
 } from '../types'
 
 /**
@@ -93,7 +94,7 @@ export const overlayBridge = {
     }
   },
 
-  async resetPosition(): Promise<OverlaySettings | null> {
+  async resetPosition(): Promise<ResetPositionResult | null> {
     const api = overlayApi()
     if (!api) return null
     try {

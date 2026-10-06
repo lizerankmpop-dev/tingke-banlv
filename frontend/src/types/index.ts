@@ -262,6 +262,27 @@ export interface OverlayToastPayload {
   at: number
 }
 
+/**
+ * `overlay:reset-position` 的返回体。
+ *
+ * 为什么要把 `notice` / `toastShown` 一起回传，而不是让渲染层自己写文案：
+ *
+ *   - 重置的反馈文案**唯一来源**在主进程（`electron/overlay-actions.cjs`
+ *     的 `RESET_TOAST_TEXT`）。若渲染层再写一遍字面量，就会出现
+ *     「热键提示的是一句话、按钮提示的是另一句话」——这正是 Backlog B1 的
+ *     成因（toast 写在调用点，两条路径各写各的）。
+ *   - `toastShown === false` 表示 toast 没送到（悬浮窗当时是关着的，
+ *     `sendToOverlay` 会静默返回 false）。此时用户看不到任何反馈，
+ *     控制面板要用 `notice` 做内联提示兜住这个场景。
+ */
+export interface ResetPositionResult {
+  settings: OverlaySettings
+  /** 给用户看的反馈文案（与悬浮窗 toast 完全同一份） */
+  notice: string
+  /** toast 是否真的送到了悬浮窗；false 时调用方需要自己兜底展示 */
+  toastShown: boolean
+}
+
 /** 本地性能埋点快照（不上传） */
 export interface PerfStats {
   startedAt: number

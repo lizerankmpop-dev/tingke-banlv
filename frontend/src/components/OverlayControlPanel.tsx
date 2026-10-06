@@ -25,6 +25,20 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
   const termGuard = useSubtitleStore((s) => s.termGuard)
   const [busy, setBusy] = useState(false)
   const [logNotice, setLogNotice] = useState<string | null>(null)
+  const [resetNotice, setResetNotice] = useState<string | null>(null)
+
+  /**
+   * 重置位置。
+   *
+   * 反馈文案由主进程给：悬浮窗开着时它已经弹了 toast，这里拿到 null（不重复提示）；
+   * 悬浮窗关着时 toast 没地方显示，主进程会回一个文案，改在面板内联展示 ——
+   * 否则按钮点下去毫无反应（Backlog B1）。
+   *
+   * 文案**不在渲染层写第二遍**：那是 B1/B4 的共同成因（同一句话在两个地方各写一份）。
+   */
+  const handleResetPosition = async () => {
+    setResetNotice(await resetPosition())
+  }
 
   /**
    * 防循环降级开关的**有效值**。
@@ -295,7 +309,7 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                   {settings.clickThrough ? <Eye size={13} /> : <Move size={13} />}
                   {settings.clickThrough ? '调整模式' : '结束调整'}
                 </button>
-                <button onClick={() => void resetPosition()} style={styles.actionBtn}>
+                <button onClick={() => void handleResetPosition()} style={styles.actionBtn}>
                   <RotateCcw size={13} />
                   重置位置
                 </button>
@@ -304,6 +318,8 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                   导出日志
                 </button>
               </div>
+              {/* 悬浮窗关着时 toast 无处显示 → 用同一份文案在面板内兜底 */}
+              {resetNotice && <div style={styles.logNotice}>{resetNotice}</div>}
               {logNotice && <div style={styles.logNotice}>{logNotice}</div>}
               <div style={styles.hint}>
                 {settings.clickThrough ? (
