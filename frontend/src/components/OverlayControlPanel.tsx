@@ -17,7 +17,43 @@ import { buildTermGuardRows } from '../lib/termGuard'
  *   2. 「重置位置」一键挪回屏幕底部居中（窗口被拖丢时的自救手段）
  *      （另有 Alt+Shift+R 热键、Alt+Shift+] / [ 快速调字号）
  */
-const PRESET_COLORS = ['#ffffff', '#ffeaa7', '#a29bfe', '#74b9ff', '#55efc4', '#fab1a0']
+/**
+ * 色板。
+ *
+ * `name` 不是写给读代码的人看的注释，而是**唯一的可访问名来源**：色块在屏幕上
+ * 只是一个 18px 的小圆点，读屏拿不到任何信息（hex 值念出来也没意义），
+ * 必须由数据提供一个可读名，再让 `aria-label` 与鼠标 `title` 共用同一份。
+ */
+const PRESET_COLORS = [
+  { value: '#ffffff', name: '白色' },
+  { value: '#ffeaa7', name: '米黄' },
+  { value: '#a29bfe', name: '淡紫' },
+  { value: '#74b9ff', name: '天蓝' },
+  { value: '#55efc4', name: '薄荷绿' },
+  { value: '#fab1a0', name: '珊瑚粉' },
+]
+
+/** 自定义颜色输入的可访问名（`title` 与 `aria-label` 共用同一份，不写第二遍） */
+const CUSTOM_COLOR_LABEL = '自定义颜色'
+
+/**
+ * 无障碍标签的 id（可访问名的**引用目标**）。
+ *
+ * 开关的可见文案（「显示悬浮窗」等）本来就写在 JSX 里，若再加一份
+ * `aria-label="显示悬浮窗"` 就等于同一句话存两份 —— 那正是 Backlog B1/B4 的
+ * 共同成因（B1 的 toast 文案、B4 的「缩减到 N 字符」都是这么漂移的）。
+ * 所以这里用 `aria-labelledby` 指过去：可访问名与屏幕上的字**永远同源**。
+ *
+ * id 串只写在这里、引用时用 `A11Y_ID.xxx`，于是「改名漏改一处」不可能发生；
+ * 反过来「写了 labelledby 却忘了给标签挂 id」的悬空引用，
+ * 由 `tests/overlay-a11y.test.cjs` 静态兜住。
+ */
+const A11Y_ID = {
+  showOverlay: 'ov-label-show-overlay',
+  backgroundUpdate: 'ov-label-bg-update',
+  termAutoDegrade: 'ov-label-term-degrade',
+  colorGroup: 'ov-label-color',
+} as const
 
 export default function OverlayControlPanel({ onClose }: { onClose: () => void }) {
   const { available, open, settings, loading, error, init, patch, toggle, resetPosition } = useOverlayStore()
@@ -91,7 +127,10 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
             <PictureInPicture2 size={16} color="var(--accent-light)" />
             <span style={styles.title}>桌面字幕悬浮窗</span>
           </div>
-          <button onClick={onClose} style={styles.close}><X size={14} /></button>
+          {/* 纯图标按钮没有可见文字，必须自带可访问名，否则读屏只会念「按钮」 */}
+          <button onClick={onClose} style={styles.close} aria-label="关闭控制面板">
+            <X size={14} />
+          </button>
         </div>
 
         <div style={styles.body}>
@@ -109,11 +148,15 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
               <div style={styles.row}>
                 <div style={styles.rowLabel}>
                   <Eye size={13} />
-                  <span>显示悬浮窗</span>
+                  {/* 这个 span 同时是「可见文案」与「可访问名来源」，两件事共用一份文字 */}
+                  <span id={A11Y_ID.showOverlay}>显示悬浮窗</span>
                 </div>
                 <button
                   onClick={handleToggle}
                   disabled={busy || loading}
+                  role="switch"
+                  aria-checked={open}
+                  aria-labelledby={A11Y_ID.showOverlay}
                   style={{
                     ...styles.switch,
                     background: open ? 'var(--accent)' : 'var(--bg-tertiary)',
@@ -127,7 +170,7 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                 开启后可切到浏览器看网课，字幕会一直浮在最上层。热键 <b>Alt+Shift+O</b> 随时开关。
               </div>
 
-              {error && <div style={styles.error}>{error}</div>}
+              {error && <div style={styles.error} role="alert">{error}</div>}
 
               <Divider />
 
@@ -169,27 +212,40 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
               />
 
               {/* 颜色 */}
+              {/*
+                色板是**一组互斥选项**，用 role="group" + aria-labelledby 说明
+                「这一排小圆点是干什么的」：否则读屏用户只会听到一串
+                「白色 切换按钮 / 米黄 切换按钮 …」，不知道它们属于哪个设置。
+                每个色块的名称来自 PRESET_COLORS 的 name 字段（唯一来源），
+                选中状态用 aria-pressed 暴露 —— 屏幕上那个高亮边框对读屏是看不见的。
+              */}
               <div style={styles.row}>
-                <span style={styles.label}>字幕颜色</span>
-                <div style={styles.swatches}>
-                  {PRESET_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => set({ color: c })}
-                      title={c}
-                      style={{
-                        ...styles.swatch,
-                        background: c,
-                        borderColor: settings.color.toLowerCase() === c ? 'var(--accent-light)' : 'transparent',
-                      }}
-                    />
-                  ))}
+                <span id={A11Y_ID.colorGroup} style={styles.label}>字幕颜色</span>
+                <div style={styles.swatches} role="group" aria-labelledby={A11Y_ID.colorGroup}>
+                  {PRESET_COLORS.map((c) => {
+                    const selected = settings.color.toLowerCase() === c.value
+                    return (
+                      <button
+                        key={c.value}
+                        onClick={() => set({ color: c.value })}
+                        title={`${c.name} ${c.value}`}
+                        aria-label={c.name}
+                        aria-pressed={selected}
+                        style={{
+                          ...styles.swatch,
+                          background: c.value,
+                          borderColor: selected ? 'var(--accent-light)' : 'transparent',
+                        }}
+                      />
+                    )
+                  })}
                   <input
                     type="color"
                     value={settings.color}
                     onChange={(e) => set({ color: e.target.value })}
                     style={styles.colorInput}
-                    title="自定义颜色"
+                    title={CUSTOM_COLOR_LABEL}
+                    aria-label={CUSTOM_COLOR_LABEL}
                   />
                 </div>
               </div>
@@ -207,7 +263,7 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
               <div style={styles.row}>
                 <div style={styles.rowLabel}>
                   <Zap size={14} color={settings.backgroundUpdate ? 'var(--accent-light)' : 'var(--text-muted)'} />
-                  <span>后台持续更新字幕</span>
+                  <span id={A11Y_ID.backgroundUpdate}>后台持续更新字幕</span>
                 </div>
                 <button
                   onClick={() => set({ backgroundUpdate: !settings.backgroundUpdate })}
@@ -217,6 +273,7 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                   }}
                   role="switch"
                   aria-checked={!!settings.backgroundUpdate}
+                  aria-labelledby={A11Y_ID.backgroundUpdate}
                 >
                   <span
                     style={{
@@ -261,7 +318,7 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                     size={14}
                     color={termAutoDegrade ? 'var(--accent-light)' : 'var(--text-muted)'}
                   />
-                  <span>术语提示词自动防循环降级</span>
+                  <span id={A11Y_ID.termAutoDegrade}>术语提示词自动防循环降级</span>
                 </div>
                 <button
                   onClick={() => set({ termAutoDegrade: !termAutoDegrade })}
@@ -271,6 +328,7 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                   }}
                   role="switch"
                   aria-checked={termAutoDegrade}
+                  aria-labelledby={A11Y_ID.termAutoDegrade}
                 >
                   <span
                     style={{
@@ -297,6 +355,12 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
 
               {/* 调整模式 / 重置位置 / 导出日志 */}
               <div style={styles.btnRow}>
+                {/*
+                  「调整模式 / 结束调整」是**命令式**按钮：标签本身随状态变化
+                  （写的是「点下去会发生什么」）。这类按钮不该再加 aria-pressed ——
+                  读屏会念成「结束调整，已按下」，自相矛盾。
+                  aria-pressed 只用于「标签不变、只有状态在变」的按钮（如上方色板）。
+                */}
                 <button
                   onClick={() => set({ clickThrough: !settings.clickThrough })}
                   style={{
@@ -318,9 +382,13 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                   导出日志
                 </button>
               </div>
-              {/* 悬浮窗关着时 toast 无处显示 → 用同一份文案在面板内兜底 */}
-              {resetNotice && <div style={styles.logNotice}>{resetNotice}</div>}
-              {logNotice && <div style={styles.logNotice}>{logNotice}</div>}
+              {/*
+                悬浮窗关着时 toast 无处显示 → 用同一份文案在面板内兜底。
+                role="status" 让读屏在文案出现时主动念一遍：这两个 div 是异步
+                塞进来的（导出要等文件对话框），没有它就只有视觉用户看得到反馈。
+              */}
+              {resetNotice && <div style={styles.logNotice} role="status">{resetNotice}</div>}
+              {logNotice && <div style={styles.logNotice} role="status">{logNotice}</div>}
               <div style={styles.hint}>
                 {settings.clickThrough ? (
                   <>字幕默认<b>鼠标穿透</b>，不会挡住网课页面的按钮。点「调整模式」（或热键 <b>Alt+Shift+D</b>）可拖动窗口。热键 <b>Alt+Shift+R</b> 可一键把窗口挪回屏幕底部居中。</>
@@ -352,6 +420,13 @@ function SliderRow({
   suffix: string
   onChange: (v: number) => void
 }) {
+  /**
+   * 可见数值与可访问数值同源：屏幕上显示 `48 px`，读屏也念 `48 px`。
+   *
+   * 不写 `aria-valuetext={`${value}${suffix}`}` 这种第二份表达式 —— 一旦有人
+   * 改了显示格式（比如加个「字体」前缀），两份就会漂移（B1/B4 的同一类问题）。
+   */
+  const valueText = `${value}${suffix}`
   return (
     <div style={styles.row}>
       <div style={styles.rowLabel}>
@@ -359,14 +434,26 @@ function SliderRow({
         <span>{label}</span>
       </div>
       <div style={styles.sliderWrap}>
+        {/*
+          原生 input[type=range] 的隐式 role 就是 slider、隐式值域来自 min/max，
+          这里仍显式写全：一是给守卫一个可静态校验的统一形态（滑杆必须有这几个
+          属性），二是 aria-valuetext 能把「48」念成「48 px」—— 单位在读屏里会丢。
+          可访问名直接用 label 变量，**不再抄一份中文字面量**。
+        */}
         <input
           type="range"
           min={min} max={max} step={step}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
+          role="slider"
+          aria-label={label}
+          aria-valuemin={min}
+          aria-valuemax={max}
+          aria-valuenow={value}
+          aria-valuetext={valueText}
           style={styles.slider}
         />
-        <span style={styles.sliderValue}>{value}{suffix}</span>
+        <span style={styles.sliderValue}>{valueText}</span>
       </div>
     </div>
   )
