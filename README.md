@@ -78,6 +78,10 @@
 | `TINGKEBANLV_CLOUD_API_KEY` | — | 云端 API 密钥 |
 | `TINGKEBANLV_CLOUD_MODEL` | — | 云端模型名，如 `deepseek-chat` |
 | `TINGKEBANLV_TERM_PROMPT_MAX` | `800` | 术语热词最大字符数 |
+| `TINGKEBANLV_TERM_AUTODEGRADE` | `1` | 检测到字幕重复循环时自动缩短术语提示词（设 `0` 关闭） |
+| `TINGKEBANLV_TERM_DEGRADE_TO` | `200` | 降级后保留的提示词字符数 |
+| `TINGKEBANLV_TERM_REPEAT_MIN_SAMPLES` | `4` | 判定重复循环所需的最小累计片段数 |
+| `TINGKEBANLV_TERM_REPEAT_RATIO` | `1.2` | 判定重复循环的「产出字幕数 / 送入片段数」阈值 |
 | `WHISPER_DEVICE` | 自动检测 | `cuda` / `cpu` |
 | `TINGKEBANLV_WHISPER_MODEL` | `base` | 模型规格：`tiny`/`base`/`small`/`medium`/`large-v3` |
 | `TINGKEBANLV_WHISPER_THREADS` | 自动（≤8） | ctranslate2 的 CPU 线程数 |
@@ -170,7 +174,8 @@ cd backend && PYTHONPATH=. python -m pytest tests/ -v
 ```
 
 其中 `tests/test_asr_pipeline_e2e.py` 覆盖音频捕获、VAD、消息队列、术语入库、
-背压与完整链路（文件音频 → VAD → Whisper → 字幕）。
+背压、**停止收听时的收尾竞态**、**术语提示词重复循环防护**
+与完整链路（文件音频 → VAD → Whisper → 字幕）。
 
 端到端用例需要 faster-whisper 模型，未指定时自动跳过：
 
@@ -196,6 +201,45 @@ python bench_call_cost.py <wav> /path/to/model_dir 8 5
 ```
 
 判据是 RTF < 1；同时看「单段平均耗时」，它决定字幕出字延迟。
+
+### 端到端质量评估（准确率 / 推送延迟 / 长时稳定性）
+
+基准脚本只回答「跟不跟得上」（RTF）。用户实际体感由另外三件事决定，用
+`scripts/eval_asr_quality.py` 评估：
+
+| 维度 | 指标 |
+|---|---|
+| 准不准 | WER / CER（音频同名 `.txt` 即逐字稿；缺失则只测实时性） |
+| 字幕什么时候到 | 从「这句话说完」到「字幕出现」的延迟（p50 / p95 / max，以及前半段 vs 后半段是否累积） |
+| 连续听 10 分钟以上 | 丢弃片段数、合并降级次数、收尾是否干净、是否越拖越晚 |
+
+它复用**真实管道**的 `VoiceActivityDetector` + `WhisperEngine`，只把音频来源从
+系统回环换成文件 —— 分段长度、单次调用固定开销、背压与合并行为都与用户实际经历一致。
+**不引入新依赖**：不用 `jiwer`，编辑距离自己实现。
+
+```bash
+# 0) 先生成压力测试集（基于内置的 jfk.wav 做信号处理，幂等，约 24MB，已 gitignore）
+python scripts/make_asr_testset.py
+#    tests/audio/short/  → 干净 / 噪声 / 低音量 / 快语速 / 叠话
+#    tests/audio/long/   → 12 分钟，含随机长短停顿
+
+# 1) 短用例：准确率 + RTF（尽快喂完，约 25 秒）
+PYTHONPATH=backend python scripts/eval_asr_quality.py --audio-dir tests/audio/short
+
+# 2) 长用例：延迟 + 稳定性（按真实速率喂入，12 分钟墙钟）
+PYTHONPATH=backend python scripts/eval_asr_quality.py --audio-dir tests/audio/long --realtime
+
+# 3) 术语热词 A/B：同一素材分别跑 --terms on / --terms off
+#    也可用 TINGKEBANLV_TERM_PROMPT_MAX 做提示词长度的剂量-反应
+PYTHONPATH=backend TINGKEBANLV_TERM_PROMPT_MAX=200 \
+  python scripts/eval_asr_quality.py --audio-dir tests/audio/short --terms on
+```
+
+> 长短用例**必须分目录**：同目录下一次扫描会把 12 分钟文件也按「尽快喂完」灌进去，
+> 人为触发背压丢弃，结论会被污染成「字幕会缺内容」—— 而真实听课不会那样喂。
+
+基准结论与已知限制见 **[`ASR_Pipeline_Validation_Report.md`](ASR_Pipeline_Validation_Report.md)**
+（含 12 分钟长测数据、术语热词 A/B 与剂量-反应、以及 `base` 模型的延迟实测）。
 
 ## 打包分发
 
@@ -347,7 +391,13 @@ tingke-banlv/
 │   ├── dictionary/        # 本地词典 + 术语库（terminology.py）+ 内置词表
 │   ├── database/          # SQLite 数据管理
 │   └── tests/             # 集成测试
-└── scripts/               # 工具脚本
+├── scripts/               # 工具脚本
+│   ├── eval_asr_quality.py    # 端到端质量评估：WER / 推送延迟 / 长时稳定性
+│   ├── make_asr_testset.py    # 合成多场景压力测试集
+│   ├── bench_asr.py           # 实时性基准（RTF）
+│   ├── bench_matrix.py        # 参数矩阵基准（模型 × 线程 × 片段长度）
+│   └── verify_install.py      # 安装包实装验证
+└── ASR_Pipeline_Validation_Report.md   # ASR 管道验证报告（P3 里程碑）
 ```
 
 ## 使用流程

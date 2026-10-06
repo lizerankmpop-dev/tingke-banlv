@@ -36,3 +36,9 @@ packaging/seed/
 # 本地排障时的临时输出（构建/测试/冒烟转储，不入库）
 _*.txt
 .pytest_cache/
+
+# 合成音频测试集（由 scripts/make_asr_testset.py 生成，约 24MB，可随时重建）
+tests/audio/
+
+# ASR 质量评估报告（由 scripts/eval_asr_quality.py 生成）
+packaging/eval/

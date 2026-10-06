@@ -125,6 +125,33 @@ COMPUTE_TYPE = _detect_compute_type(DEVICE)
 MAX_PENDING_JOBS = int(os.environ.get("TINGKEBANLV_MAX_PENDING_JOBS", "8"))
 
 
+# ---- 术语提示词「重复循环」的运行时防护 ----
+#
+# 背景（实测于 scripts/eval_asr_quality.py，2026-10-06，英文合成压力集）：
+#   术语提示词给到 794 字符（当前默认上限）时出现「产出字幕片段数 > 送入片段数」，
+#   且单次识别 RTF 突破 1 —— 这是 Whisper 重复循环的特征，同一句会被吐两遍。
+#   短提示词（≤195 字符）在 5/5 用例里都没出现。
+#
+# 但 WER 在各档位**不单调**（66 字符档甚至最好、794 字符档最差），
+# 单条素材的噪声远大于趋势 —— 所以**不能直接把默认上限调小**，
+# 那会在中文场景下白白牺牲术语热词带来的识别增益（而中文长术语列表恰恰更容易触发）。
+#
+# 因此这段做的是**兜底**，不是改默认值：只在真的观察到循环时才缩短提示词。
+AUTO_DEGRADE_ENABLED = os.environ.get("TINGKEBANLV_TERM_AUTODEGRADE", "1").lower() not in (
+    "0",
+    "false",
+    "no",
+)
+# 降级后保留的长度。取 200 是因为实测 ≤195 字符的档位没出现过重复循环。
+DEGRADE_PROMPT_CHARS = int(os.environ.get("TINGKEBANLV_TERM_DEGRADE_TO", "200"))
+# 触发判据刻意带「最小样本量 + 比值容差」，而不是严格按单次「输出 > 输入」：
+#   - 单个长片段被 Whisper 自己再切成多段是**正常**行为，单次比较会误杀；
+#   - 样本太少时比值噪声极大（2 进 3 出就是 1.5 倍）。
+# 宁可晚一点降级，也不要在一节正常的课上误降。
+REPETITION_MIN_SAMPLES = int(os.environ.get("TINGKEBANLV_TERM_REPEAT_MIN_SAMPLES", "4"))
+REPETITION_RATIO = float(os.environ.get("TINGKEBANLV_TERM_REPEAT_RATIO", "1.2"))
+
+
 @dataclass
 class WordTimestamp:
     word: str
@@ -193,6 +220,14 @@ class WhisperEngine:
         self._busy = False             # 是否正在做一次识别（供 flush 判断）
         self._merged_jobs = 0          # 合并过几次（用于观测是否在降级）
         self._dropped_jobs = 0
+
+        # ---- 术语提示词重复循环防护（见模块顶部 AUTO_DEGRADE_* 注释）----
+        self._auto_degrade = AUTO_DEGRADE_ENABLED
+        self._prompt_degraded = False          # 是否已因检测到重复而缩短过提示词
+        self._prompt_original: Optional[str] = None   # 缩短前的完整提示词（供恢复）
+        self._stat_in_segments = 0             # 累计送入识别的片段数（比值分母）
+        self._stat_out_segments = 0            # 累计产出字幕的片段数（比值分子）
+        self._repetition_events = 0            # 检测到重复循环的次数
 
         # 后台异步加载模型（不阻塞事件循环）
         self._loading = True
@@ -419,17 +454,22 @@ class WhisperEngine:
                     continue
                 jobs = list(self._jobs)
                 self._jobs.clear()
+                # _busy 必须与「清空队列」在同一个临界区内置位。
+                # 观察者（flush()、以及任何轮询 backlog 的调用方）的判据是
+                # 「队列空 **且** 不忙」；若等到下面 _merge_jobs() 跑完再置位，
+                # merge 那段时间就是一个「队列已空 + 还不忙」的假空闲窗口 ——
+                # flush() 会据此提前返回，于是**停止听课时最后一段字幕被丢掉**。
+                # 这正是 flush() 注释里说要修的那个问题，之前只修了 sleep 那一半。
+                self._busy = True
+                self._jobs_cv.notify_all()
 
             if len(jobs) > 1:
                 self._merged_jobs += 1
                 logger.info(f"识别落后，合并 {len(jobs)} 个片段为一次调用（第 {self._merged_jobs} 次）")
 
             audio, start, duration = self._merge_jobs(jobs)
-            with self._jobs_cv:
-                self._busy = True
-                self._jobs_cv.notify_all()
             try:
-                self._transcribe(audio, start, duration)
+                self._transcribe(audio, start, duration, len(jobs))
             finally:
                 with self._jobs_cv:
                     self._busy = False
@@ -461,8 +501,14 @@ class WhisperEngine:
         )
         return merged, jobs[0][1], total
 
-    def _transcribe(self, audio: np.ndarray, segment_start: float, duration: float):
-        """执行语音识别"""
+    def _transcribe(self, audio: np.ndarray, segment_start: float, duration: float, job_count: int = 1):
+        """
+        执行语音识别
+
+        job_count：本次调用实际合并了几个输入片段，仅用于重复循环检测
+        （见模块顶部 AUTO_DEGRADE_* 的说明）。
+        """
+        produced = 0   # 本次产出的**非空**字幕片段数（空文本不会变成字幕，不计入）
         try:
             start_time = time.time()
 
@@ -516,6 +562,7 @@ class WhisperEngine:
 
                 # 记录本段文本，供下一轮识别作为连贯性提示
                 if segment_data.text:
+                    produced += 1
                     self._last_text = segment_data.text
 
             elapsed = time.time() - start_time
@@ -524,6 +571,44 @@ class WhisperEngine:
 
         except Exception as e:
             logger.error(f"语音识别错误: {e}")
+        finally:
+            # 计数放 finally：即使识别抛错也要把「送入量」计入分母，
+            # 否则分母长期偏小会让比值虚高、出现假触发。
+            self._note_segment_counts(job_count, produced)
+
+    def _note_segment_counts(self, incoming: int, outgoing: int):
+        """
+        累计「送入片段数」与「产出字幕片段数」，必要时降级术语提示词
+
+        判据用**累计比值**而不是单次比较：单次「输出 > 输入」在长片段上属正常行为
+        （Whisper 会把长音频自己再切），且样本少时比值噪声大。详见模块顶部注释。
+        """
+        self._stat_in_segments += incoming
+        self._stat_out_segments += outgoing
+
+        if not self._auto_degrade or self._prompt_degraded:
+            return
+
+        prompt = self.initial_prompt or ""
+        if len(prompt) <= DEGRADE_PROMPT_CHARS:
+            return          # 本来就短，降无可降
+        if self._stat_in_segments < REPETITION_MIN_SAMPLES:
+            return          # 样本不足，先攒够再判
+        if self._stat_out_segments <= self._stat_in_segments * REPETITION_RATIO:
+            return          # 还在容差内，属于正常波动
+
+        self._repetition_events += 1
+        self._prompt_original = prompt
+        self.initial_prompt = prompt[:DEGRADE_PROMPT_CHARS]
+        self._prompt_degraded = True
+        ratio = self._stat_out_segments / max(self._stat_in_segments, 1)
+        logger.warning(
+            "[WARN] 检测到字幕重复循环，自动缩减术语提示词长度: "
+            f"{len(prompt)} → {len(self.initial_prompt)} 字符"
+            f"（累计送入 {self._stat_in_segments} 段 → 产出 {self._stat_out_segments} 条字幕，"
+            f"比值 {ratio:.2f} > 阈值 {REPETITION_RATIO}）。"
+            "设 TINGKEBANLV_TERM_AUTODEGRADE=0 可关闭该保护"
+        )
 
     def flush(self, timeout: float = 8.0):
         """
@@ -548,11 +633,49 @@ class WhisperEngine:
         运行时更新术语热词（用户中途添加自定义术语时可热更新，无需重启管道）
 
         注意：只在下一轮识别生效，不影响正在进行中的识别。
+
+        若已因重复循环降级过，则**保持降级**：`pipeline.update_terminology()`
+        每次热更新都会推完整提示词，若在这里恢复成完整版，就会变成
+        「恢复 → 再次触发循环 → 再降级」的来回抖动，比一直保持降级更糟。
+        要恢复请显式调用 `restore_full_prompt()`。
         """
         new_prompt = (prompt or "").strip() or None
+
+        if self._prompt_degraded and new_prompt and len(new_prompt) > DEGRADE_PROMPT_CHARS:
+            self._prompt_original = new_prompt
+            logger.debug(
+                f"术语提示词处于降级保护中，继续使用 {len(self.initial_prompt or '')} 字符版本"
+                f"（本次收到 {len(new_prompt)} 字符，已留存备用）"
+            )
+            return
+
         if new_prompt != self.initial_prompt:
             self.initial_prompt = new_prompt
             logger.info(f"术语热词已更新 ({len(new_prompt or '')} 字符)")
+
+    def set_auto_degrade(self, enabled: bool):
+        """
+        运行时开关「术语提示词自动降级」（对应设置面板同名开关，默认开启）
+
+        关闭只影响**之后**的检测；已降级过的提示词不会自动恢复 ——
+        要恢复请显式调用 `restore_full_prompt()`，理由同上：自动恢复会来回抖动。
+        """
+        self._auto_degrade = bool(enabled)
+        logger.info(f"术语提示词自动降级已{'开启' if self._auto_degrade else '关闭'}")
+
+    def restore_full_prompt(self):
+        """
+        解除降级保护，恢复被缩短前的完整提示词（换课程 / 重开管道时调用）
+
+        计数一并清零，重新观察若干片段后再决定是否需要再次降级。
+        """
+        if self._prompt_original:
+            self.initial_prompt = self._prompt_original
+        self._prompt_original = None
+        self._prompt_degraded = False
+        self._stat_in_segments = 0
+        self._stat_out_segments = 0
+        logger.info(f"术语提示词已恢复完整版本 ({len(self.initial_prompt or '')} 字符)")
 
     def _build_prompt(self) -> Optional[str]:
         """
@@ -599,6 +722,7 @@ class WhisperEngine:
           - backlog 持续 > 0 → 识别跟不上音频速度
           - merged > 0       → 已经进入「合并片段」的降级状态，字幕会更粗
           - dropped > 0      → 已开始丢内容，必须减小模型或调大 cpu_threads
+          - termPromptDegraded=true → 检测到过字幕重复循环并已自动缩短术语提示词
         """
         with self._jobs_cv:
             backlog = len(self._jobs)
@@ -613,4 +737,11 @@ class WhisperEngine:
             "mergedCalls": self._merged_jobs,
             "droppedSegments": self._dropped_jobs,
             "audioSeconds": round(self._total_duration, 1),
+            # ---- 术语提示词健康度（供设置面板展示降级状态）----
+            "termPromptChars": len(self.initial_prompt or ""),
+            "termPromptDegraded": self._prompt_degraded,
+            "termAutoDegrade": self._auto_degrade,
+            "repetitionDetected": self._repetition_events > 0,
+            "inSegments": self._stat_in_segments,
+            "outSegments": self._stat_out_segments,
         }

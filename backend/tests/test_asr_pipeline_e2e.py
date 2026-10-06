@@ -362,41 +362,110 @@ class TestLoopbackDetection:
 
 # ============ 6. 背压 ============
 
+def _bare_engine(initial_prompt: str | None = None, auto_degrade: bool = True):
+    """
+    构造一个**不加载模型**的引擎实例，供队列 / 收尾 / 重复循环防护的单元测试使用
+
+    `WhisperEngine.__new__` 会绕过 `__init__`，所以这里必须手工补齐所有实例字段。
+    新增字段时要同步加在这里，否则测试会在用到时抛 AttributeError。
+    """
+    from asr.whisper_engine import WhisperEngine
+
+    engine = WhisperEngine.__new__(WhisperEngine)   # 不触发模型加载
+    engine.model_size = "base"
+    engine.device = "cpu"
+    engine.compute_type = "int8"
+    engine.cpu_threads = 4
+    engine.language = "en"
+    engine._last_text = None
+    engine._model = None
+    engine._loading = False
+    engine._running = True
+    engine._lock = threading.Lock()
+    engine._total_duration = 0.0
+    engine._jobs = deque()
+    engine._jobs_cv = threading.Condition()
+    engine._stop_worker = threading.Event()
+    engine._worker = None
+    engine._busy = False
+    engine._merged_jobs = 0
+    engine._dropped_jobs = 0
+    engine.on_partial = None
+    engine.on_progress = None
+    # ---- 术语提示词重复循环防护 ----
+    engine.initial_prompt = initial_prompt
+    engine._auto_degrade = auto_degrade
+    engine._prompt_degraded = False
+    engine._prompt_original = None
+    engine._stat_in_segments = 0
+    engine._stat_out_segments = 0
+    engine._repetition_events = 0
+    return engine
+
+
 class TestBackpressure:
     """原来每段音频裸起一个线程 transcribe，无队列上限、无串行化。
     识别跟不上时（small 模型在 2~4 秒片段上 RTF>1）线程无界堆积。"""
 
     def test_job_queue_is_bounded(self):
-        from asr.whisper_engine import WhisperEngine, MAX_PENDING_JOBS
+        from asr.whisper_engine import MAX_PENDING_JOBS
 
-        engine = WhisperEngine.__new__(WhisperEngine)   # 不触发模型加载
-        engine.model_size = "base"
-        engine.device = "cpu"
-        engine.compute_type = "int8"
-        engine.cpu_threads = 4
-        engine.initial_prompt = None
-        engine.language = "en"
-        engine._last_text = None
-        engine._model = None
-        engine._loading = False
-        engine._running = True
-        engine._lock = threading.Lock()
-        engine._total_duration = 0.0
-        engine._jobs = deque()
-        engine._jobs_cv = threading.Condition()
-        engine._stop_worker = threading.Event()
-        engine._worker = None
-        engine._busy = False
-        engine._merged_jobs = 0
-        engine._dropped_jobs = 0
-        engine.on_partial = None
-        engine.on_progress = None
+        engine = _bare_engine()
 
         for _ in range(MAX_PENDING_JOBS * 5):
             engine.add_audio(np.zeros(16000, dtype=np.float32))
 
         assert len(engine._jobs) <= MAX_PENDING_JOBS, "队列没有被背压限制住"
         assert engine._dropped_jobs > 0, "超限时应记录丢弃计数"
+
+    def test_flush_does_not_return_during_merge(self):
+        """
+        `_busy` 必须与「清空队列」在同一个临界区内置位
+
+        否则 `_merge_jobs()` 执行期间会同时满足「队列空 + 不忙」，
+        `flush()` 据此判定已经处理完并提前返回 —— 而 `flush()` 正是 stop() 之前
+        的最后一道保险，提前返回就等于**停止听课时丢掉最后一段字幕**。
+        这个窗口在单片段时只有几微秒、在合并降级（要做多段 concatenate）时
+        会被放大到毫秒级，靠人工测试基本撞不到。
+
+        这里用慢速 `_merge_jobs` 把窗口撑开：如果 `_busy` 置位太晚，
+        `flush()` 会几乎立刻返回（实测 0.0s），断言随即失败。
+        """
+        engine = _bare_engine()
+        engine._model = object()          # 非 None 即可进入处理流程
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_merge(jobs):
+            entered.set()
+            release.wait(10.0)            # 撑开窗口，直到测试放行
+            return jobs[0]
+
+        engine._merge_jobs = slow_merge
+        engine._transcribe = lambda *a, **k: None
+
+        try:
+            engine.add_audio(np.zeros(16000, dtype=np.float32))
+            assert entered.wait(5.0), "消费者线程没有开始处理"
+
+            started = time.perf_counter()
+            engine.flush(timeout=0.8)     # merge 正在进行中，不该判为空闲
+            elapsed = time.perf_counter() - started
+
+            assert elapsed >= 0.6, (
+                f"merge 期间 flush 只等了 {elapsed:.2f}s 就返回了 —— "
+                "_busy 置位晚于队列清空，存在假空闲窗口，停止听课时会丢最后一段字幕"
+            )
+
+            release.set()
+            engine.flush(timeout=5.0)
+            assert engine._busy is False
+        finally:
+            release.set()
+            engine._stop_worker.set()
+            with engine._jobs_cv:
+                engine._jobs_cv.notify_all()
 
     def test_merge_jobs_preserves_timeline(self):
         from asr.whisper_engine import WhisperEngine
@@ -410,6 +479,144 @@ class TestBackpressure:
         assert duration == pytest.approx(3.0, abs=0.05)
         # 1s 语音 + 1.5s 静音 + 0.5s 语音 = 3s
         assert len(audio) == pytest.approx(16000 * 3.0, abs=1600)
+
+
+# ============ 6b. 术语提示词重复循环防护 ============
+
+# 约 800 字符，与 TINGKEBANLV_TERM_PROMPT_MAX 默认值同量级
+LONG_PROMPT = ", ".join(f"term{i}" for i in range(120))
+
+
+class _FakeSegment:
+    def __init__(self, text: str, start: float = 0.0, end: float = 1.0):
+        self.text = text
+        self.start = start
+        self.end = end
+        self.words = None
+
+
+class _FakeInfo:
+    language = "en"
+    language_probability = 0.9
+
+
+class _FakeModel:
+    """按给定文本列表吐 segment 的假模型，用来单独驱动重复循环计数"""
+
+    def __init__(self, texts: list[str]):
+        self.texts = texts
+
+    def transcribe(self, audio, **kwargs):
+        # 必须返回 (segments, info) 元组：返回 list 会被解包成 segment/info 两个元素
+        return [_FakeSegment(t) for t in self.texts], _FakeInfo()
+
+
+class TestTermPromptGuard:
+    """
+    术语提示词「重复循环」的运行时兜底
+
+    背景：实测提示词 794 字符时出现「产出片段数 > 送入片段数」的重复循环，
+    但 WER 在各档位不单调，不能直接改默认上限 —— 所以只在真的观察到循环时
+    才缩短提示词。这里覆盖触发、不触发、可关闭、热更新不顶掉降级等分支。
+    """
+
+    def test_degrades_when_repetition_detected(self):
+        from asr.whisper_engine import DEGRADE_PROMPT_CHARS
+
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._note_segment_counts(4, 6)          # 比值 1.5 > 1.2，样本也够
+
+        assert engine._prompt_degraded is True
+        assert engine.initial_prompt == LONG_PROMPT[:DEGRADE_PROMPT_CHARS]
+        assert engine._repetition_events == 1
+
+    def test_waits_for_min_samples(self):
+        """样本太少不判：1 进 3 出就是 3 倍，纯噪声，不该据此改提示词"""
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._note_segment_counts(1, 3)
+
+        assert engine._prompt_degraded is False
+        assert engine.initial_prompt == LONG_PROMPT
+
+    def test_ratio_within_tolerance_not_triggered(self):
+        """长片段被 Whisper 自己切成多段是正常行为，容差内不降级"""
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._note_segment_counts(10, 11)        # 1.1 ≤ 1.2
+
+        assert engine._prompt_degraded is False
+
+    def test_can_be_disabled(self):
+        """用户关闭「自动降级」后，再严重的重复也不动提示词"""
+        engine = _bare_engine(initial_prompt=LONG_PROMPT, auto_degrade=False)
+        engine._note_segment_counts(4, 20)
+
+        assert engine._prompt_degraded is False
+        assert engine.initial_prompt == LONG_PROMPT
+
+    def test_short_prompt_not_degraded(self):
+        """本来就短，降无可降"""
+        engine = _bare_engine(initial_prompt="convolution, gradient descent")
+        engine._note_segment_counts(4, 20)
+
+        assert engine._prompt_degraded is False
+
+    def test_hot_update_keeps_degraded_prompt(self):
+        """
+        `pipeline.update_terminology()` 每次都会重推完整提示词，
+        不能让热更新把降级顶掉 —— 否则会「恢复→再触发→再降级」来回抖动
+        """
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._note_segment_counts(4, 6)
+        degraded = engine.initial_prompt
+        assert engine._prompt_degraded is True
+
+        fuller = LONG_PROMPT + ", extra"
+        engine.set_initial_prompt(fuller)
+
+        assert engine.initial_prompt == degraded, "降级状态被热更新顶掉了"
+        assert engine._prompt_original == fuller, "完整版应被留存以便恢复"
+
+    def test_restore_full_prompt(self):
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._note_segment_counts(4, 6)
+        engine.restore_full_prompt()
+
+        assert engine.initial_prompt == LONG_PROMPT
+        assert engine._prompt_degraded is False
+        assert engine._stat_in_segments == 0
+        assert engine._stat_out_segments == 0
+
+    def test_transcribe_counts_towards_detection(self):
+        """整链：mock 识别输出 → 计数 → 触发降级（不是只测计数器本身）"""
+        from asr.whisper_engine import DEGRADE_PROMPT_CHARS
+
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._model = _FakeModel(["a", "b"])     # 每 1 段输入产出 2 条字幕
+
+        for _ in range(4):
+            engine._transcribe(np.zeros(16000, dtype=np.float32), 0.0, 1.0, 1)
+
+        assert engine._stat_in_segments == 4
+        assert engine._stat_out_segments == 8
+        assert engine._prompt_degraded is True
+        assert len(engine.initial_prompt) == DEGRADE_PROMPT_CHARS
+
+        stats = engine.get_stats()
+        assert stats["termPromptDegraded"] is True
+        assert stats["repetitionDetected"] is True
+        assert stats["termPromptChars"] == DEGRADE_PROMPT_CHARS
+
+    def test_empty_text_not_counted_as_subtitle(self):
+        """空文本不会变成字幕，不该计入产出数（否则分母被高估、误触发降级）"""
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._model = _FakeModel(["a", "", "   "])
+
+        for _ in range(6):
+            engine._transcribe(np.zeros(16000, dtype=np.float32), 0.0, 1.0, 1)
+
+        assert engine._stat_in_segments == 6
+        assert engine._stat_out_segments == 6       # 每轮只有 1 条非空
+        assert engine._prompt_degraded is False
 
 
 # ============ 7. 端到端（需要模型，缺失自动跳过）============
