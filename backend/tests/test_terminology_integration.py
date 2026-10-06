@@ -89,9 +89,17 @@ check("自定义术语数为 3", s["custom"] == 3, str(s["custom"]))
 check("prompt 非空", term["promptChars"] > 0)
 check("prompt 长度合理(<1000)", term["promptChars"] < 1000, str(term["promptChars"]))
 
-# 自定义术语必须排在 prompt 最前（= 最高识别优先级）
-prompt_head = term["prompt"][:40]
-check("自定义术语位于 prompt 开头", "backpropagation" in prompt_head, prompt_head)
+# ---- P0-3：拼接顺序必须是「低优先级 → 高优先级」，自定义术语落在**末尾** ----
+#
+# 尾部才是 faster-whisper 的保留窗口（`get_prompt()` 只留末尾 223 token）。
+# 旧实现按「高优先级在前」拼接，结果中文术语表里优先级最高的自定义术语
+# 存活率只有 25%，而优先级最低的内置英文术语 100% 存活（ASR 报告 §6.10）。
+prompt = term["prompt"]
+prompt_tail = prompt[-80:]
+check("自定义术语位于 prompt 末尾（P0-3 倒序拼接）",
+      "mycustomterm" in prompt_tail, prompt_tail)
+check("高优先级术语不再占用 prompt 开头",
+      "backpropagation" not in prompt[:40], prompt[:40])
 
 # ---- 3. 术语来源与释义 ----
 print("\n[3] 术语分层与释义覆盖")

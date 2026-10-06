@@ -362,7 +362,12 @@ class TestLoopbackDetection:
 
 # ============ 6. 背压 ============
 
-def _bare_engine(initial_prompt: str | None = None, auto_degrade: bool = True):
+def _bare_engine(
+    initial_prompt: str | None = None,
+    auto_degrade: bool = True,
+    sections: list | None = None,
+    language: str = "en",
+):
     """
     构造一个**不加载模型**的引擎实例，供队列 / 收尾 / 重复循环防护的单元测试使用
 
@@ -376,7 +381,7 @@ def _bare_engine(initial_prompt: str | None = None, auto_degrade: bool = True):
     engine.device = "cpu"
     engine.compute_type = "int8"
     engine.cpu_threads = 4
-    engine.language = "en"
+    engine.language = language
     engine._last_text = None
     engine._model = None
     engine._loading = False
@@ -404,6 +409,10 @@ def _bare_engine(initial_prompt: str | None = None, auto_degrade: bool = True):
     engine._recent_text = ""
     engine._last_verdict = None
     engine._advisory_logged = False
+    # P0-3：分层术语 + token 预算埋点，见 asr/prompt_budget.py
+    engine._prompt_sections = list(sections) if sections else None
+    engine._prompt_original_sections = None
+    engine._last_budget = None
     return engine
 
 
@@ -541,15 +550,20 @@ class TestTermPromptGuard:
     """
 
     def test_degrades_when_repetition_detected(self):
-        from asr.whisper_engine import DEGRADE_PROMPT_CHARS
+        from asr.whisper_engine import DEGRADE_TOKEN_BUDGET
 
         engine = _bare_engine(initial_prompt=LONG_PROMPT)
         engine._note_produced_text(REPEAT_TANDEM)
 
         assert engine._prompt_degraded is True
-        assert engine.initial_prompt == LONG_PROMPT[:DEGRADE_PROMPT_CHARS]
         assert engine._repetition_events == 1
         assert "重复" in engine._last_verdict.summary
+        # P0-3 起降级改的是**预算**而不是字符串 —— 按字符砍尾巴会砍掉优先级最高
+        # 的术语（那正是 P0-3 的老毛病），所以完整版只留档、不裁剪。
+        assert engine._prompt_original == LONG_PROMPT
+        assert engine.initial_prompt == LONG_PROMPT
+        engine._build_prompt()
+        assert engine._last_budget.budget == DEGRADE_TOKEN_BUDGET
 
     def test_sentence_loop_detected(self):
         """成句复读（不是「级测试」那种机械重复）也要抓到"""
@@ -652,7 +666,7 @@ class TestTermPromptGuard:
 
     def test_transcribe_detects_repetition_end_to_end(self):
         """整链：mock 识别输出 → 累积文本 → 触发降级（不是只测计数器本身）"""
-        from asr.whisper_engine import DEGRADE_PROMPT_CHARS
+        from asr.whisper_engine import DEGRADE_TOKEN_BUDGET
 
         engine = _bare_engine(initial_prompt=LONG_PROMPT)
         engine._model = _FakeModel([REPEAT_TANDEM])
@@ -662,13 +676,17 @@ class TestTermPromptGuard:
         assert engine._stat_in_segments == 1
         assert engine._stat_out_segments == 1
         assert engine._prompt_degraded is True
-        assert len(engine.initial_prompt) == DEGRADE_PROMPT_CHARS
+        assert len(engine.initial_prompt) == len(LONG_PROMPT)   # 字符串不再被裁剪
 
         stats = engine.get_stats()
         assert stats["termPromptDegraded"] is True
         assert stats["repetitionDetected"] is True
-        assert stats["termPromptChars"] == DEGRADE_PROMPT_CHARS
         assert stats["lastRepeat"]
+        # 降级对**下一轮**识别生效（本轮已经用旧预算跑完了），所以这里再组一次
+        engine._build_prompt()
+        stats = engine.get_stats()
+        assert stats["promptBudget"] == DEGRADE_TOKEN_BUDGET
+        assert stats["promptTokens"] <= DEGRADE_TOKEN_BUDGET
 
     def test_empty_text_not_counted_as_subtitle(self):
         """空文本不会变成字幕，不该计入产出数，也不该污染重复检测的缓冲"""
@@ -696,70 +714,230 @@ class TestBuildPromptSimpHint:
     def test_zh_appends_hint_at_tail(self):
         from asr.whisper_engine import SIMP_HINT
 
-        engine = _bare_engine(initial_prompt=LONG_PROMPT)
-        engine.language = "zh"
+        # 用分层入口（正常路径）：高优先级术语贴尾，引导语再贴在它后面
+        engine = _bare_engine(
+            sections=[("custom", ["卷积", "池化", "梯度下降"])], language="zh"
+        )
         prompt = engine._build_prompt()
 
         assert prompt.endswith(SIMP_HINT), "引导语必须落在末尾，否则会被 token 预算截掉"
-        assert LONG_PROMPT[:20] in prompt
+        assert "卷积" in prompt
+        # 术语在引导语之前 —— 顺序是「低优先级 … 高优先级 引导语」
+        assert prompt.index("卷积") < prompt.index(SIMP_HINT)
 
     def test_zh_variants_also_get_hint(self):
         from asr.whisper_engine import SIMP_HINT
 
         for lang in ("zh", "zh-CN", "zh-TW", "ZH"):
-            engine = _bare_engine(initial_prompt="卷积, 梯度")
-            engine.language = lang
+            engine = _bare_engine(initial_prompt="卷积, 梯度", language=lang)
             assert engine._build_prompt().endswith(SIMP_HINT), lang
 
     def test_non_zh_no_hint(self):
         from asr.whisper_engine import SIMP_HINT
 
-        engine = _bare_engine(initial_prompt=LONG_PROMPT)
-        engine.language = "en"
-
-        assert SIMP_HINT not in engine._build_prompt()
+        assert SIMP_HINT not in _bare_engine(initial_prompt=LONG_PROMPT, language="en")._build_prompt()
 
     def test_hint_alone_when_no_terms(self):
         """新课程 / 用户没选领域时术语为空，引导语必须仍能单独生效"""
         from asr.whisper_engine import SIMP_HINT
 
-        engine = _bare_engine(initial_prompt=None)
-        engine.language = "zh"
-
-        assert engine._build_prompt() == SIMP_HINT
+        assert _bare_engine(initial_prompt=None, language="zh")._build_prompt() == SIMP_HINT
 
     def test_hint_reserves_budget(self):
-        """引导语要先占住预算，不能被正文挤出 1000 字符上限"""
-        from asr.whisper_engine import SIMP_HINT
+        """
+        引导语要先占住预算，不能被正文挤出 token 上限
 
-        engine = _bare_engine(initial_prompt="t" * 1200)   # 刻意超长
-        engine.language = "zh"
+        注意断言口径已从字符改为 token：字符上限（1000）正是 P0-3 的病根 ——
+        中文 1000 字符 ≈ 1350 token，远超库保留的 223。
+        """
+        from asr.prompt_budget import estimate_tokens
+        from asr.whisper_engine import PROMPT_TOKEN_BUDGET, SIMP_HINT
+
+        engine = _bare_engine(initial_prompt="t" * 1200, language="zh")   # 刻意超长
         prompt = engine._build_prompt()
 
-        assert len(prompt) <= 1000
+        assert estimate_tokens(prompt) <= PROMPT_TOKEN_BUDGET
         assert prompt.endswith(SIMP_HINT)
 
     def test_degraded_prompt_still_gets_hint(self):
         """
-        降级只缩短术语，不能把简体引导语一起砍掉
+        降级只压缩术语预算，不能把简体引导语一起砍掉
         —— 否则复读修好了、繁体又回来了，两个 P0 互相打架
         """
-        from asr.whisper_engine import DEGRADE_PROMPT_CHARS, SIMP_HINT
+        from asr.whisper_engine import DEGRADE_TOKEN_BUDGET, SIMP_HINT
 
-        engine = _bare_engine(initial_prompt=LONG_PROMPT)
-        engine.language = "zh"
+        engine = _bare_engine(initial_prompt=LONG_PROMPT, language="zh")
         engine._note_produced_text(REPEAT_TANDEM)
 
         assert engine._prompt_degraded is True
-        assert len(engine.initial_prompt) == DEGRADE_PROMPT_CHARS
-        assert engine._build_prompt().endswith(SIMP_HINT)
+        prompt = engine._build_prompt()
+        assert prompt.endswith(SIMP_HINT)
+        assert engine._last_budget.budget == DEGRADE_TOKEN_BUDGET
 
     def test_no_prompt_no_hint_returns_none(self):
         """英文且无任何提示词 → 返回 None（保持旧行为，别给 Whisper 塞空串）"""
-        engine = _bare_engine(initial_prompt=None)
-        engine.language = "en"
+        assert _bare_engine(initial_prompt=None, language="en")._build_prompt() is None
+
+
+class TestPromptTokenBudget:
+    """
+    P0-3：按 token 预算组装 + 优先级倒序拼接
+
+    根因（ASR 报告 §6.10）：faster-whisper 只保留提示词末尾 223 token，而旧实现
+    把**高优先级术语放在前面**，导致自定义中文术语存活率 25%、优先级最低的内置
+    英文术语 100% —— 完全颠倒。这里锁死修复后的行为。
+    """
+
+    CN_CUSTOM = ["卷积", "池化", "梯度下降", "反向传播", "过拟合", "正则化", "注意力机制"]
+
+    @staticmethod
+    def _long_domain(n: int = 80) -> list[str]:
+        return [f"domainterm{i}" for i in range(n)]
+
+    def test_overflow_drops_low_priority_not_high(self):
+        """大中文术语表 token 溢出：高优先级必须全留，被丢的只能是低优先级"""
+        from asr.prompt_budget import estimate_tokens
+        from asr.whisper_engine import PROMPT_TOKEN_BUDGET
+
+        engine = _bare_engine(
+            sections=[("custom", self.CN_CUSTOM), ("domain", self._long_domain())],
+            language="zh",
+        )
+        body = engine._build_prompt()
+        b = engine._last_budget
+
+        assert b.dropped, "溢出时必须真的丢东西，否则这个用例是空转的"
+        for t in self.CN_CUSTOM:
+            assert t in body, f"高优先级术语被丢了：{t}"
+        for t in b.dropped:
+            assert t not in body
+        # 全部被丢的都是低优先级层
+        assert set(b.dropped) <= set(self._long_domain())
+        assert b.used_tokens <= PROMPT_TOKEN_BUDGET
+        assert estimate_tokens(body) <= PROMPT_TOKEN_BUDGET
+
+    def test_high_priority_sits_at_tail(self):
+        """尾部才是库的保留窗口 → 高优先级必须排在低优先级之后"""
+        engine = _bare_engine(
+            sections=[("custom", ["卷积"]), ("domain", self._long_domain(20))],
+            language="zh",
+        )
+        body = engine._build_prompt()
+        b = engine._last_budget
+
+        assert b.kept.get("domain"), "低优先级层也要有内容，否则比不出先后"
+        assert body.index("卷积") > body.index(b.kept["domain"][0])
+
+    def test_prev_text_no_longer_eats_terms(self):
+        """
+        复现「第二段起术语被挤光」
+
+        旧实现是 `_last_text[-200:]` 字符 —— 中文 200 字 ≈ 280 token，
+        单独一项就吃穿 223 的预算，术语全部出局。
+        """
+        from asr.prompt_budget import estimate_tokens
+        from asr.whisper_engine import PROMPT_PREV_TOKENS, PROMPT_TOKEN_BUDGET
+
+        engine = _bare_engine(sections=[("custom", self.CN_CUSTOM)], language="zh")
+        engine._last_text = "这是一段很长的上一段识别文本，用来挤占提示词预算。" * 12
+        body = engine._build_prompt()
+        b = engine._last_budget
+
+        assert b.prev_kept, "上一段文本应该保留一部分（有配额）"
+        assert estimate_tokens(b.prev_kept) <= PROMPT_PREV_TOKENS
+        for t in self.CN_CUSTOM:
+            assert t in body, f"术语被上一段文本挤掉了：{t}"
+        assert b.used_tokens <= PROMPT_TOKEN_BUDGET
+
+    def test_prev_text_is_first_to_sacrifice(self):
+        """配额不够时先牺牲上一段文本（它排在最前 = 最低优先级）"""
+        engine = _bare_engine(sections=[("custom", self.CN_CUSTOM)], language="zh")
+        engine._last_text = "上一段文本。" * 40
+        body = engine._build_prompt()
+
+        # 术语在引导语之前、上一段文本之后
+        assert body.index(self.CN_CUSTOM[0]) > body.index("上一段文本")
+
+    def test_empty_sections_returns_none_for_en(self):
+        engine = _bare_engine(sections=[("custom", []), ("domain", [])], language="en")
 
         assert engine._build_prompt() is None
+
+    def test_empty_sections_still_emits_hint_for_zh(self):
+        from asr.whisper_engine import SIMP_HINT
+
+        engine = _bare_engine(sections=[("custom", []), ("domain", [])], language="zh")
+
+        assert engine._build_prompt() == SIMP_HINT
+
+    def test_pure_english_terms_fit(self):
+        """纯英文术语：token 密度低（0.30/字符），同样字符数能放下的更多"""
+        engine = _bare_engine(
+            sections=[("custom", ["convolution", "pooling", "gradient descent"])],
+            language="en",
+        )
+        body = engine._build_prompt()
+
+        assert "convolution" in body
+        assert "gradient descent" in body
+
+    def test_mixed_cn_en_keeps_both(self):
+        """中英混杂：两层都要留住（预算 220 够用）"""
+        engine = _bare_engine(
+            sections=[
+                ("custom", ["卷积神经网络", "attention"]),
+                ("domain", ["convolution", "backpropagation"]),
+            ],
+            language="zh",
+        )
+        body = engine._build_prompt()
+
+        for t in ("卷积神经网络", "attention", "convolution", "backpropagation"):
+            assert t in body, f"中英混杂时丢了：{t}"
+
+    def test_body_never_exceeds_budget_with_oversized_prev(self):
+        """上一段文本极长 + 中英混杂术语：总量仍不许越预算（否则库会截掉尾部）"""
+        from asr.prompt_budget import estimate_tokens
+        from asr.whisper_engine import PROMPT_TOKEN_BUDGET
+
+        engine = _bare_engine(
+            sections=[
+                ("custom", self.CN_CUSTOM),
+                ("discovered", ["注意力", "残差"]),
+                ("domain", self._long_domain(40)),
+            ],
+            language="zh",
+        )
+        engine._last_text = "老师刚才讲到卷积核的滑动窗口。" * 30
+        body = engine._build_prompt()
+
+        assert estimate_tokens(body) <= PROMPT_TOKEN_BUDGET
+
+    def test_prebuilt_body_not_reordered(self):
+        """
+        退化路径（只给拼好的字符串）**不许重排**
+
+        `build_initial_prompt()` 的输出已是「低 → 高」，引擎若再反转一次就转回
+        原样，等于把 P0-3 又引入一遍。
+        """
+        engine = _bare_engine(initial_prompt="phrase_a, phrase_b, 自定义术语", language="en")
+        body = engine._build_prompt()
+
+        assert body.index("phrase_a") < body.index("自定义术语")
+
+    def test_stats_expose_budget_and_dropped(self):
+        engine = _bare_engine(
+            sections=[("custom", self.CN_CUSTOM), ("domain", self._long_domain())],
+            language="zh",
+        )
+        engine._build_prompt()
+        stats = engine.get_stats()
+
+        assert stats["promptBudget"] > 0
+        assert stats["promptTokens"] <= stats["promptBudget"]
+        assert stats["promptSections"]["custom"] == len(self.CN_CUSTOM)
+        assert stats["droppedTerms"], "溢出了就要能在 stats 里看到丢了哪些"
+        assert stats["promptTokenExact"] is False      # 无模型 → 启发式估算
 
 
 # ============ 7. 端到端（需要模型，缺失自动跳过）============

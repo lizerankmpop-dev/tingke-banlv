@@ -217,6 +217,47 @@ def _dedup_keep_order(items: list[str]) -> list[str]:
     return out
 
 
+def build_prompt_sections(
+    domain: str = "",
+    custom_terms: Optional[list[str]] = None,
+    discovered_terms: Optional[list[str]] = None,
+) -> list[tuple[str, list[str]]]:
+    """
+    按优先级分层返回术语（**不做任何截断**），交给调用方按 token 预算组装
+
+    为什么需要它（P0-3）：faster-whisper 只保留 initial_prompt 的**末尾 223 token**，
+    而 `build_initial_prompt()` 把它们拼成一个**高优先级在前**的字符串 —— 结果
+    优先级最高的自定义术语最先被截掉。引擎拿到分层结构后，才能按
+    「高优先级贴尾」重新拼接（见 `asr/prompt_budget.py`）。
+
+    优先级（高 → 低）：
+        1. custom     用户手填，一定是课程核心词
+        2. discovered 本课程已被 ASR+LLM 提取出的词（说明课堂确实在用）
+        3. domain     领域标准术语表
+        4. phrases    词表里的多词短语
+
+    ⚠ 短语层刻意**不在此处排序取前 60** —— 排序需要知道最终预算，属于组装方的
+    职责。这里只保证「层内顺序 = 领域命中优先」。
+    """
+    resolved = resolve_domain(domain)
+
+    phrases: list[str] = []
+    vocab = load_basic_vocab()
+    phrases = [w for w in vocab if " " in w and len(w) < 40]
+    # 领域命中优先，避免大词表里无关短语挤占空间
+    if resolved:
+        domain_lower = [t.lower() for t in DOMAIN_TERMS.get(resolved, [])]
+        phrases.sort(key=lambda w: (w.lower() not in domain_lower, len(w)))
+    phrases = phrases[:60]
+
+    return [
+        ("custom", _dedup_keep_order(custom_terms or [])),
+        ("discovered", _dedup_keep_order(discovered_terms or [])),
+        ("domain", _dedup_keep_order(DOMAIN_TERMS.get(resolved, [])) if resolved else []),
+        ("phrases", _dedup_keep_order(phrases)),
+    ]
+
+
 def build_initial_prompt(
     domain: str = "",
     custom_terms: Optional[list[str]] = None,
@@ -224,47 +265,46 @@ def build_initial_prompt(
     max_chars: Optional[int] = None,
 ) -> str:
     """
-    构建 Whisper initial_prompt
+    构建 Whisper initial_prompt（**字符口径**的兜底实现）
 
-    优先级（靠前 = 更容易被正确识别）：
-        1. custom_terms      用户手填，一定是课程核心词
-        2. discovered_terms  本课程已被 ASR+LLM 提取出的词（说明课堂确实在用）
-        3. DOMAIN_TERMS      领域标准术语表
-        4. 词表里的多词短语  如 "gradient descent"（短语最容易被听散，必须显式给）
+    优先级（高 → 低）：custom_terms → discovered_terms → DOMAIN_TERMS → 词表短语。
+    领域名可用中文，内部会 `resolve_domain()` 归一化。
+
+    ⚠ 输出顺序是**低优先级在前、高优先级在后**：
+
+        [词表短语] ... [领域术语] ... [课程已发现] ... [自定义术语]
+
+    这不是排版问题而是正确性问题 —— faster-whisper 只保留提示词的**末尾 223 token**
+    （`WhisperModel.get_prompt()`），尾部才是真正进模型的部分。旧实现按
+    高优先级在前拼接，导致中文术语文档里**优先级最高的自定义术语存活率只有 25%，
+    而优先级最低的内置英文术语 100% 存活**（实测见 ASR 报告 §6.10）。
+
+    真正的修复在引擎侧（`asr/prompt_budget.py`，按 token 预算组装，还会额外
+    安排简体引导语与上一段文本）；这个函数保留字符口径，供不经引擎的调用方使用。
 
     Returns:
         一段逗号分隔的术语文本；无可用术语时返回空字符串（此时应传 initial_prompt=None）
     """
     max_chars = max_chars if max_chars is not None else get_prompt_max_chars()
+    sections = build_prompt_sections(domain, custom_terms, discovered_terms)
 
-    pieces: list[str] = []
-    pieces.extend(custom_terms or [])
-    pieces.extend(discovered_terms or [])
+    # 与引擎同口径：按高 → 低分配字符预算（保证高优先级不被丢），再按低 → 高输出
+    remaining = max_chars
+    kept_by_section: list[list[str]] = []
+    for _name, terms in sections:
+        kept: list[str] = []
+        for t in terms:
+            cost = len(t) + (2 if kept else 0)      # ", " 分隔符
+            if cost > remaining:
+                continue                              # 层内跳过放不下的，继续试更短的
+            remaining -= cost
+            kept.append(t)
+        kept_by_section.append(kept)
 
-    resolved = resolve_domain(domain)
-    if resolved:
-        pieces.extend(DOMAIN_TERMS.get(resolved, []))
-
-    # 词表里的多词短语（Whisper 最容易切碎的形态）
-    vocab = load_basic_vocab()
-    phrases = [w for w in vocab if " " in w and len(w) < 40]
-    # 领域命中优先，避免大词表里无关短语挤占空间
-    if resolved:
-        domain_lower = [t.lower() for t in DOMAIN_TERMS.get(resolved, [])]
-        phrases.sort(key=lambda w: (w.lower() not in domain_lower, len(w)))
-    pieces.extend(phrases[:60])
-
-    pieces = _dedup_keep_order(pieces)
-
-    # 按字符预算截断（按词边界，不切碎术语）
-    prompt = ""
-    for p in pieces:
-        candidate = f"{prompt}, {p}" if prompt else p
-        if len(candidate) > max_chars:
-            break
-        prompt = candidate
-
-    return prompt
+    ordered: list[str] = []
+    for kept in reversed(kept_by_section):
+        ordered.extend(kept)
+    return ", ".join(ordered)
 
 
 # ============ 术语库（词表 + 术语来源合并） ============
@@ -281,12 +321,15 @@ def build_terminology(
         {
             "prompt": initial_prompt 字符串,
             "promptChars": 长度,
+            "sections": [(层名, [术语...]), ...]  高优先级 → 低优先级，**未截断**，
+                        供引擎按 token 预算自行组装（P0-3）
             "terms": [{"term": str, "source": "custom"|"course"|"domain",
                        "inVocab": bool, "translation": str, "definition": str}],
             "stats": {"total": n, "inVocab": n, "vocabHits": {...}}
         }
     """
     prompt = build_initial_prompt(domain, custom_terms, discovered_terms)
+    sections = build_prompt_sections(domain, custom_terms, discovered_terms)
 
     entries: list[dict] = []
     seen: set[str] = set()
@@ -319,6 +362,7 @@ def build_terminology(
     return {
         "prompt": prompt,
         "promptChars": len(prompt),
+        "sections": sections,
         "domain": resolved or "",
         "terms": entries,
         "stats": {

@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from asr.model_bootstrap import check_installed, ensure_model, model_root
+from asr import prompt_budget
 from asr import repetition
 
 logger = logging.getLogger(__name__)
@@ -160,11 +161,27 @@ ADVISORY_SUBTITLE_RATIO = float(os.environ.get("TINGKEBANLV_TERM_REPEAT_RATIO", 
 
 # `_last_text` 送进提示词的上下文长度（字符）。
 #
-# 这是**按英文口径定的**（200 字符 ≈ 50 token）；中文 200 字符 ≈ 280 token，
-# 单它一项就超过 faster-whisper 的 prompt 预算（448//2-1 = 223 token），会把术语全挤出去。
-# 列入 P0-3 待改（见 ASR_Pipeline_Validation_Report.md §6.10），此处暂不动以免影响
-# 正在做对照的评估基线。
+# ⚠ 这个字符口径的常量**只用于「降级后是否还有内容」的粗筛**，
+# 真正的截断已改成 token 口径（见 `PROMPT_PREV_TOKENS`）。
+# 保留它是为了不改动配置项名称，避免设置面板 / 环境变量漂移。
 LAST_TEXT_PROMPT_CHARS = int(os.environ.get("TINGKEBANLV_TERM_LAST_TEXT_CHARS", "200"))
+
+# ---- P0-3：提示词总预算改成 **token 口径** ----
+#
+# 原因：faster-whisper 的 `get_prompt()` 只保留 `previous_tokens[-223:]`
+# （`max_length // 2 - 1`），**超出部分静默丢弃**。而产品上限是「字符」，
+# 两个口径在中文上差 2~4.7 倍（中文每字 ≈ 1.35 token，英文每字符 ≈ 0.30 token），
+# 于是中文 799 字符 = 506 token，被砍掉 283（56%），且砍掉的正是优先级最高的
+# 自定义术语（存活率 25% vs 内置英文的 100%）。详见 ASR 报告 §6.10。
+#
+# 预算取 220 而库保留 223，留 3 个 token 冗余吸收估算误差。
+PROMPT_TOKEN_BUDGET = int(os.environ.get("TINGKEBANLV_TERM_PROMPT_TOKENS", "220"))
+# `_last_text` 的 token 配额（旧实现 `[-200:]` 字符在中文下约 280 token，
+# 单它一项就吃穿整个预算 —— 这才是「第二段起术语全丢」的直接原因）
+PROMPT_PREV_TOKENS = int(os.environ.get("TINGKEBANLV_TERM_PREV_TOKENS", "48"))
+# 降级后（检测到重复循环）的总预算。降到这个量级只剩最高优先级的少数术语 +
+# 引导语，足以止血，又不像旧实现那样直接按字符砍掉尾部（= 砍掉高优先级）。
+DEGRADE_TOKEN_BUDGET = int(os.environ.get("TINGKEBANLV_TERM_DEGRADE_TOKENS", "70"))
 
 # 简体中文引导语（P0-1：Whisper 的 language="zh" 不区分简繁，默认倾向输出繁体）
 #
@@ -211,6 +228,7 @@ class WhisperEngine:
         on_partial: Optional[Callable[[str, list[WordTimestamp]], None]] = None,
         on_progress: Optional[Callable[[str, float], None]] = None,
         initial_prompt: Optional[str] = None,
+        prompt_sections: Optional[list[tuple[str, list[str]]]] = None,
         cpu_threads: Optional[int] = None,
     ):
         self.model_size = model_size
@@ -222,6 +240,10 @@ class WhisperEngine:
         self.on_progress = on_progress
         # 术语热词先验：给 Whisper 一段领域术语文本，显著提升专业词拼写准确率
         self.initial_prompt = (initial_prompt or "").strip() or None
+        # 分层术语 `[(层名, [术语...]), ...]`（高 → 低优先级），来自
+        # `dictionary.terminology.build_prompt_sections()`。有它才能按 token 预算
+        # 重排——高优先级贴尾（P0-3）。为 None 时退化为只用 `initial_prompt` 单串。
+        self._prompt_sections = list(prompt_sections) if prompt_sections else None
 
         # 多轮识别共享的"上一段文本"，让跨片段的术语拼写保持连贯
         self._last_text: Optional[str] = None
@@ -252,12 +274,15 @@ class WhisperEngine:
         self._auto_degrade = AUTO_DEGRADE_ENABLED
         self._prompt_degraded = False          # 是否已因检测到重复而缩短过提示词
         self._prompt_original: Optional[str] = None   # 缩短前的完整提示词（供恢复）
+        self._prompt_original_sections: Optional[list] = None  # 同上，分层版本
         self._stat_in_segments = 0             # 累计送入识别的片段数（辅助告警分母）
         self._stat_out_segments = 0            # 累计产出字幕的片段数（辅助告警分子）
         self._repetition_events = 0            # 检测到重复循环的次数
         self._recent_text = ""                 # 最近识别文本的滚动缓冲（新判据的输入）
         self._last_verdict = None              # 最近一次重复检测结论（供 get_stats 观测）
         self._advisory_logged = False          # 辅助告警只记一次，避免刷屏
+        # 最近一次提示词组装的预算结果（P0-3 埋点，供 get_stats 观测）
+        self._last_budget: Optional[prompt_budget.BudgetedPrompt] = None
 
         # 后台异步加载模型（不阻塞事件循环）
         self._loading = True
@@ -629,6 +654,22 @@ class WhisperEngine:
                 f"（{adv['note']}）"
             )
 
+    def _prompt_cost_tokens(self) -> int:
+        """
+        当前术语提示词占多少 token（用于判断「降无可降」）
+
+        有分层信息时按术语逐项累计（这才是真正要送去模型的内容）；
+        只有字符串时按整串计。
+        """
+        count, _ = prompt_budget.make_counter(self._tokenizer())
+        if self._prompt_sections:
+            return sum(
+                count(t) + 1
+                for _name, terms in self._prompt_sections
+                for t in (terms or [])
+            )
+        return count(self.initial_prompt or "")
+
     def _note_produced_text(self, text: str):
         """
         每产出一条字幕就用**文本自我重复检测**判断是否落入重复循环（新判据）
@@ -653,17 +694,19 @@ class WhisperEngine:
         if not self._auto_degrade or self._prompt_degraded:
             return
 
-        prompt = self.initial_prompt or ""
-        if len(prompt) <= DEGRADE_PROMPT_CHARS:
+        # 降级改的是**预算**（见 _build_prompt），不再按字符砍字符串 ——
+        # 按字符砍尾巴等于砍掉优先级最高的术语，那是 P0-3 的老毛病。
+        cost = self._prompt_cost_tokens()
+        if cost <= DEGRADE_TOKEN_BUDGET:
             return          # 本来就短，降无可降
 
         self._repetition_events += 1
-        self._prompt_original = prompt
-        self.initial_prompt = prompt[:DEGRADE_PROMPT_CHARS]
+        self._prompt_original = self.initial_prompt
+        self._prompt_original_sections = self._prompt_sections
         self._prompt_degraded = True
         logger.warning(
-            f"[WARN] 检测到字幕重复循环，自动缩减术语提示词长度: "
-            f"{len(prompt)} → {len(self.initial_prompt)} 字符。"
+            f"[WARN] 检测到字幕重复循环，自动缩减术语提示词预算: "
+            f"{cost} → {DEGRADE_TOKEN_BUDGET} token。"
             f"{verdict.summary}。"
             "设 TINGKEBANLV_TERM_AUTODEGRADE=0 可关闭该保护"
         )
@@ -686,11 +729,19 @@ class WhisperEngine:
         if remaining:
             logger.warning(f"flush 超时，仍有 {remaining} 个片段未识别")
 
-    def set_initial_prompt(self, prompt: str):
+    def set_initial_prompt(
+        self,
+        prompt: str,
+        sections: Optional[list[tuple[str, list[str]]]] = None,
+    ):
         """
         运行时更新术语热词（用户中途添加自定义术语时可热更新，无需重启管道）
 
         注意：只在下一轮识别生效，不影响正在进行中的识别。
+
+        `sections` 是分层术语（高 → 低优先级），来自
+        `dictionary.terminology.build_prompt_sections()`。**强烈建议传它** ——
+        引擎只有拿到分层信息才能按 token 预算重排（P0-3）。
 
         若已因重复循环降级过，则**保持降级**：`pipeline.update_terminology()`
         每次热更新都会推完整提示词，若在这里恢复成完整版，就会变成
@@ -698,18 +749,27 @@ class WhisperEngine:
         要恢复请显式调用 `restore_full_prompt()`。
         """
         new_prompt = (prompt or "").strip() or None
+        new_sections = list(sections) if sections else None
 
-        if self._prompt_degraded and new_prompt and len(new_prompt) > DEGRADE_PROMPT_CHARS:
+        if self._prompt_degraded and (new_prompt or new_sections):
             self._prompt_original = new_prompt
+            self._prompt_original_sections = new_sections
             logger.debug(
-                f"术语提示词处于降级保护中，继续使用 {len(self.initial_prompt or '')} 字符版本"
-                f"（本次收到 {len(new_prompt)} 字符，已留存备用）"
+                f"术语提示词处于降级保护中，继续使用降级预算 "
+                f"（本次收到 {len(new_prompt or '')} 字符，已留存备用）"
             )
             return
 
-        if new_prompt != self.initial_prompt:
-            self.initial_prompt = new_prompt
-            logger.info(f"术语热词已更新 ({len(new_prompt or '')} 字符)")
+        changed = new_prompt != self.initial_prompt or new_sections != self._prompt_sections
+        self.initial_prompt = new_prompt
+        self._prompt_sections = new_sections
+        if changed:
+            logger.info(
+                f"术语热词已更新 ({len(new_prompt or '')} 字符"
+                + (f"，{sum(len(terms) for _n, terms in (new_sections or []))} 个分层术语"
+                   if new_sections else "")
+                + ")"
+            )
 
     def set_auto_degrade(self, enabled: bool):
         """
@@ -729,51 +789,95 @@ class WhisperEngine:
         """
         if self._prompt_original:
             self.initial_prompt = self._prompt_original
+        if self._prompt_original_sections:
+            self._prompt_sections = self._prompt_original_sections
         self._prompt_original = None
+        self._prompt_original_sections = None
         self._prompt_degraded = False
         self._stat_in_segments = 0
         self._stat_out_segments = 0
         self._recent_text = ""
         self._last_verdict = None
         self._advisory_logged = False
-        logger.info(f"术语提示词已恢复完整版本 ({len(self.initial_prompt or '')} 字符)")
+        logger.info(
+            f"术语提示词已恢复完整版本 ({len(self.initial_prompt or '')} 字符 / "
+            f"{self._prompt_cost_tokens()} token)"
+        )
+
+    def _tokenizer(self):
+        """
+        取真 tokenizer 用于**精确** token 计数（模型已加载时）
+
+        `WhisperModel.hf_tokenizer` 与 faster-whisper 内部 `get_prompt()` 编码
+        initial_prompt 用的是**同一个词表**，所以计数口径与库的截断判定一致。
+        模型未就绪（或对象上没有该属性）时返回 None → 退回启发式估算。
+        """
+        model = self._model
+        if model is None:
+            return None
+        return getattr(model, "hf_tokenizer", None)
 
     def _build_prompt(self) -> Optional[str]:
         """
-        组合提示词：术语热词 + 上一段识别文本（+ 中文的简体引导语）
+        组装提示词：术语（按 token 预算排优先级）+ 上一段文本 + 简体引导语
 
-        Whisper 的 initial_prompt 只有一段，所以这里做拼接。两个坑：
+        这里有三个坑，每一个都实测踩过：
 
-        1. **上一段文本放在后面且截断**，避免它把术语先验挤出去（原本就这么做）。
-        2. **简体引导语必须放在最末尾**，这不是审美问题而是正确性问题：
-           faster-whisper 的 `get_prompt()` 只保留 `previous_tokens[-223:]`（`max_length//2-1`），
-           也就是**只留尾部**。放在中间或开头的引导语会被静默截断掉，
-           而简体引导恰恰是「有没有」决定繁体占比 34% → 0.1% 的那一项。
-           因此先按预算给引导语留出位置，拼完再追加到末尾。
+        1. **总预算必须按 token 算，不能按字符算。**
+           faster-whisper 的 `get_prompt()` 只保留 `previous_tokens[-223:]`
+           （`max_length // 2 - 1`），超出部分**静默丢弃**。中文每字 ≈ 1.35 token，
+           英文每字符 ≈ 0.30 token —— 同样的「800 字符」上限，中文吃掉的 token 是
+           英文的 4.5 倍。实测中文术语表 799 字符 = 506 token，被砍掉 283（56%）。
+
+        2. **高优先级必须贴尾。** 库保留的是尾部，所以「谁在末尾谁存活」。
+           旧实现是 `custom → discovered → domain → phrases`（高优先级在前），
+           结果自定义中文术语存活率 25%、内置英文术语 100% —— 完全颠倒。
+
+        3. **简体引导语必须在最末尾。** 它决定繁体占比是 34% 还是 0.1%（P0-1），
+           放开头或中间会被第 1 条的静默截断吃掉。
+
+        实现见 `asr/prompt_budget.py`：按高→低分配预算，按低→高拼接。
         """
-        parts = []
-        if self.initial_prompt:
-            parts.append(self.initial_prompt)
-        if self._last_text:
-            # 只取尾部，保持最近语境；再长会挤占音频上下文
-            parts.append(self._last_text[-LAST_TEXT_PROMPT_CHARS:])
+        count, _exact = prompt_budget.make_counter(self._tokenizer())
 
-        # 中文才注入简体引导语；其它语种简繁不分，加了纯属浪费 prompt 预算
+        # 中文才注入简体引导语；其它语种简繁不分，加了纯属浪费 token 预算
         hint = (
             SIMP_HINT
             if (self.language or "").lower() in SIMP_HINT_LANGS
             else ""
         )
 
-        if not parts and not hint:
+        # 降级后砍的是**预算**而不是字符串 —— 这样高优先级术语天然排在前面，
+        # 不会像旧实现那样按字符砍尾巴（= 砍掉最该保住的那些词）。
+        budget = DEGRADE_TOKEN_BUDGET if self._prompt_degraded else PROMPT_TOKEN_BUDGET
+
+        sections = self._prompt_sections
+        prebuilt = ""
+        if not sections and self.initial_prompt:
+            # 退化路径：上游只给了拼好的字符串。`build_initial_prompt()` 的输出
+            # 已是「低 → 高」顺序，所以**原样保留**，绝不能在这里再排一次。
+            prebuilt = self.initial_prompt
+
+        if not sections and not prebuilt and not hint and not self._last_text:
+            self._last_budget = None
             return None
 
-        # 1000 字符是产品侧的历史预算上限（真实的 token 预算见 P0-3）
-        budget = 1000 - (len(hint) + 1) if hint else 1000
-        body = " ".join(parts)[:budget]
-        if not hint:
-            return body
-        return f"{body} {hint}".strip() if body else hint
+        result = prompt_budget.assemble(
+            sections,
+            prev_text=self._last_text or "",
+            hint=hint,
+            budget=budget,
+            count=count,
+            prebuilt_body=prebuilt,
+            prev_max_tokens=PROMPT_PREV_TOKENS,
+        )
+        self._last_budget = result
+
+        if result.dropped:
+            # 只在真的有术语被丢时记一行（每次识别都刷会淹掉日志）
+            logger.debug(f"[prompt] {result.summary()}；被丢术语：{result.dropped[:8]}")
+
+        return result.body
 
     def stop(self):
         """停止引擎：先把手头积压的片段识别完，再收掉消费者线程"""
@@ -803,10 +907,16 @@ class WhisperEngine:
           - merged > 0       → 已经进入「合并片段」的降级状态，字幕会更粗
           - dropped > 0      → 已开始丢内容，必须减小模型或调大 cpu_threads
           - termPromptDegraded=true → 检测到过字幕重复循环并已自动缩短术语提示词
+
+        P0-3 起 `promptChars` 不再是唯一指标 —— 真正决定「有多少内容进了模型」的是
+        `promptTokens`（faster-whisper 只保留末尾 223 token）。若
+        `promptTokens` 接近 `promptBudget` 且 `droppedTerms` 非空，
+        说明这个课程的术语表已经超出预算，丢的是最低优先级的那些。
         """
         with self._jobs_cv:
             backlog = len(self._jobs)
             busy = self._busy
+        b = self._last_budget          # 最近一次提示词组装的预算结果（P0-3 埋点）
         return {
             "model": self.model_size,
             "device": self.device,
@@ -830,6 +940,18 @@ class WhisperEngine:
             "lastRepeat": (
                 self._last_verdict.summary if self._last_verdict is not None else None
             ),
+            # ---- P0-3：提示词 token 预算埋点（原先只有字符数，看不出被库截断多少）----
+            # `promptTokens` 才是真正送进模型的分量；`promptBudget` 是本次预算
+            # （降级后会用更小的预算）；`dedTerms` 是被预算丢掉的术语。
+            "promptTokens": b.used_tokens if b else 0,
+            "promptBudget": b.budget if b else PROMPT_TOKEN_BUDGET,
+            "promptRemaining": b.remaining_tokens if b else 0,
+            "promptTokenExact": b.exact if b else False,
+            "droppedTerms": list(b.dropped) if b else [],
+            "promptSections": (
+                {k: len(v) for k, v in b.kept.items()} if b else {}
+            ),
+            "promptPrevChars": len(b.prev_kept) if b else 0,
             "inSegments": self._stat_in_segments,
             "outSegments": self._stat_out_segments,
         }

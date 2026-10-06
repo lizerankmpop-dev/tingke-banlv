@@ -67,7 +67,7 @@ class ASRPipeline:
                 )
         except Exception as e:
             logger.warning(f"术语热词构建失败，将不使用 initial_prompt: {e}")
-            self._terminology = {"prompt": "", "stats": {"total": 0}}
+            self._terminology = {"prompt": "", "sections": None, "stats": {"total": 0}}
             initial_prompt = ""
 
         # 初始化各组件
@@ -95,6 +95,9 @@ class ASRPipeline:
                 else ("模型就绪" if stage == "ready" else "模型加载失败")
             ),
             initial_prompt=initial_prompt,
+            # 分层术语（高 → 低优先级）交给引擎按 token 预算重排（P0-3）：
+            # 高优先级贴尾部保留窗口，预算不够时丢低优先级，而不是丢自定义术语
+            prompt_sections=self._terminology.get("sections"),
         )
 
         self._vad = VoiceActivityDetector(
@@ -139,7 +142,7 @@ class ASRPipeline:
                 discovered_terms=self._discovered_terms,
             )
             self._terminology = term
-            self._whisper.set_initial_prompt(term["prompt"])
+            self._whisper.set_initial_prompt(term["prompt"], term.get("sections"))
             logger.info(f"术语热词已热更新: {term['stats']['total']} 个术语")
         except Exception as e:
             logger.error(f"术语热词热更新失败: {e}")
