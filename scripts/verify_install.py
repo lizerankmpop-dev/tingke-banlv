@@ -89,6 +89,14 @@ HOST_CRASHED_LOG = "[fatal] 主窗口渲染进程退出"
 HB_TIMEOUT_LOST_LOG = "未收到渲染进程心跳"
 THROTTLE_LOG = "[perf] 后台节流="
 
+# ---- M3 首启向导断言用的日志锚点 ----
+# 与 frontend/electron/onboarding-state.cjs 的 describeEvent() 及 main.cjs 的
+# 字面量一一对应，改那边必须同步改这里（沿用上面 S 层的「精确字面量」约定）。
+ONBOARDING_OPEN_LOG = "[onboarding] 向导已打开"
+ONBOARDING_WINDOW_LOG = "[onboarding] 向导窗口已创建"
+ONBOARDING_DONE_LOG = "[onboarding] 完成"
+ONBOARDING_DISMISS_LOG = "[onboarding] 跳过"
+
 # Electron 主进程向「已销毁的渲染帧」发消息时，会由内部打一行
 #   Error sending from webFrameMain: Error: Render frame was disposed ...
 # 它只出现在渲染进程崩溃之后，属于 Electron 自身的告警，不是应用缺陷。
@@ -271,6 +279,19 @@ def read_overlay_json(home: Path) -> dict | None:
         return None
 
 
+def read_onboarding_json(home: Path) -> dict | None:
+    """
+    读 onboarding.json（M3 首启向导状态）；不存在 / 损坏 / 权限不足都返回 None
+
+    与 overlay.json 同等对待：**只读，绝不写** —— completed / dismissedAt
+    决定用户还会不会被弹向导，验证脚本没有任何场景需要改它。
+    """
+    try:
+        return json.loads((home / "onboarding.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 def overlay_residue(home: Path) -> list[str]:
     """
     原子写与文件锁的残留：`overlay.json.tmp` / `overlay.json.lock`
@@ -286,6 +307,99 @@ def overlay_residue(home: Path) -> list[str]:
         return []
     return sorted(
         p.name for p in home.glob("overlay.json.*") if p.suffix in (".tmp", ".lock")
+    )
+
+
+# ============ M3 首启向导 · 人工验收清单 ============
+#
+# 这 5 条是**重启级 / 视觉级**场景，刻意不做自动 pass/fail 判定：
+#   · ②③④ 要「改完状态再重启」—— 自动化里驱动 UI 走完向导需要 CDP 逐页
+#     点击，打包环境下不稳定（docs/m3/onboarding_wizard.md §八 有同样结论）
+#   · ①⑤ 里「弹窗肉眼是否正常」「文案读起来是否顺」是视觉/语言判断
+# 分工：脚本采集**自动化证据**（日志锚点 + onboarding.json 字段）并生成清单；
+# 人工按清单逐条执行、勾选，结果可整段追加进 docs/m3/onboarding_wizard.md §八。
+# 人工项在报告里只做记录（critical=False），不影响 passed。
+
+ONBOARDING_MANUAL_ITEMS = (
+    {
+        "id": "①",
+        "title": "全新安装首启，向导自动弹出",
+        "steps": "把 TINGKEBANLV_HOME 指向一个空目录（先按「安全操作」备份），启动应用，主窗口出现后观察",
+        "expect": "向导窗口自动弹出，停在第 1/6 步「欢迎使用听课伴侣」",
+        "evidence": "electron.log 的「[onboarding] 向导已打开」（本轮已自动采集）+ 弹窗截图",
+        "note": "兼容模式按设计会推迟自动弹出 —— 若当轮走了兼容模式，以界面实际表现为准并记录",
+    },
+    {
+        "id": "②",
+        "title": "走完「完成」→ 重启不再弹出",
+        "steps": "完整走完 6 步点「开始使用」→ 确认 onboarding.json 的 completed=true → 完全退出应用 → 重新启动",
+        "expect": "重启后不再自动弹出",
+        "evidence": "onboarding.json（completed 字段）；重启轮 electron.log 无「向导已打开」行",
+        "note": "建议在 --keep-installed 保留安装后人工执行；数据目录安全要求见清单末尾「安全操作」",
+    },
+    {
+        "id": "③",
+        "title": "点「跳过」→ 重启不再弹出",
+        "steps": "走前几步后点「跳过，直接使用」→ 确认 onboarding.json 的 dismissedAt 已写入 → 完全退出 → 重新启动",
+        "expect": "重启后不再自动弹出",
+        "evidence": "onboarding.json（dismissedAt 字段）；重启轮 electron.log",
+        "note": "右上角 × 只关窗口、不写标记，下次启动仍应弹 —— 这条也要顺手确认",
+    },
+    {
+        "id": "④",
+        "title": "升级场景（已有 onboarding.json）不重复弹出",
+        "steps": "在已有 completed=true 的 onboarding.json 的数据目录上，安装新版本并启动",
+        "expect": "不弹向导；标记不被新版本重置（升级不重置向导是设计约束）",
+        "evidence": "升级前后各读一次 onboarding.json，逐字段一致",
+        "note": "⚠️ 在副本目录上做：先整目录改名备份，或复制一份用 TINGKEBANLV_HOME 指过去 —— 绝不清空真实数据目录",
+    },
+    {
+        "id": "⑤",
+        "title": "第 4 步穿透提示、第 6 步降级文案与控制面板口径一致",
+        "steps": "向导第 4 步读「鼠标穿透」三态说明、第 6 步读术语开关四问；再开始识别进入字幕视图打开控制面板逐句对照",
+        "expect": "两处均无「提示词 / token / 预算 / 截断 / 智能降级」；第 6 步含「重新开始听课…恢复完整术语表」；开关名两处同口径",
+        "evidence": "自动化守卫 tests/onboarding-copy.test.mts（npm test 已拦截禁词）+ 两处截图",
+        "note": "禁词拦截已自动化（提交时），人工只核对语义与两处一致性",
+    },
+)
+
+
+def build_onboarding_checklist(paths: dict[str, str]) -> str:
+    """
+    生成《首启向导人工验收清单》markdown
+
+    结构刻意做成**可整体追加**：标题为 `##` 级、自带证据路径表与「安全操作」，
+    人工验收完成后整段拷进 docs/m3/onboarding_wizard.md 的验收章节即可归档。
+    `paths` 的键原样出现在表格第一列，值是路径字符串。
+    """
+    rows = "\n".join(f"| {key} | `{value}` |" for key, value in paths.items())
+    items = []
+    for item in ONBOARDING_MANUAL_ITEMS:
+        items.append(
+            f"### {item['id']} {item['title']}\n\n"
+            f"- [ ] **已执行并确认**\n\n"
+            f"**操作**：{item['steps']}\n\n"
+            f"**预期**：{item['expect']}\n\n"
+            f"**证据**：{item['evidence']}\n\n"
+            f"> 注意：{item['note']}\n"
+        )
+    return (
+        f"## 首启向导 · 人工验收清单（verify_install 生成于 {now_iso()}）\n\n"
+        "以下 5 条属于重启级 / 视觉级场景，**不做自动化 pass/fail 判定**："
+        "自动化部分只采集证据，人工逐条执行并勾选，结果整段追加到 "
+        "`docs/m3/onboarding_wizard.md` 的验收章节归档。\n\n"
+        "### 证据文件\n\n"
+        "| 文件 | 路径 |\n"
+        "|---|---|\n"
+        f"{rows}\n\n"
+        + "\n---\n\n".join(items)
+        + "\n---\n\n"
+        "### 安全操作（务必先读）\n\n"
+        f"- 本轮验证对数据目录（`{paths.get('数据目录', '')}`）只有**先备份后还原**，"
+        "脚本内没有任何清理真实用户数据的逻辑。\n"
+        "- 人工复测涉及「清空数据目录」时：先整目录改名备份，"
+        "或用 `TINGKEBANLV_HOME` 指向临时空目录，绝不动真实配置。\n"
+        "- 升级场景（条目④）在副本目录上做：复制整个数据目录再装新版本。\n"
     )
 
 
@@ -911,6 +1025,62 @@ def main() -> int:
             else f"命中 {stdio_bad}，见 {app_stdio}",
         )
 
+        # ---------- 4c. M3 首启向导：自动化证据采集（不参与 pass/fail） ----------
+        # 本轮启动前数据目录已被第 0 步整体备份移走，等价于「全新安装首启」，
+        # 向导按设计应自动弹出 —— 这条可以自动采集日志证据。
+        # 但「弹窗肉眼是否正常」「完成/跳过后不再弹」是重启级/视觉级场景，
+        # 刻意不做自动判定：生成人工清单随报告归档（onboarding-manual-checklist.md）。
+        wizard_log = wait_for(
+            lambda: ONBOARDING_OPEN_LOG in read_log(), timeout=60, interval=1.0
+        )
+        ob_text = read_log()
+        ob_state = read_onboarding_json(home)
+        report.step(
+            "M3·向导自动弹出（自动化证据）",
+            wizard_log,
+            (
+                f"日志出现「{ONBOARDING_OPEN_LOG}」"
+                + ("，向导窗口已创建" if ONBOARDING_WINDOW_LOG in ob_text else "")
+                + "；onboarding.json："
+                + (json.dumps(ob_state, ensure_ascii=False) if ob_state else "尚未落盘")
+            )
+            if wizard_log
+            else "60s 内未见向导日志。兼容模式按设计会推迟自动弹出 —— 若界面确实弹了以界面为准；"
+            "若当轮未走兼容模式也没弹，属缺陷，人工记入清单①",
+            critical=False,
+            data={"onboardingJson": ob_state, "windowCreated": ONBOARDING_WINDOW_LOG in ob_text},
+        )
+
+        # 人工验收清单：5 条勾选项 + 证据路径，随报告归档；结构可整段追加进
+        # docs/m3/onboarding_wizard.md 的验收章节
+        report_dir = Path(args.report).parent
+        screenshots_dir = report_dir / "screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        checklist_path = report_dir / "onboarding-manual-checklist.md"
+        checklist_paths = {
+            "数据目录": str(home),
+            "onboarding.json": str(home / "onboarding.json"),
+            "本轮启动日志": str(log_file),
+            "run-1 日志留档": str(report_dir / "electron-run1.log"),
+            "日志总留档": str(report_dir / "electron.log"),
+            "验证报告": str(Path(args.report)),
+            "截图目录": str(screenshots_dir),
+        }
+        try:
+            checklist_path.write_text(
+                build_onboarding_checklist(checklist_paths), encoding="utf-8"
+            )
+            report.step("M3·人工验收清单已生成", True, str(checklist_path), critical=False)
+        except OSError as exc:
+            report.step("M3·人工验收清单已生成", False, str(exc), critical=False)
+        for item in ONBOARDING_MANUAL_ITEMS:
+            report.step(
+                f"M3·人工验收{item['id']} {item['title']}（待人工，不参与判定）",
+                True,
+                f"操作与预期见 {checklist_path.name}",
+                critical=False,
+            )
+
         # ---------- 5. 关闭应用 ----------
         # 必须按进程名强杀：兼容模式下真正在跑的是自我分离出来的那个实例，
         # Popen 句柄指向的原进程早已退出，proc.terminate() 打不到它。
@@ -983,6 +1153,19 @@ def main() -> int:
             "已是 schemaVersion=3，未再触发迁移"
             if MIGRATION_LOG not in text2
             else "重启后又报了一次迁移 → 上一轮没有把迁移结果落盘",
+        )
+
+        # M3：本轮没有任何人驱动向导「完成/跳过」，onboarding.json 仍是未完成态，
+        # 按设计重启后向导**应该**再次弹出 —— 这条自动证据反向支撑清单②/③
+        # （只有写了 completed / dismissedAt 才不弹）；「不再弹」本身仍由人工验。
+        wizard_again = ONBOARDING_OPEN_LOG in text2
+        report.step(
+            "M3·未完成向导时重启仍弹出（自动化证据）",
+            wizard_again,
+            "run-2 日志再次出现「向导已打开」，符合「未完成 → 每次启动都弹」的设计"
+            if wizard_again
+            else "run-2 未见向导日志。若向导确实弹了以界面为准；若没弹，先核对 onboarding.json 是否被误写成 completed/dismissed",
+            critical=False,
         )
 
         # 上一轮若落下了兼容模式标记，这一轮必须直接走兼容模式：
