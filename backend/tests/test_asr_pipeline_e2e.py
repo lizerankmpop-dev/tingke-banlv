@@ -400,6 +400,10 @@ def _bare_engine(initial_prompt: str | None = None, auto_degrade: bool = True):
     engine._stat_in_segments = 0
     engine._stat_out_segments = 0
     engine._repetition_events = 0
+    # 新判据（文本自我重复检测）的字段，见 asr/repetition.py
+    engine._recent_text = ""
+    engine._last_verdict = None
+    engine._advisory_logged = False
     return engine
 
 
@@ -483,8 +487,22 @@ class TestBackpressure:
 
 # ============ 6b. 术语提示词重复循环防护 ============
 
-# 约 800 字符，与 TINGKEBANLV_TERM_PROMPT_MAX 默认值同量级
+# 约 970 字符，与 TINGKEBANLV_TERM_PROMPT_MAX 默认值同量级
 LONG_PROMPT = ", ".join(f"term{i}" for i in range(120))
+
+# ---- 实测样本（2026-10-06 中文代理集 A/B 的真实输出，不是编的）----
+# 旧判据（产出/送入 > 1.2）在这一条上**漏报**（比值只有 1.089）；
+# 新判据（文本自我重复）把它稳稳抓住，最长重复块 80 字符。
+REPEAT_TANDEM = "级测试" * 40
+# 成句复读：run2 on-noguard 实录，最长重复 ≈54 字符
+REPEAT_SENTENCE = "相当于在训练时随机丢掉一部分神经缘" * 5
+# 干净样本：真实讲稿风格，**句句不同**（刻意不用 `* N` 拼，否则用例自相矛盾）
+CLEAN_LECTURE = (
+    "那么我们今天继续讲卷积神经网络的结构。"
+    "卷积层负责提取局部特征，池化层负责降低空间分辨率。"
+    "反向传播的时候，梯度会逐层往回传，越靠前的层梯度越小。"
+    "所以后来有人提出残差连接，让梯度可以跳过若干层直接传回去。"
+)
 
 
 class _FakeSegment:
@@ -515,48 +533,90 @@ class TestTermPromptGuard:
     """
     术语提示词「重复循环」的运行时兜底
 
-    背景：实测提示词 794 字符时出现「产出片段数 > 送入片段数」的重复循环，
-    但 WER 在各档位不单调，不能直接改默认上限 —— 所以只在真的观察到循环时
-    才缩短提示词。这里覆盖触发、不触发、可关闭、热更新不顶掉降级等分支。
+    判据在 2026-10-06 的中文代理集 A/B 后被**整条换掉**：旧的「产出/送入 > 1.2」
+    在中文下误报与漏报并存（`--terms off` 的天然比值就是 1.625，而真复读样本只有
+    1.089），现在主判据是**文本自我重复检测**（asr/repetition.py），比值降级为辅助
+    告警。这里覆盖：触发、不触发（含中文自然断句防误报）、可关闭、可观测、
+    热更新不顶掉降级、跨片段累积、整链。
     """
 
     def test_degrades_when_repetition_detected(self):
         from asr.whisper_engine import DEGRADE_PROMPT_CHARS
 
         engine = _bare_engine(initial_prompt=LONG_PROMPT)
-        engine._note_segment_counts(4, 6)          # 比值 1.5 > 1.2，样本也够
+        engine._note_produced_text(REPEAT_TANDEM)
 
         assert engine._prompt_degraded is True
         assert engine.initial_prompt == LONG_PROMPT[:DEGRADE_PROMPT_CHARS]
         assert engine._repetition_events == 1
+        assert "重复" in engine._last_verdict.summary
 
-    def test_waits_for_min_samples(self):
-        """样本太少不判：1 进 3 出就是 3 倍，纯噪声，不该据此改提示词"""
+    def test_sentence_loop_detected(self):
+        """成句复读（不是「级测试」那种机械重复）也要抓到"""
         engine = _bare_engine(initial_prompt=LONG_PROMPT)
-        engine._note_segment_counts(1, 3)
+        engine._note_produced_text(REPEAT_SENTENCE)
+
+        assert engine._prompt_degraded is True
+
+    def test_clean_lecture_not_degraded(self):
+        """
+        中文自然断句（句句不同）不能误报 —— 这是旧判据最主要的失分点。
+        旧判据在 `--terms off` 的干净样本上就误报了（比值 1.625）。
+        """
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._note_produced_text(CLEAN_LECTURE)
 
         assert engine._prompt_degraded is False
         assert engine.initial_prompt == LONG_PROMPT
+        assert engine._last_verdict is not None
+        assert engine._last_verdict.triggered is False
 
-    def test_ratio_within_tolerance_not_triggered(self):
-        """长片段被 Whisper 自己切成多段是正常行为，容差内不降级"""
+    def test_advisory_ratio_no_longer_degrades(self):
+        """
+        比值只是辅助告警：即使远超阈值也不许改提示词。
+        （`--terms off` 的中文天然比值 1.625，拿它降级必然误报 —— 这里锁死该回归。）
+        """
         engine = _bare_engine(initial_prompt=LONG_PROMPT)
-        engine._note_segment_counts(10, 11)        # 1.1 ≤ 1.2
+        engine._note_segment_counts(4, 20)          # 比值 5.0 ≫ 1.2
 
         assert engine._prompt_degraded is False
+        assert engine.initial_prompt == LONG_PROMPT
+        assert engine._advisory_logged is True, "辅助告警本身仍应记录一条"
+
+    def test_waits_for_enough_text(self):
+        """文本太少不判：窗口不足时重复率没有统计意义"""
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine._note_produced_text("级测试")          # 3 字符，远不足窗口下限
+
+        assert engine._prompt_degraded is False
+        assert engine._last_verdict.triggered is False
+
+    def test_repeat_accumulated_across_segments(self):
+        """
+        复读会跨多条字幕累积 —— 这正是要维护滚动缓冲的原因。
+        单条 12 字看不出来，拼起来才够成句。
+        """
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        for _ in range(8):
+            engine._note_produced_text("级测试级测试级测试级测试")   # 每 12 字
+
+        assert engine._prompt_degraded is True
 
     def test_can_be_disabled(self):
-        """用户关闭「自动降级」后，再严重的重复也不动提示词"""
+        """关闭「自动降级」后，再严重的重复也不动提示词，但结论仍要可观测"""
         engine = _bare_engine(initial_prompt=LONG_PROMPT, auto_degrade=False)
-        engine._note_segment_counts(4, 20)
+        engine._note_produced_text(REPEAT_TANDEM)
 
         assert engine._prompt_degraded is False
         assert engine.initial_prompt == LONG_PROMPT
+        # 关了保护不代表看不见：最近一次结论仍要留痕
+        assert engine._last_verdict.triggered is True
+        assert engine.get_stats()["lastRepeat"]
 
     def test_short_prompt_not_degraded(self):
         """本来就短，降无可降"""
         engine = _bare_engine(initial_prompt="convolution, gradient descent")
-        engine._note_segment_counts(4, 20)
+        engine._note_produced_text(REPEAT_TANDEM)
 
         assert engine._prompt_degraded is False
 
@@ -566,7 +626,7 @@ class TestTermPromptGuard:
         不能让热更新把降级顶掉 —— 否则会「恢复→再触发→再降级」来回抖动
         """
         engine = _bare_engine(initial_prompt=LONG_PROMPT)
-        engine._note_segment_counts(4, 6)
+        engine._note_produced_text(REPEAT_TANDEM)
         degraded = engine.initial_prompt
         assert engine._prompt_degraded is True
 
@@ -578,26 +638,29 @@ class TestTermPromptGuard:
 
     def test_restore_full_prompt(self):
         engine = _bare_engine(initial_prompt=LONG_PROMPT)
-        engine._note_segment_counts(4, 6)
+        engine._note_produced_text(REPEAT_TANDEM)
         engine.restore_full_prompt()
 
         assert engine.initial_prompt == LONG_PROMPT
         assert engine._prompt_degraded is False
         assert engine._stat_in_segments == 0
         assert engine._stat_out_segments == 0
+        # 新判据的状态也要一起复位，否则换课程后残留的旧文本会立刻二次触发
+        assert engine._recent_text == ""
+        assert engine._last_verdict is None
+        assert engine._advisory_logged is False
 
-    def test_transcribe_counts_towards_detection(self):
-        """整链：mock 识别输出 → 计数 → 触发降级（不是只测计数器本身）"""
+    def test_transcribe_detects_repetition_end_to_end(self):
+        """整链：mock 识别输出 → 累积文本 → 触发降级（不是只测计数器本身）"""
         from asr.whisper_engine import DEGRADE_PROMPT_CHARS
 
         engine = _bare_engine(initial_prompt=LONG_PROMPT)
-        engine._model = _FakeModel(["a", "b"])     # 每 1 段输入产出 2 条字幕
+        engine._model = _FakeModel([REPEAT_TANDEM])
 
-        for _ in range(4):
-            engine._transcribe(np.zeros(16000, dtype=np.float32), 0.0, 1.0, 1)
+        engine._transcribe(np.zeros(16000, dtype=np.float32), 0.0, 1.0, 1)
 
-        assert engine._stat_in_segments == 4
-        assert engine._stat_out_segments == 8
+        assert engine._stat_in_segments == 1
+        assert engine._stat_out_segments == 1
         assert engine._prompt_degraded is True
         assert len(engine.initial_prompt) == DEGRADE_PROMPT_CHARS
 
@@ -605,9 +668,10 @@ class TestTermPromptGuard:
         assert stats["termPromptDegraded"] is True
         assert stats["repetitionDetected"] is True
         assert stats["termPromptChars"] == DEGRADE_PROMPT_CHARS
+        assert stats["lastRepeat"]
 
     def test_empty_text_not_counted_as_subtitle(self):
-        """空文本不会变成字幕，不该计入产出数（否则分母被高估、误触发降级）"""
+        """空文本不会变成字幕，不该计入产出数，也不该污染重复检测的缓冲"""
         engine = _bare_engine(initial_prompt=LONG_PROMPT)
         engine._model = _FakeModel(["a", "", "   "])
 
@@ -617,6 +681,85 @@ class TestTermPromptGuard:
         assert engine._stat_in_segments == 6
         assert engine._stat_out_segments == 6       # 每轮只有 1 条非空
         assert engine._prompt_degraded is False
+        assert engine._recent_text == "a" * 6       # 只有非空文本进了缓冲
+
+
+class TestBuildPromptSimpHint:
+    """
+    P0-1：简体引导语必须落在提示词**最末尾**
+
+    实测依据：提示词为空 → 繁体占 34.4%；只注入英文术语 → 34.5%（毫无作用）；
+    提示词里出现简体中文 → **0.1%**。而 faster-whisper 的 `get_prompt()` 只保留
+    `previous_tokens[-223:]`（只留尾部），引导语放开头或中间会被静默截断。
+    """
+
+    def test_zh_appends_hint_at_tail(self):
+        from asr.whisper_engine import SIMP_HINT
+
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine.language = "zh"
+        prompt = engine._build_prompt()
+
+        assert prompt.endswith(SIMP_HINT), "引导语必须落在末尾，否则会被 token 预算截掉"
+        assert LONG_PROMPT[:20] in prompt
+
+    def test_zh_variants_also_get_hint(self):
+        from asr.whisper_engine import SIMP_HINT
+
+        for lang in ("zh", "zh-CN", "zh-TW", "ZH"):
+            engine = _bare_engine(initial_prompt="卷积, 梯度")
+            engine.language = lang
+            assert engine._build_prompt().endswith(SIMP_HINT), lang
+
+    def test_non_zh_no_hint(self):
+        from asr.whisper_engine import SIMP_HINT
+
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine.language = "en"
+
+        assert SIMP_HINT not in engine._build_prompt()
+
+    def test_hint_alone_when_no_terms(self):
+        """新课程 / 用户没选领域时术语为空，引导语必须仍能单独生效"""
+        from asr.whisper_engine import SIMP_HINT
+
+        engine = _bare_engine(initial_prompt=None)
+        engine.language = "zh"
+
+        assert engine._build_prompt() == SIMP_HINT
+
+    def test_hint_reserves_budget(self):
+        """引导语要先占住预算，不能被正文挤出 1000 字符上限"""
+        from asr.whisper_engine import SIMP_HINT
+
+        engine = _bare_engine(initial_prompt="t" * 1200)   # 刻意超长
+        engine.language = "zh"
+        prompt = engine._build_prompt()
+
+        assert len(prompt) <= 1000
+        assert prompt.endswith(SIMP_HINT)
+
+    def test_degraded_prompt_still_gets_hint(self):
+        """
+        降级只缩短术语，不能把简体引导语一起砍掉
+        —— 否则复读修好了、繁体又回来了，两个 P0 互相打架
+        """
+        from asr.whisper_engine import DEGRADE_PROMPT_CHARS, SIMP_HINT
+
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        engine.language = "zh"
+        engine._note_produced_text(REPEAT_TANDEM)
+
+        assert engine._prompt_degraded is True
+        assert len(engine.initial_prompt) == DEGRADE_PROMPT_CHARS
+        assert engine._build_prompt().endswith(SIMP_HINT)
+
+    def test_no_prompt_no_hint_returns_none(self):
+        """英文且无任何提示词 → 返回 None（保持旧行为，别给 Whisper 塞空串）"""
+        engine = _bare_engine(initial_prompt=None)
+        engine.language = "en"
+
+        assert engine._build_prompt() is None
 
 
 # ============ 7. 端到端（需要模型，缺失自动跳过）============

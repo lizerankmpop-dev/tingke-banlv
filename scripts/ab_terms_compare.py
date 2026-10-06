@@ -15,11 +15,17 @@
   off      不注入术语表（基线）
   on       注入术语表 + 打开防循环兜底（= 出厂默认）
   on-noguard  注入术语表但关闭兜底（用于观察「完全不干预时重复循环能持续多久」）
+  simp     只注入一段简体中文引导语、不注入任何术语表（检验简繁引导，见 SIMP_HINT）
 
 用法：
   <venv>/Scripts/python.exe scripts/ab_terms_compare.py \
       --audio-dir testset/chinese_lecture/long --language zh --domain 计算机 \
-      --conditions off,on --realtime --out packaging/eval/chinese_ab.json
+      --custom-terms @zh --conditions off,on,on-noguard --realtime \
+      --out packaging/eval/chinese_ab.json
+
+`--custom-terms` 支持哨兵 "@zh"（= 脚本内置的中文术语清单）：中文课程必须用它，
+因为产品内置的 DOMAIN_TERMS 全是英文，只传 --domain 是测不出中文术语收益的。
+哨兵会在 main() 里展开成真正的词表，再按条件拼进命令行。
 """
 
 from __future__ import annotations
@@ -57,6 +63,12 @@ CHINESE_TERMS = {
 }
 # 多领域共用词：不管 domain 传什么，这些词出现了都值得统计
 COMMON_TERMS = ["深度学习", "神经网络", "卷积神经网络", "注意力机制", "注意力", "循环网络"]
+
+# `simp` 条件用的简体中文引导语
+#
+# Whisper 的 language="zh" 不区分简繁，模型倾向输出繁体。业界常用的做法是往
+# initial_prompt 里塞一句简体中文，把输出风格拉回简体。这里用它做单一变量对照。
+SIMP_HINT = "以下是普通话的句子，请使用简体中文转写。"
 
 
 def load_domain_terms(domain: str) -> list[str]:
@@ -119,7 +131,7 @@ def term_stats(terms: list[str], reference: str, hypothesis: str) -> dict:
     }
 
 
-def run_condition(args, cond: str, report: Path) -> dict:
+def run_condition(args, cond: str, report: Path, custom: list[str]) -> dict:
     cmd = [
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "eval_asr_quality.py"),
@@ -145,13 +157,25 @@ def run_condition(args, cond: str, report: Path) -> dict:
         cmd += ["--terms", "on", "--autodegrade", "on"]
     elif cond == "on-noguard":
         cmd += ["--terms", "on", "--autodegrade", "off"]
+    elif cond == "simp":
+        # 只注入一段简体中文引导语、不注入任何术语表（domain 置空，见下方 domain_c）：
+        # 用来单独检验「提示词里的简体中文能不能把 Whisper 从繁体拉回来」，
+        # 与术语收益解耦。兜底关闭，避免引导语被当成重复循环截断。
+        cmd += ["--terms", "on", "--autodegrade", "off"]
     else:
         raise SystemExit(f"未知条件: {cond}")
 
-    if args.domain:
-        cmd += ["--domain", args.domain]
-    if args.custom_terms:
-        cmd += ["--custom-terms", args.custom_terms]
+    # 注意：这里必须用展开后的 custom（而不是 args.custom_terms 的原始字符串）。
+    # 踩过的坑：`--custom-terms @zh` 的哨兵是在 main() 里展开成 55 个中文术语的，
+    # 若这里直接透传 args.custom_terms，下发给引擎的就是字面量 "@zh" ——
+    # 引擎把它当成「一个自定义术语」，日志显示「40 个（含自定义 1 个）」，
+    # 看着像成功，实际 55 个中文术语一个都没注入，整轮 A/B 白跑。
+    custom_c = [SIMP_HINT] if cond == "simp" else custom
+    domain_c = "" if cond == "simp" else args.domain
+    if custom_c:
+        cmd += ["--custom-terms", ",".join(custom_c)]
+    if domain_c:
+        cmd += ["--domain", domain_c]
 
     print("\n" + "#" * 90)
     print(f"# 条件 [{cond}]  {' '.join(cmd[2:])}")
@@ -164,6 +188,9 @@ def run_condition(args, cond: str, report: Path) -> dict:
     data = json.loads(report.read_text(encoding="utf-8"))
     data["_condition"] = cond
     data["_wallSeconds"] = round(elapsed, 1)
+    # 把真实下发过的命令行记进报告：参数拼错时（比如哨兵没展开）从报告就能看出来，
+    # 不用去翻日志。踩过坑，所以留证。
+    data["_cmd"] = cmd
     return data
 
 
@@ -222,7 +249,7 @@ def main() -> int:
     runs: dict[str, dict] = {}
     for cond in conds:
         report = out_path.with_name(f"_ab_{cond}.json")
-        runs[cond] = run_condition(args, cond, report)
+        runs[cond] = run_condition(args, cond, report, custom)
 
     def summary(cond):
         return runs[cond].get("summary", {})
@@ -338,6 +365,8 @@ def main() -> int:
         "filesWithMoreSubtitlesThanSegments": more_sub,
         "termRecall": term_report,
         "runs": {c: {"summary": runs[c].get("summary"), "results": runs[c].get("results")} for c in names},
+        # 每个条件实际跑过的命令行，便于事后核对参数到底生效没有
+        "commands": {c: runs[c].get("_cmd") for c in names},
     }
     out_path.write_text(json.dumps(combined, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"\n对照报告已写入: {out_path}")
