@@ -530,6 +530,15 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
         "termPromptDegraded": bool(stats_after.get("termPromptDegraded")),
         "termAutoDegrade": bool(stats_after.get("termAutoDegrade")),
         "repetitionEvents": delta("repetitionEvents"),
+        "degradeEvents": delta("degradeEvents"),
+        # P0-3：真正送进模型的 token 分量（字符数早已不是有意义的指标 ——
+        # 中文和英文的 token/字符 差 4.5 倍）
+        "promptTokens": stats_after.get("promptTokens"),
+        "promptBudget": stats_after.get("promptBudget"),
+        "promptTokenExact": bool(stats_after.get("promptTokenExact")),
+        "droppedTerms": stats_after.get("droppedTerms") or [],
+        # 最近一次复读检测的证据（关闭降级时也有值，用来区分「没检出」和「检出但没管」）
+        "lastRepeat": stats_after.get("lastRepeat"),
         "inSegments": delta("inSegments"),
         "outSegments": delta("outSegments"),
         "paired": bool(paired),

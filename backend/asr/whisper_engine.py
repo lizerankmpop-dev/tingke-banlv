@@ -277,7 +277,8 @@ class WhisperEngine:
         self._prompt_original_sections: Optional[list] = None  # 同上，分层版本
         self._stat_in_segments = 0             # 累计送入识别的片段数（辅助告警分母）
         self._stat_out_segments = 0            # 累计产出字幕的片段数（辅助告警分子）
-        self._repetition_events = 0            # 检测到重复循环的次数
+        self._repetition_events = 0            # 检测到复读的次数（**含未降级的**）
+        self._degrade_events = 0               # 因复读真正执行降级的次数
         self._recent_text = ""                 # 最近识别文本的滚动缓冲（新判据的输入）
         self._last_verdict = None              # 最近一次重复检测结论（供 get_stats 观测）
         self._advisory_logged = False          # 辅助告警只记一次，避免刷屏
@@ -691,6 +692,14 @@ class WhisperEngine:
         if not verdict.triggered:
             return
 
+        # 检测到复读就计数，**与是否降级无关**。
+        #
+        # 这里曾经只在「真的执行了降级」时 +1，于是关闭降级的条件下
+        # `repetitionEvents` 恒为 0 —— 2026-10-06 的 A/B 里 `on-noguard` 就是
+        # 这样漏掉了一条 148 字的真实复读（离线拿全文复核才发现），
+        # 差点把「判据漏报」和「埋点没记」搞混。
+        self._repetition_events += 1
+
         if not self._auto_degrade or self._prompt_degraded:
             return
 
@@ -700,7 +709,7 @@ class WhisperEngine:
         if cost <= DEGRADE_TOKEN_BUDGET:
             return          # 本来就短，降无可降
 
-        self._repetition_events += 1
+        self._degrade_events += 1
         self._prompt_original = self.initial_prompt
         self._prompt_original_sections = self._prompt_sections
         self._prompt_degraded = True
@@ -935,6 +944,9 @@ class WhisperEngine:
             # 次数而非仅布尔：评估脚本要判断「是否触发降级告警」，
             # 以及一次运行里是偶发一次还是持续触发（后者说明术语表本身就过长）
             "repetitionEvents": self._repetition_events,
+            # 真正执行降级的次数。`repetitionEvents` 统计的是**检出**次数，
+            # 关闭自动降级时它仍会增长（否则就是观测盲区，见 _note_produced_text）
+            "degradeEvents": self._degrade_events,
             # 最近一次文本重复检测的证据摘要（新判据）。关闭自动降级时依然有值，
             # 这样「用户关了保护之后到底有没有复读」是可观测的，而不是只能靠猜。
             "lastRepeat": (

@@ -405,6 +405,7 @@ def _bare_engine(
     engine._stat_in_segments = 0
     engine._stat_out_segments = 0
     engine._repetition_events = 0
+    engine._degrade_events = 0
     # 新判据（文本自我重复检测）的字段，见 asr/repetition.py
     engine._recent_text = ""
     engine._last_verdict = None
@@ -557,6 +558,7 @@ class TestTermPromptGuard:
 
         assert engine._prompt_degraded is True
         assert engine._repetition_events == 1
+        assert engine._degrade_events == 1
         assert "重复" in engine._last_verdict.summary
         # P0-3 起降级改的是**预算**而不是字符串 —— 按字符砍尾巴会砍掉优先级最高
         # 的术语（那正是 P0-3 的老毛病），所以完整版只留档、不裁剪。
@@ -564,6 +566,15 @@ class TestTermPromptGuard:
         assert engine.initial_prompt == LONG_PROMPT
         engine._build_prompt()
         assert engine._last_budget.budget == DEGRADE_TOKEN_BUDGET
+
+    def test_repeated_detection_counts_but_degrades_once(self):
+        """持续复读：检出次数持续增长，但降级只执行一次（幂等）"""
+        engine = _bare_engine(initial_prompt=LONG_PROMPT)
+        for _ in range(5):
+            engine._note_produced_text(REPEAT_TANDEM)
+
+        assert engine._repetition_events == 5, "每次检出都要计数（这是复读严重程度信号）"
+        assert engine._degrade_events == 1, "降级只需一次，重复降级没有意义"
 
     def test_sentence_loop_detected(self):
         """成句复读（不是「级测试」那种机械重复）也要抓到"""
@@ -617,12 +628,21 @@ class TestTermPromptGuard:
         assert engine._prompt_degraded is True
 
     def test_can_be_disabled(self):
-        """关闭「自动降级」后，再严重的重复也不动提示词，但结论仍要可观测"""
+        """
+        关闭「自动降级」后，再严重的重复也不动提示词，但**结论仍要可观测**
+
+        `repetitionEvents` 统计的是检出次数、与是否降级无关 —— 这条曾经只在
+        真的降级时才 +1，于是 2026-10-06 的 A/B 里 `on-noguard` 条件下
+        `repetitionEvents` 恒为 0，一条 148 字的真实复读被埋点漏记，
+        差点误判成「判据漏报」。
+        """
         engine = _bare_engine(initial_prompt=LONG_PROMPT, auto_degrade=False)
         engine._note_produced_text(REPEAT_TANDEM)
 
         assert engine._prompt_degraded is False
         assert engine.initial_prompt == LONG_PROMPT
+        assert engine._repetition_events == 1, "关闭降级也必须记下检出次数"
+        assert engine._degrade_events == 0, "关闭降级就不该有降级次数"
         # 关了保护不代表看不见：最近一次结论仍要留痕
         assert engine._last_verdict.triggered is True
         assert engine.get_stats()["lastRepeat"]
