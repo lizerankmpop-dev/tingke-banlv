@@ -3,6 +3,8 @@
 > 状态：**加载链路已实现（2026-10-07）**；`icon.ico` 当前为**占位版本**（生成器
 > `frontend/scripts/make-placeholder-icon.py`，语义＝深紫底 + 字幕条，符合 §3/§4
 > 全部格式要求），正式美术资源交付后直接覆盖 `frontend/build/icon.ico` 即可。
+> **换图工具链已就位（2026-10-07）**：产物层校验 `scripts/icon_assets.py`（§8.4）
+> + 换图一条命令（§6.1.1），美术资源到位后按 §8.3 执行即可。
 > 交付清单与验收方式见 `frontend/build/README.md` 与本文 §六。
 > 目标版本：M3
 > 前置依赖：需要先产出美术资源（见 §4）
@@ -233,23 +235,61 @@ mainWindow = new BrowserWindow({
 
 | # | 验收项 | 验证方式 |
 |---|---|---|
-| 1 | `icon.ico` 含 7 档尺寸 | `python -c "from PIL import Image; print(Image.open('frontend/build/icon.ico').info['sizes'])"` 或任意 ico 查看器 |
-| 2 | 256 档为 PNG 压缩 | 检查 ico 总体积（应 < 400 KB，通常 100–250 KB） |
-| 3 | 色深为 32 位 RGBA | ico 查看器确认 |
-| 4 | 16px 可辨识 | 缩到 16px 目视确认（**人工判断，不可跳过**） |
-| 5 | 构建无图标警告 | `npm run electron:build` 输出中无 `default Electron icon is used` 提示 |
-| 6 | 产物 exe 内嵌图标已替换 | 资源管理器里查看 `release/win-unpacked/*.exe` 图标 |
+| 1 | `icon.ico` 含 7 档尺寸 | `python scripts/icon_assets.py check frontend/build/icon.ico` |
+| 2 | 256 档为 PNG 压缩 | 同上（工具直接判 256 档编码，不再靠体积反推） |
+| 3 | 色深为 32 位 RGBA | 同上（BMP 档判 32 位 + DIB 高度含 AND 掩码） |
+| 4 | 1–3 项 + 第 7 项一键过 | `python scripts/icon_assets.py audit` |
+| 5 | 16px 可辨识 | 缩到 16px 目视确认（**人工判断，不可跳过**） |
+| 6 | 构建无图标警告 | `npm run electron:build` 输出中无 `default Electron icon is used` 提示 |
+| 7 | 产物 exe 内嵌图标已替换 | 同上 `audit` 第 [2]/[3] 段；也可 `python scripts/icon_assets.py pe <exe>` |
+
+> **为什么不再用 Pillow**：本项目 venv **没有装 PIL**（见 `README.md` 环境说明），
+> 而这一项不值得为它引依赖。`scripts/icon_assets.py` 用纯标准库解 ico 容器与 PE
+> 资源目录，第 1–3、7 项全部机器可判、退出码可入流水线。
+>
+> **第 6 项只能看构建日志**：electron-builder 回落默认图标时会打印一句
+> `default Electron icon is used`。注意**回落不报错、不中断构建**——只看退出码会漏。
+>
+> **第 5 项是唯一必须人眼的**，没有任何工具能替代：把 ico 缩到 16px 实际看一眼，
+> 只剩色块就推翻重做（§4.1 第 1 条）。
+
+#### 6.1.1 换图后的一条命令（推荐流程）
+
+```bash
+# 1) 先验美术交付件本身（还没进仓库就能判，不通过直接打回）
+<venv>/python.exe scripts/icon_assets.py check 美术交付/icon.ico
+
+# 2) 覆盖 + 清构建缓存 + 重建
+cp 美术交付/icon.ico frontend/build/icon.ico
+rm -rf frontend/release/            # 不清会复用旧 exe，图标看起来"没换"
+cd frontend && npm run electron:build
+
+# 3) 验产物：ico 本体 + win-unpacked exe + NSIS 安装包
+<venv>/python.exe scripts/icon_assets.py audit
+```
+
+`audit` 会同时对拍三份产物（详见 §8.4）。**2026-10-07 实测**：electron-builder
+在 `win.icon` 生效时，应用 exe 与 NSIS 安装包**都保留全部 7 档** —— 所以
+「安装包里档位不足」同样按 FAIL 判，不是提示。
 
 ### 6.2 实装检查（安装后逐一确认六处落点）
 
-| # | 落点 | 期望 |
-|---|---|---|
-| 1 | 安装向导（setup.exe 双击） | 显示新图标 |
-| 2 | 桌面快捷方式 | 新图标 |
-| 3 | 开始菜单项「听课伴侣」 | 新图标 |
-| 4 | 任务栏（运行中） | 新图标，**且只有一个图标** |
-| 5 | Alt+Tab 切换器 | 新图标 |
-| 6 | 控制面板 → 程序和功能 → 「听课伴侣」 | 新图标 |
+| # | 落点 | 期望 | 判据 |
+|---|---|---|---|
+| 1 | 安装向导（setup.exe 双击） | 显示新图标 | **人眼**（`audit` 只能保证安装包内嵌了 7 档） |
+| 2 | 桌面快捷方式 | 新图标 | 机器：`audit` 第 [4] 段（继承 exe 图标）+ 报快捷方式存在性 |
+| 3 | 开始菜单项「听课伴侣」 | 新图标 | 同上 |
+| 4 | 任务栏（运行中） | 新图标，**且只有一个图标** | **人眼** + `audit` 第 [4] 段（AUMID 生效见 §6.3） |
+| 5 | Alt+Tab 切换器 | 新图标 | **人眼** |
+| 6 | 控制面板 → 程序和功能 → 「听课伴侣」 | 新图标 | 机器：`audit` 第 [4] 段扫注册表 `DisplayIcon` |
+
+> **为什么 2/3/4/6 能机器判**：这四处**都不自带图标**，全部继承 `.exe` 内嵌图标
+> （6 是 `nsis.uninstallerIcon` 缺失时回落应用图标）。因此只要 exe 里的
+> `RT_GROUP_ICON` 是新的且 7 档齐，这四处必然跟着变——`audit` 直接读 PE 资源目录
+> 就能给出结论，不必一个个点开看。
+>
+> 反过来说也成立：**这四处错了不会报错、不会崩溃**，只会在用户桌面上表现为
+> 「有的地方是新图标、有的还是旧的」。这正是需要工具的原因（§8.4）。
 
 ### 6.3 AUMID 专项验证
 
@@ -265,8 +305,22 @@ mainWindow = new BrowserWindow({
 
 ### 6.4 与既有验证脚本的衔接
 
-本项应纳入 `scripts/verify_install.py`（当前 49 项）的实装验证清单，
-作为 M3 完成的硬性门槛之一。
+**分两层，别混**：
+
+| 层 | 谁负责 | 覆盖什么 | 现状 |
+|---|---|---|---|
+| 源码/配置层 | `frontend/tests/onboarding-aumid.test.cjs`（`npm test`） | AUMID 与 `build.appId` 逐字一致、`setAppUserModelId` 早于 `whenReady`、`win.icon` 指向 `build/icon.ico`、ico 容器是 7 档 | ✅ 已实现（2 条断言 + 9 条变异） |
+| **产物层** | `scripts/icon_assets.py`（`backend/tests/test_icon_assets.py` 守工具本身） | ico 本体规格、**exe 里到底嵌了哪几档**、NSIS 安装包、已安装 exe / 快捷方式 / 注册表 `DisplayIcon` | ✅ 已实现（2026-10-07） |
+| 实装环境层 | `scripts/verify_install.py` | 安装流程本身（57 步） | ⏳ **待接入**：见下 |
+
+> **接入 `verify_install.py` 的待办**（换图时一并做，届时同一次运行即可验证）：
+> 在打包验收流程里加一步，对 `frontend/build/icon.ico` 与 `release/win-unpacked/*.exe`
+> 调 `icon_assets.py` 的同名函数（不要另写一份判定逻辑——两份判据必然漂移）。
+> 这会改变 `verify_install` 的基线步数（当前 57 步 55 OK / 2 WARN / 0 FAIL），属预期。
+>
+> 为什么不现在加：工具与它的变异用例已经独立成立，不接 verify_install 也没有覆盖缺口；
+> 而现在加进去却只能跑一次装箱验收才能确认（要装 700MB 应用），不如留到换图那一次
+> 顺带落地并验证。
 
 ---
 
@@ -306,8 +360,50 @@ mainWindow = new BrowserWindow({
 
 - 覆盖占位 `icon.ico`（交付清单见 `frontend/build/README.md`：7 档、256 PNG、
   32 位 RGBA、sRGB、1024 母版下采样、16px 目视可辨识）
-- `npm run electron:build` 验证「无 `default Electron icon is used` 警告」+
-  清理 `frontend/release/` 后重建
-- §6.2 实装六处落点目检 + §6.3 AUMID 钉住图标准入验证（第 3 步是 AUMID
-  生效的唯一可靠判据）
-- 纳入 `scripts/verify_install.py` 清单（§6.4）
+- 清 `frontend/release/` → `npm run electron:build` → 确认输出无
+  `default Electron icon is used`
+- `python scripts/icon_assets.py audit`（§6.1.1）
+- §6.2 六处落点过一遍（2/3/4/6 机器判已含在 `audit` 里，1/4/5 需人眼）
+- §6.3 AUMID 钉住图标准入验证（第 3 步是 AUMID 生效的唯一可靠判据）
+- 接入 `scripts/verify_install.py`（§6.4）
+
+### 8.4 产物层校验工具 `scripts/icon_assets.py`（2026-10-07 新增）
+
+**为什么需要它**：上面那些源码层守卫全部建立在「文件就在那儿」之上，
+**证明不了图标真的被塞进了 exe**。而六处落点中有 4 处（桌面 / 开始菜单 / 任务栏 /
+控制面板）**继承 exe 内嵌图标**，exe 错了它们一起错，且**不报错、不崩溃** ——
+只会在用户桌面上表现为「有的地方是新图标、有的还是默认图标」。
+
+| 子命令 | 作用 |
+|---|---|
+| `check <ico>` | 校验一份 ico 本体：7 档齐全、位深/掩码、色彩类型、256 档 PNG 压缩、体积上限、目录项与 PNG 本体尺寸自洽 |
+| `pe <exe> [...]` | 读 PE 资源目录 `RT_GROUP_ICON`，列出 exe 实际内嵌的尺寸档并与 `build/icon.ico` 对拍 |
+| `audit` | 一键：ico 本体 + `release/win-unpacked/*.exe` + NSIS 安装包 + 已安装 exe/快捷方式/注册表 `DisplayIcon`，最后列出仍需人眼的 5 项 |
+
+退出码 0 / 1 / 2（符合预期 / 有不符合项 / 文件不存在），可直接入流水线。
+
+**实现要点**（踩过的坑，改这个文件前先读）：
+
+1. 纯标准库，不引 Pillow/pefile —— 本机 venv 没有 PIL，这项不值得加依赖。
+2. `IMAGE_RESOURCE_DIRECTORY` 的 `OffsetToData` 在**目录层级是相对资源目录起点的偏移**，
+   只有最底层数据项里才是 RVA。写错就会读出垃圾尺寸，且不报错。
+3. `GRPICONDIRENTRY` 是 **14 字节**（比 ico 目录项的 16 字节少），照 16 读会错位。
+4. 解析异常必须转成「问题清单」而不是抛栈 —— 换图当天第一个被怀疑的该是图标，
+   不是「工具崩了」。
+5. **256 档必须 PNG 压缩这条要两个方向都判**。首版只在 `kind == 'png'` 分支里检查，
+   于是「7 档齐、位深全对、只有 256 档是裸 BMP」——美术用普通导出工具存盘最常见的
+   产物 —— 完全不报错。补上 `size == 256 and kind != 'png'` 的反向断言才抓住。
+
+**工具自身的正确性**由 `backend/tests/test_icon_assets.py` 保证：12 条用例，
+其中 10 条是**变异用例**（进程内构造坏 ico 字节流，不碰真实文件），改坏工具里
+任何一条断言都必须让对应用例变红。实测两条新断言各做过一次变异探针，都是
+「去掉即红、且只有那一条红」。改 `icon_assets.py` 后必须重跑：
+
+```bash
+<venv>/python.exe -m pytest backend/tests/test_icon_assets.py -v
+```
+
+> **已知局限**（别当成"验过了"，详见脚本头部注释）：
+> exe 那一段**只对拍尺寸档位**，不校验内嵌图标的编码与位深；快捷方式只报存在性
+> （它本来就不带图标）；目视类判据机器判不了。
+

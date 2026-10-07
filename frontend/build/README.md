@@ -36,6 +36,28 @@
       实装六处落点（安装向导 / 桌面快捷方式 / 开始菜单 / 任务栏 / Alt+Tab /
       控制面板卸载项）
 
+## 换图后的机器校验（`scripts/icon_assets.py`）
+
+上面那份清单里，除了「16px 目视」和「构建警告」，**其余都能机器判**。换图后跑：
+
+```bash
+# 交付件先验（还没进仓库就能判，不通过直接打回美术）
+<venv>/python.exe scripts/icon_assets.py check <美术交付目录>/icon.ico
+
+# 覆盖 + 清缓存 + 重建后，验产物
+<venv>/python.exe scripts/icon_assets.py audit
+```
+
+`audit` 会对拍三份产物：`icon.ico` 本体、`release/win-unpacked/*.exe`、
+NSIS 安装包，并在装完之后把已安装 exe / 快捷方式 / 注册表 `DisplayIcon` 一起看了。
+
+> **为什么非要验产物**：六处落点里有 4 处（桌面 / 开始菜单 / 任务栏 / 控制面板）
+> **继承 exe 内嵌图标**。exe 错了它们一起错，**不报错、不崩溃** —— 只表现为
+> 「有的地方是新图标、有的还是旧的」。源码层守卫（`npm test` 里的 AUMID 用例）
+> 只能证明配置写对了，证明不了图标真的进了 exe。
+>
+> 详见 `docs/m3/icon_asset_spec.md` §8.4。
+
 ## 重新生成占位图标（一般不需要）
 
 ```bash

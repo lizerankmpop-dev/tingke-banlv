@@ -411,12 +411,14 @@ tingke-banlv/
 │   ├── make_asr_testset.py    # 合成多场景压力测试集
 │   ├── bench_asr.py           # 实时性基准（RTF）
 │   ├── bench_matrix.py        # 参数矩阵基准（模型 × 线程 × 片段长度）
+│   ├── drive-onboarding.cjs   # CDP 驱动打包应用跑首启向导（6 个模式）
+│   ├── icon_assets.py         # 应用图标产物层校验（ico 规格 + exe 内嵌图标对拍）
 │   └── verify_install.py      # 安装包实装验证
 ├── docs/
-│   └── m3/                # M3 规划文档（设计稿，未实现）
+│   └── m3/                # M3 文档（设计稿 + 实现说明 + 验收记录）
 │       ├── onboarding_wizard.md      # 首启向导：分步文案 + 热键 + 降级开关说明
 │       ├── icon_asset_spec.md        # 应用图标：多尺寸清单 + 嵌入位置 + 验收
-│       └── backlog_b1_b2_b3.md       # UI 缺陷 Backlog（B1–B5）
+│       └── backlog_b1_b2_b3.md       # UI 缺陷 Backlog（B1–B5，已全部修复）
 └── ASR_Pipeline_Validation_Report.md   # ASR 管道验证报告（P3 里程碑）
 ```
 
