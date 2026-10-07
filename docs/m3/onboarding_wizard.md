@@ -695,9 +695,20 @@ critical=False 不影响结论），并生成随报告归档的人工清单
 | 段 | 手段 | 结论 |
 |---|---|---|
 | 全自动 | `scripts/verify_install.py --installer frontend/release/tingkebanlv-3.4.0-setup.exe`（隔离 `TINGKEBANLV_HOME`） | **57 步 55 OK / 2 WARN / 0 FAIL**（WARN 同 §11，仍为已知非阻断） |
-| CDP 向导 6 步 | `scripts/drive-onboarding.cjs <home> run12` | **11/11**（走完 6 步 → `completed:true` / `stepReached:6`；重启不再弹） |
-| 第 3 步播种态 | `scripts/drive-onboarding.cjs <home> step3`（**本轮新增模式**） | **3/3** |
-| 静态回归 | `tsc --noEmit` / `npm test` / `pytest` / `npm run test:smoke` | 0 错 / **150 通过** / **133 通过 + 1 跳过** / **12/12** |
+| 静态回归 | `tsc --noEmit` / `npm test` / `pytest backend/tests/ -v` / `npm run test:smoke` | 0 错 / **150 通过** / **133 通过 + 1 跳过** / **12/12** |
+| CDP ①全新弹出+②完成不弹 | `drive-onboarding.cjs <home> run12` | **11/11** |
+| CDP ③跳过不弹 | `drive-onboarding.cjs <home> run3` | **5/5** |
+| CDP ④升级不弹 | `drive-onboarding.cjs <home> run4` | **4/4** |
+| CDP ⑤第 4/6 步文案 | `drive-onboarding.cjs <home> run5` | **6/6** |
+| CDP ⑥第 3 步播种态 | `drive-onboarding.cjs <home> step3`（**新增模式**） | **4/4** |
+| CDP ⑥b 播种超时兜底 | `drive-onboarding.cjs <home> step3fail`（**新增模式**） | **5/5** |
+
+CDP 合计 **35/35**（6 个模式）；报告与日志：`packaging/verify/cdp-all-defectB.log`、`pytest-defectB.log`。
+
+**测试隔离的量化证据**（对应「pytest 下不会真拷 141MB」这条校验点）：跑完后统计所有
+conftest 造的隔离 home（`%TEMP%/tingke-banlv-test-home-*`，7 个）合计 **0.00 MB** ——
+`whisper_models` 目录被创建但内容为空，说明 `TINGKEBANLV_SKIP_BACKGROUND_SEED=1`
+确实生效，播种只在**假种子**上发生。**光看目录存在会误判**（目录是创建的，体积才是判据）。
 
 安装包：`tingkebanlv-3.4.0-setup.exe`（288.4MB，构建于 10-07 14:05，含重打的冻结后端）。
 重打前的版本保留在 `frontend/release.preDefectB/`（它正是第 3 步必失败的那个版本，可做前后对照）。
@@ -786,7 +797,34 @@ ok ⑥ 播种期间不停在失败态 — 当前步=3
 ok ⑥ 模型就绪后自动跳到第 4 步（无需用户点击） — 当前步=4
 ```
 
-### 12.7 顺带修掉的验收工具缺陷（都在本轮暴露）
+### 12.7 兜底：播种**始终不完成**时不能让用户卡死（`step3fail` 模式）
+
+上面那条验的是「播种会成功」。但更难的是**万一不会成功**：种子损坏、磁盘满、杀软锁文件、
+超慢网络盘……用户不能停在一个永远转圈的界面上。对应前端设计是
+`SEED_TIMEOUT_ATTEMPTS = 90`（≈90s）后落 `failed`，给「重试 / 导出日志 / 先跳过，稍后再说」。
+
+做法与 §12.6 同源，只是**把响应一直钉在 `seeding:true`**（永远不完成），等前端自己的
+超时兜底触发。实测（5/5）：
+
+```
+ok ⑥b 播种超时后进入失败分支
+   — 第 3 / 6 步 正在准备语音模型 模型准备失败。 请尝试： 关闭应用后重新打开（会自动重试）
+     若反复失败，点击下方按钮导出日志，反馈给开发者 重试 导出日志 先跳过，稍后再说 跳过 上一步 下一步
+ok ⑥b 失败分支保留「重试」与「先跳过，稍后再说」 — 重试 / 导出日志 / 先跳过，稍后再说 / 跳过 / 上一步 / 下一步
+ok ⑥b 点「重试」后重新进入播种态（不是停在失败）
+ok ⑥b 重试后模型就绪仍能自动跳到第 4 步 — 当前步=4
+```
+
+> **「点重试后重新进入播种态」这条是缺陷 B 的回归护栏。** 原缺陷最刺眼的症状就是
+> 「反复点重试也没用」——因为当时的重试只重新探测、而没有任何人会去播种。
+> 现在重试会重走 `seeding` 分支（`onRetry` 清零 `attemptsRef`，后端若仍未就绪则
+> model-status 兼作触发点再拉一次播种），所以这条断言必须常驻。
+
+补一句关于「关闭应用后重新打开（会自动重试）」这句恢复说明：**它现在才是真的** ——
+重启会重走 lifespan 播种；修复前它是无效引导（§11.4 根因链第 5 条），但文案本身是对的，
+所以刻意保留、没有改。这条也解释了为什么 §12.1 选方案 A：只需把承诺补上，不必动文案。
+
+### 12.8 顺带修掉的验收工具缺陷（都在本轮暴露）
 
 1. **`smoke-overlay.cjs` 选靶顺序相关**（真红，11/12 → 12/12）：
    `pages = all` 之后 `pages` 换成了**重新拉取的一批新对象**，而 `overlay` 还是旧对象，
@@ -796,7 +834,7 @@ ok ⑥ 模型就绪后自动跳到第 4 步（无需用户点击） — 当前�
 2. **`verify_install.py` 播种断言盲区**：见 §12.4。
 3. **`drive-onboarding.cjs` 新增 `step3` 模式**：见 §12.6。
 
-### 12.8 遗留与注意
+### 12.9 遗留与注意
 
 - 「正在复制模型种子」在**本机**几乎不可见（0.1~0.4s）；只有慢盘/冷缓存/杀软扫描的
   用户机上才会停留几秒。文案本身已由 `step3` 模式钉住，不需要真机慢盘复现。

@@ -21,6 +21,7 @@
  *   node drive-onboarding.cjs <home> run4  [port]   # ④已有 completed=true（老用户升级）不弹
  *   node drive-onboarding.cjs <home> run5  [port]   # ⑤第 4/6 步文案截图（人工对照控制面板）
  *   node drive-onboarding.cjs <home> step3 [port]   # ⑥第 3 步「正在复制模型种子」+ 就绪后自动跳步
+ *   node drive-onboarding.cjs <home> step3fail [port] # ⑥b播种始终不完成 → 超时失败分支 + 重试可恢复
  *
  * 退出码：0 全部符合预期；1 有断言不符；2 环境不满足（起不来 / 找不到向导窗口）
  */
@@ -60,6 +61,7 @@ const BTN = {
   skip: '跳过，直接使用',
   skipAll: '跳过',
   step3Later: '先跳过，稍后再说',
+  retry: '重试',
 }
 
 // 第 3 步的相位文案（同样与 WIZARD_COPY 一一对应）。
@@ -615,6 +617,85 @@ async function run5() {
  * 而「后端在播种时确实会给出这个状态」由上面那个后端测试与 verify_install 的
  * 「应用启动后自行播种模型」断言分别覆盖，两段合起来才是完整链路。
  */
+/**
+ * 把 `/api/asr/model-status` 的响应钉成 payload，返回「解除拦截」的函数。
+ *
+ * 为什么每条被暂停的请求都必须 fulfill：页面是 1s 轮询，漏掉一条它就永远等不到
+ * 响应，轮询会越积越多、最后把界面卡死。
+ */
+async function stubModelStatus(conn, payload) {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')
+  conn.ws.addEventListener('message', (ev) => {
+    try {
+      const text = typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8')
+      const msg = JSON.parse(text)
+      if (msg.method === 'Fetch.requestPaused') {
+        conn.send('Fetch.fulfillRequest', {
+          requestId: msg.params.requestId,
+          responseCode: 200,
+          responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+          body,
+        }).catch(() => {})
+      }
+    } catch { /* 二进制帧（截图）等非 JSON 消息，忽略 */ }
+  })
+  await conn.send('Fetch.enable', {
+    patterns: [{ urlPattern: '*model-status*', requestStage: 'Request' }],
+  })
+  return async () => { await conn.send('Fetch.disable') }
+}
+
+/** 拦截生效时从第 1 步推进到第 3 步（拦截期间第 3 步不会自己跳走） */
+async function gotoStep3(conn) {
+  await clickText(conn, BTN.start)
+  for (let i = 0; i < 8; i++) {
+    await sleep(900)
+    if ((await stepCounter(conn)) === 3) return true
+    await clickText(conn, BTN.next)
+  }
+  return (await stepCounter(conn)) === 3
+}
+
+/** 轮询页面可见文案，直到包含 want 或超时 */
+async function waitText(conn, want, timeoutMs, intervalMs = 800) {
+  const deadline = Date.now() + timeoutMs
+  let text = ''
+  while (Date.now() < deadline) {
+    text = String(await evalOn(conn, `document.body.innerText`))
+    if (text.includes(want)) return text
+    await sleep(intervalMs)
+  }
+  return text
+}
+
+/** 轮询步数指示，直到 >= min 或超时 */
+async function waitStepAtLeast(conn, min, timeoutMs, intervalMs = 1000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const s = await stepCounter(conn)
+    if (typeof s === 'number' && s >= min) return s
+    await sleep(intervalMs)
+  }
+  return await stepCounter(conn)
+}
+
+/**
+ * ⑥ 第 3 步「正在复制模型种子」——缺陷 B 修复的正面验收
+ *
+ * 为什么必须「构造」这个状态：本机把 141MB 种子从安装目录拷到数据目录只要
+ * **0.1~0.4s**（NVMe + 页缓存），这个中间态真实存在，但肉眼与 CDP 都抓不到，
+ * 直接跑一遍只能看到「第 3 步一闪而过」—— 证明不了那句文案真的会渲染。
+ * 所以这里用 CDP 的 Fetch 域把 `/api/asr/model-status` 的响应换成
+ * `{ok:false, seed_exists:true, seeding:true}`，把界面**钉在**播种态上读真实 DOM；
+ * 再解除拦截，验证它会自己走到第 4 步。
+ *
+ * 这不是编造数据：被替换的响应正是后端**播种期间的返回值形状**
+ * （契约见 backend/api/routes.py 的 `/asr/model-status`，
+ *   由 backend/tests/test_onboarding_model_status.py 钉住五个字段）。
+ * 换句话说，这里验的是「后端给出播种态时，界面会不会说人话」——
+ * 而「后端在播种时确实会给出这个状态」由上面那个后端测试与 verify_install 的
+ * 「应用启动后自行播种模型」断言分别覆盖，两段合起来才是完整链路。
+ */
 async function step3() {
   await killApp()
   if (fs.existsSync(OB_JSON)) fs.unlinkSync(OB_JSON) // 保证「全新」
@@ -627,61 +708,82 @@ async function step3() {
 
   // 拦截必须在**到达第 3 步之前**启用：后端此刻已经播种好了，一旦放行真实响应，
   // 第 3 步会在 900ms 后自己跳到第 4 步，根本没机会观察。
-  const stubbed = Buffer.from(
-    JSON.stringify({ ok: false, model: 'base', seed_exists: true, seeding: true, error: null }),
-    'utf8',
-  ).toString('base64')
-  // 每条被暂停的请求都必须 fulfill，否则页面会一直等（1s 轮询会越积越多）
-  conn.ws.addEventListener('message', (ev) => {
-    try {
-      const text = typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8')
-      const msg = JSON.parse(text)
-      if (msg.method === 'Fetch.requestPaused') {
-        conn.send('Fetch.fulfillRequest', {
-          requestId: msg.params.requestId,
-          responseCode: 200,
-          responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
-          body: stubbed,
-        }).catch(() => {})
-      }
-    } catch { /* 二进制帧（截图）等非 JSON 消息，忽略 */ }
-  })
-  await conn.send('Fetch.enable', {
-    patterns: [{ urlPattern: '*model-status*', requestStage: 'Request' }],
+  const unstub = await stubModelStatus(conn, {
+    ok: false, model: 'base', seed_exists: true, seeding: true, error: null,
   })
 
-  await clickText(conn, BTN.start)
-  for (let i = 0; i < 8; i++) {
-    await sleep(900)
-    if ((await stepCounter(conn)) === 3) break
-    await clickText(conn, BTN.next)
-  }
-
-  let text = ''
-  for (let i = 0; i < 24; i++) {
-    await sleep(500)
-    text = String(await evalOn(conn, `document.body.innerText`))
-    if (text.includes(COPY_STEP3_SEEDING)) break
-  }
-  const stepAtSeed = await stepCounter(conn)
+  const at3 = await gotoStep3(conn)
+  const text = await waitText(conn, COPY_STEP3_SEEDING, 12000)
   await shot(conn, 'setup-11-第3步-正在复制模型种子.png')
-  const flat = text.replace(/\s+/g, ' ')
   fs.writeFileSync(path.join(OUT_DIR, 'copy-step3-seeding.txt'), text, 'utf8')
-  check('⑥ 第 3 步显示「正在复制模型种子，请稍候」', text.includes(COPY_STEP3_SEEDING), flat.slice(0, 200))
-  check('⑥ 播种期间不停在失败态', !text.includes(COPY_STEP3_FAILED), `当前步=${stepAtSeed}`)
+  check('⑥ 第 3 步进入播种态', at3, `当前步=${await stepCounter(conn)}`)
+  check('⑥ 显示「正在复制模型种子，请稍候」', text.includes(COPY_STEP3_SEEDING), text.replace(/\s+/g, ' ').slice(0, 200))
+  check('⑥ 播种期间不停在失败态', !text.includes(COPY_STEP3_FAILED))
 
   // 解除拦截 → 真实响应 ok:true → 应自动跳到第 4 步
-  await conn.send('Fetch.disable')
-  let advanced = false
-  for (let i = 0; i < 24; i++) {
-    await sleep(1000)
-    const s = await stepCounter(conn)
-    if (typeof s === 'number' && s >= 4) { advanced = true; break }
-  }
+  await unstub()
+  const reached = await waitStepAtLeast(conn, 4, 24000)
   await shot(conn, 'setup-12-第3步解除拦截后自动跳转.png')
-  check('⑥ 模型就绪后自动跳到第 4 步（无需用户点击）', advanced, `当前步=${await stepCounter(conn)}`)
+  check('⑥ 模型就绪后自动跳到第 4 步（无需用户点击）', reached >= 4, `当前步=${reached}`)
 
   archiveLog('step3')
+  await killApp()
+  return results.every((r) => r.ok) ? 0 : 1
+}
+
+/**
+ * ⑥b 兜底：播种**始终不完成**（模拟卡死/慢盘超时）→ 必须落到失败分支，
+ * 且保留「重试」与「先跳过，稍后再说」；点「重试」要真的重新探测，
+ * 就绪后仍能自动跳步（不能把用户永久锁死在失败态）。
+ *
+ * 做法与 step3 同源：响应一直钉成 `seeding:true`，等前端自己的
+ * `SEED_TIMEOUT_ATTEMPTS`（90 次 ≈ 90s）触发失败分支 —— 验的是**前端超时兜底真的存在**，
+ * 而不是「后端会不会失败」（后者由 test_model_seed_background 的错误枚举覆盖）。
+ */
+async function step3fail() {
+  await killApp()
+  if (fs.existsSync(OB_JSON)) fs.unlinkSync(OB_JSON)
+  if (fs.existsSync(LOG_FILE)) fs.unlinkSync(LOG_FILE)
+
+  launch()
+  const w = await openWizard(90)
+  if (!w) return 2
+  const { conn } = w
+
+  const unstub = await stubModelStatus(conn, {
+    ok: false, model: 'base', seed_exists: true, seeding: true, error: null,
+  })
+
+  const at3 = await gotoStep3(conn)
+  check('⑥b 已到达第 3 步', at3, `当前步=${await stepCounter(conn)}`)
+
+  console.log('[drive] 等待前端播种超时（SEED_TIMEOUT_ATTEMPTS=90 ≈ 90s）…')
+  const text = await waitText(conn, COPY_STEP3_FAILED, 150000, 3000)
+  await shot(conn, 'setup-13-第3步播种超时进入失败分支.png')
+  fs.writeFileSync(path.join(OUT_DIR, 'copy-step3-timeout.txt'), text, 'utf8')
+  check('⑥b 播种超时后进入失败分支', text.includes(COPY_STEP3_FAILED), text.replace(/\s+/g, ' ').slice(0, 200))
+
+  const bs = await buttons(conn)
+  const labels = bs.map((b) => b.text).filter(Boolean)
+  check(
+    '⑥b 失败分支保留「重试」与「先跳过，稍后再说」',
+    labels.includes(BTN.retry) && labels.includes(BTN.step3Later),
+    labels.join(' / '),
+  )
+
+  // 「重试」必须真的重新探测（回到非终态），而不是停在失败页 —— 原缺陷的典型症状
+  // 恰恰是「点重试也没用」，所以这条是缺陷 B 的回归护栏。
+  await clickText(conn, BTN.retry)
+  const back = await waitText(conn, COPY_STEP3_SEEDING, 10000)
+  check('⑥b 点「重试」后重新进入播种态（不是停在失败）', back.includes(COPY_STEP3_SEEDING))
+
+  // 解除拦截：真实响应变 ok:true → 重试后的等待应成功并自动跳步
+  await unstub()
+  const reached = await waitStepAtLeast(conn, 4, 24000)
+  await shot(conn, 'setup-14-第3步重试后解除拦截自动跳转.png')
+  check('⑥b 重试后模型就绪仍能自动跳到第 4 步', reached >= 4, `当前步=${reached}`)
+
+  archiveLog('step3fail')
   await killApp()
   return results.every((r) => r.ok) ? 0 : 1
 }
@@ -703,7 +805,7 @@ process.on('unhandledRejection', (e) => {
     console.error('[drive] 需要 Node 22+（依赖内置 WebSocket），当前 ' + process.version)
     process.exit(2)
   }
-  const table = { run12, run3, run4, run5, step3 }
+  const table = { run12, run3, run4, run5, step3, step3fail }
   const fn = table[MODE]
   if (!fn) {
     console.error(`[drive] 未知 mode: ${MODE}（可选 ${Object.keys(table).join(' / ')}）`)
