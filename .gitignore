@@ -57,3 +57,13 @@ testset/**/*.ogg
 testset/**/*.opus
 testset/**/*.m4s
 testset/**/*.webm
+
+# 草稿类中间产物：ASR 输出，本质是受版权保护音频的机器转录。
+# 它们既不是成品（逐字稿要人工校对后才是），又不能脱离音频单独使用，
+# 一旦被 git add -A 扫进去，等于把第三方课程内容搬进了仓库。
+# 第五轮实测：real/ 下的 draft.json/txt/srt + review.html 正好处于
+# 「未跟踪但未被忽略」状态，必须显式屏蔽。
+testset/**/*.draft.json
+testset/**/*.draft.txt
+testset/**/*.draft.srt
+testset/**/*.review.html
