@@ -91,6 +91,11 @@ def parse_corrections(text: str) -> list[Correction]:
     首行的 BOM 也必须先去掉：这张表**是给人编辑的**，用 Excel / 记事本存一次就会
     带上 `\\ufeff`。它既不是空白也不以 `#` 开头，会让第 1 行注释被当成数据行而报
     「只收到 1 列」——报错信息还指向无关的地方。（读盘侧同样用 `utf-8-sig`，双保险。）
+
+    **行尾则刻意不处理**（别在这里加 `.replace("\\r", "")`）：`str.splitlines()` 已把
+    `\\r\\n` 与孤立 `\\r` 都当作换行消费掉，`read_text` 还会先做一次通用换行转换 ——
+    两层都在，`\\r` 根本到不了字段里。实测：加上的 `\\r` 归一是**死代码**，
+    连配套的「CRLF 用例」在没有它时也是绿的（变异探针判不出来）。
     """
     text = text.lstrip("\ufeff")
     out: list[Correction] = []

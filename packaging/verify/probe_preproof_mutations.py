@@ -52,8 +52,8 @@ MUTATIONS = [
     (
         "B. 去掉 BOM 剥离",
         "preproof_transcript.py",
-        '    text = text.lstrip("\\ufeff")\n',
-        "",
+        'text.lstrip("\\ufeff")',
+        "text",
         T.test_parse_corrections_strips_leading_bom,
     ),
     (

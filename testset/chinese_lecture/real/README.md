@@ -12,11 +12,14 @@ testset/chinese_lecture/real/
   <name>.txt                       ← 人工校对后的逐字稿（本地持有，不入库）
   <name>.draft.json / .draft.txt   ← ASR 草稿（本地持有，不入库）
   <name>.draft.srt / .review.html  ← 字幕式 / 校对页（本地持有，不入库）
+  <name>.corrections.tsv           ← ASR 纠错规则表 ★入库（见下方「例外②」）
+  <name>.preproof.*                ← 预校对稿（txt/json/suspects/review.html，不入库）
   metadata.json                    ← 素材清单（kind: "REAL" + sha256 + 时长）★唯一入库
   README.md                        ← 本文件 ★入库
 ```
 
-> **本目录除 `README.md` 与 `metadata.json` 外，一律不入库**（`.gitignore` 用白名单实现）。
+> **本目录除 `README.md`、`metadata.json` 与 `*.corrections.tsv` 外，一律不入库**
+> （`.gitignore` 用白名单实现）。
 > 音频含他人声音自不必说；**人工校对后的逐字稿同样是原音频的衍生转录作品，受版权保护**
 > —— 与素材本身承担同一套约束（2026-10-07 裁决）。
 >
@@ -25,6 +28,35 @@ testset/chinese_lecture/real/
 >
 > **代价（明确接受过）**：P3 结论无法从仓库直接复现。缓解方式是 metadata 里记全
 > `bv` + 截取区间 + `sha256`：音频可按 BV 号与区间重新获取，但**逐字稿需要重新校对**。
+
+### 例外②：为什么 `*.corrections.tsv` 可以入库（答辩可照此解释）
+
+判据一句话：**规则表 vs 完整转录稿** —— 不是「重要 vs 不重要」，也不是「我们整理的就能入库」。
+
+| | 逐字稿（`<name>.txt` / `.preproof.*` / `.draft.*`） | 纠错规则表（`<name>.corrections.tsv`） |
+|---|---|---|
+| 内容性质 | 原音频的**完整转录作品**，可独立阅读 | `错字模式 → 正确术语` 的**映射规则**，不可独立阅读 |
+| 与原音频的关系 | 一一对应，脱离音频即失去意义 | **可脱离**音频与该节课单独使用 |
+| 复用性 | 换素材即作废，必须重校 | 换素材**直接复用**，是新素材的起点 |
+| 体积 / 占比 | 成篇讲课文本（本节课 3039 字） | 只有短片段（模式与术语，合计千字以内） |
+| 结论 | ❌ 不入库 | ✅ 入库，沉淀为项目 ASR 纠错知识库 |
+
+三点说明：
+
+1. **它不含成篇文本。** 表里是 `坐标戏 → 坐标系`、`离秘 → 厘米` 这类词级映射，
+   外加少量上下文片段；README 本节的「逐字稿要求」已明确 `听不清的片段标 [听不清]`，
+   规则表同理只保留**定不死就标出、不猜**的记录。
+2. **它是可复用资产。** 本项目后续每一节真实课都要走同一套预校对流程
+   （`scripts/preproof_transcript.py`），这份表是**唯一**能跨素材积累的部分；
+   不入库等于每换一节课就把人工裁决重造一遍。
+3. **不构成滑坡。** 判据是**可读性 + 可复用性**，而非「文件在哪个目录」：
+   任何**可脱离音频独立阅读的成篇转录**（含人工定稿、预校对稿、字幕、校对页 HTML）
+   依旧一律不入库。`.gitignore` 里对应的是 `*.corrections.tsv` **这一种后缀**，
+   不是「real/ 下的一切」。
+
+> 用通配 `*.corrections.tsv` 而不是写死 `real_zhlecture_origin_plot.corrections.tsv`：
+> 写死 = 下次换素材**默认漏掉**（与白名单「默认值落在安全一侧」的本意相反）。
+> 能匹配上这条通配的只有规则表这一类文件。
 
 ## 素材可复现性
 
@@ -51,8 +83,13 @@ testset/chinese_lecture/real/
 - 记录**实际听到的内容**，包括口误（可加 `（口误）` 标注）、重复词、口头禅
 - 英文术语按实际读音记（读作字母则记字母，如 `f one score` → `f1score`；按读音则记 `adam`）
 - 宁缺毋滥：听不清的片段标 `[听不清]`，**不要猜**——猜出来的字会污染 CER
+- 两种「存疑」标记分属不同阶段，别混：
+  - **`【?…?】` = 预校对页的临时标记**（`scripts/preproof_transcript.py` 给「定不死」的碎片打的）。
+    它**必须**在复核时被消掉 —— `check_transcript.py` 的「未校对痕迹」会把它判 FAIL。
+  - **`[听不清]` = 定稿里保留的诚实留白**（复核时确实听不出来才用，不是没听）。
+    它是终态标记，可以通过校验；CER 统计时按已知的留白处理。
 
-## 制作流程（四步，工具已就绪）
+## 制作流程（五步，工具已就绪）
 
 ```bash
 # ⓪ 拉素材（仅第三方平台素材需要；自录的跳到 ①）
@@ -69,14 +106,27 @@ testset/chinese_lecture/real/
 #     backend/asr/prompt_echo.py；这里看的是它到底有没有生效。
 <venv>/python.exe scripts/asr_draft_transcript.py --audio testset/chinese_lecture/real/<name>.wav
 
-# ② 打开 review.html 逐段校对（空格播放当前段 / Ctrl+←→ 切段 / 自动存浏览器）
-#     改完点「导出 txt」，覆盖到 <name>.txt
+# ② 预校对：高置信同音误识别批量替换 + 定不死的碎片标 `【?…?】`（不猜）
+#     修正表是外置 TSV（`kind pattern replacement note`），人工把某行 kind 改成
+#     `suspect` 即等于否决该替换，**不必改脚本**。三条硬规则（fix 先于 suspect /
+#     组内长 pattern 优先 / 零命中行报错退出）与产出清单见
+#     scripts/preproof_transcript.py 的模块文档。
+#     产出：<name>.preproof.{json,txt,review.html,changes.tsv,suspects.md}
+#     ⚠ 修正表写完必须**再扫一遍输出**：工具只保证「表里每行都命中过」，
+#       不保证「原文里的错字都被表覆盖」（同音字有多种写法，实测漏过 `做标系`）。
+<venv>/python.exe scripts/preproof_transcript.py \
+    --draft testset/chinese_lecture/real/<name>.draft.json \
+    --corrections testset/chinese_lecture/real/<name>.corrections.tsv
 
-# ③ 合规校验（字数/语速/未校对标记/重复段/校对痕迹，含 --selftest 探针）
+# ③ 打开 preproof.review.html 逐段复核（空格播放当前段 / Ctrl+←→ 切段 / 自动存浏览器）
+#     把每一处 `【?】…【?】` 对着音频改成听清的词（连标记一起删），导出的 txt
+#     覆盖为 <name>.txt —— 这就是定稿逐字稿。
+
+# ④ 合规校验（字数/语速/未校对标记/重复段/校对痕迹，含 --selftest 探针）
 <venv>/python.exe scripts/check_transcript.py --audio testset/chinese_lecture/real/<name>.wav
 ```
 
-只有 ③ 打印「可用 ✓」的逐字稿才算完成，之后才能跑最终评估：
+只有 ④ 打印「可用 ✓」的逐字稿才算完成，之后才能跑最终评估：
 
 ```bash
 <venv>/python.exe scripts/eval_asr_quality.py \
@@ -167,9 +217,12 @@ testset/chinese_lecture/real/
 ## 隐私与合规
 
 - 音频含教师/同学声音：**只做本地评估，不上传、不入库、不外发**。
-- **本目录统一规则**：除 `README.md` 与 `metadata.json` 外**全部不入库**，
+- **本目录统一规则**：除 `README.md`、`metadata.json` 与 `*.corrections.tsv`（唯一例外，
+  判据见上文「例外②：规则表 vs 完整转录稿」）外**全部不入库**，
   自录与第三方素材**同一标准**（2026-10-07 裁决）。自录素材在版权上本可入库，
-  但规则越简单越不会被绕过 —— 一处例外就会变成长期的口子。
+  但规则越简单越不会被绕过 —— 所以**判据按内容性质写死（能否脱离音频独立阅读），
+  而不是按文件名逐个开**；任何成篇转录（含人工定稿、预校对稿、字幕、校对页 HTML）
+  都不在例外之列。
 - **第三方素材**：`metadata.json` 里登记来源、授权方式与 `sha256`。
   **逐字稿同样是受版权保护的转录作品**，不能因为是我们整理的就可以入库。
 - 逐字稿入库前确认不含姓名、学号、联系方式等个人信息（口误里常出现点名，注意删改）。

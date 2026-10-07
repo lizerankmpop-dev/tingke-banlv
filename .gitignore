@@ -82,3 +82,13 @@ testset/**/*.review.html
 testset/chinese_lecture/real/*
 !testset/chinese_lecture/real/README.md
 !testset/chinese_lecture/real/metadata.json
+# ★例外②：**ASR 纠错规则表**（`*.corrections.tsv`）入库（2026-10-07 用户裁决）。
+# 判据是「规则表 vs 完整转录稿」，不是「重要 vs 不重要」：它是 `错字模式 → 正确术语`
+# 的映射（`坐标戏 → 坐标系`、`离秘 → 厘米`、`布可 → Book`），**不是可读的成篇讲稿**，
+# 可脱离音频与本节课单独复用；换素材时它是该**沉淀进知识库**的资产，
+# 不入库等于每换一节课就把人工裁决重造一遍。
+# 用 `*.corrections.tsv` 通配而非写死文件名：写死 = 下次换素材**默认漏掉**
+# （与白名单「默认值在安全一侧」的本意相反），而能匹配上的只有规则表这一类。
+# 边界（不变）：`*.preproof.*`（预校对 txt/json/suspects/review.html）与草稿、
+# 音频一样都是**逐字稿**，一律不入库；规则表里也只有短片段，不含成篇讲课文本。
+!testset/chinese_lecture/real/*.corrections.tsv
