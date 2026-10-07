@@ -533,3 +533,116 @@ critical=False 不影响结论），并生成随报告归档的人工清单
 路径表（日志/报告/截图目录）与「安全操作」须知（清数据目录前必须先备份）；
 清单结构可整段追加回本文件 §八 归档。「重新查看引导」入口（§7）、第 3 步失败
 分支（§8-5）与兼容模式推迟（§8-6）仍属纯人工项，不在清单内。
+
+---
+
+## 十一、实装验收记录（2026-10-07）
+
+### 11.1 验收方式
+
+| 段 | 手段 | 结论 |
+|---|---|---|
+| 全自动 | `scripts/verify_install.py --installer frontend/release/tingkebanlv-3.4.0-setup.exe`（隔离 `TINGKEBANLV_HOME`） | **55 步 53 OK / 2 WARN / 0 FAIL**（WARN 为已知非阻断：NSIS `$INSTDIR` 取 npm 包名 `tingke-banlv`；卸载器自拷贝残留 `~nsu.tmp`） |
+| 人工 5 项 | `scripts/drive-onboarding.cjs`（CDP 驱动**打包后**应用，4 个 mode） | **全部通过**（①②→11/11、③→5/5、④→4/4、⑤→6/6） |
+
+安装包说明：验收用的是含 M3 代码的新包（`tingkebanlv-3.4.0-setup.exe`，295.5MB，
+构建于 10-07 01:11）；M3 之前的旧包保留在 `frontend/release.preM3/` 供升级对照。
+新包构建输出中**无 `default Electron icon is used` 警告** → 占位图标已被 electron-builder 嵌入。
+
+### 11.2 逐项结果
+
+| # | 验收项 | 结果 | 关键证据 |
+|---|---|---|---|
+| ① | 全新安装首启，向导自动弹出 | ✅ | 日志「[onboarding] 向导已打开」；`onboarding.json` = `{stepReached:1, completed:false}`；`setup-01-向导自动弹出.png` |
+| ② | 走完「完成」→ 重启不再弹出 | ✅ | 点「开始使用」后 `completed:true / stepReached:6 / durationMs:67418`；重启轮 25s 内无向导窗口、日志无「向导已打开」；`setup-02-第6步.png`、`setup-04-重启不弹（主窗口）.png` |
+| ③ | 点「跳过」→ 重启不再弹出 | ✅ | `dismissedAt` 已写入且 `completed` 仍为 false；重启轮无向导；`setup-05-跳过前.png`、`setup-07-跳过后重启（主窗口）.png` |
+| ④ | 升级场景不重复弹出 | ✅ | 预置 `completed:true` 后启动：25s 内无向导、日志干净、`onboarding.json` **逐字段一致**（升级不重置标记）；`setup-08-升级不弹（主窗口）.png` |
+| ⑤ | 第 4 步穿透提示 / 第 6 步降级文案与控制面板口径 | ⚠️ 文案检查通过，**开关名待决策** | 见 §11.5；`setup-09-第4步-穿越提示.png`、`setup-10-第6步-术语降级.png`、`copy-step4.txt`、`copy-step6.txt` |
+
+⑤ 的自动化部分：两处文案**均无**禁词（`token/预算/截断/提示词/initial_prompt/智能降级`）；
+第 6 步含「重新开始听课（停止识别再开始）就会恢复完整术语表」。
+
+### 11.3 证据文件
+
+| 类型 | 路径 |
+|---|---|
+| 全自动报告 | `packaging/verify/report-m3.json` |
+| 人工清单 | `packaging/verify/onboarding-manual-checklist.md` |
+| 截图（8 张） | `packaging/verify/screenshots/setup-01…10*.png` |
+| 向导日志（留档） | `packaging/verify/onboarding-{run1,run2,skip-run1,skip-run2,copy,upgrade}.log` |
+| 抓取的文案 | `packaging/verify/copy-step4.txt`、`copy-step6.txt` |
+| 驱动工具 | `scripts/drive-onboarding.cjs` |
+
+### 11.4 验收中发现的两个缺陷
+
+#### 缺陷 A（**已修复**）：安装包内后端不认识 `/api/asr/model-status`
+
+- **现象**：向导第 3 步轮询该接口，安装包内返回 **404**。
+- **根因**：`npm run electron:build` **不重建后端**（复用 `packaging/out/backend-server`，
+  本机是 10-05 20:50 的构建），而 M3 才新增这条路由（`backend/api/routes.py:829`）。
+- **修复**：用 venv PyInstaller 重建后端（`package.json` 里的 `backend:build` 用裸 `python`，
+  本机没有 pyinstaller，必然失败）：
+  `venv/Scripts/python.exe -m PyInstaller ../packaging/backend_server.spec --noconfirm --distpath ../packaging/out --workpath ../packaging/build`
+  旧后端改名 `packaging/out/backend-server.preM3` 保留。重打安装包后接口实测 **200 OK**。
+- **配套提醒**：只要 M3 之后动了 `backend/`，发布前**必须**单独重建后端，`electron:build` 不会做。
+
+#### 缺陷 B（**待修复，P0**）：首启向导第 3 步必然显示「模型准备失败」
+
+- **现象**：全新安装首启，第 3 步显示「正在准备语音模型 → **模型准备失败。**」，
+  按钮为「重试 / 导出日志 / 先跳过，稍后再说」。等 60s 也不会自愈，**反复点「重试」也无效**。
+- **根因链**：
+  1. `model-status` 判据是 `check_installed(model, deep=False)`，检查的是**可写层**
+     `model_root()` = `TINGKEBANLV_HOME/whisper_models`（`model_bootstrap.py:62`）。
+  2. 安装包里模型只存在于**只读种子层** `resources/whisper_models`（142MB），
+     **播种（`ensure_model`）只在 `whisper_engine` 加载模型时才发生**
+     （`whisper_engine.py:367`）——即用户真正点「开始识别」时。
+  3. 于是首启第 3 步探测时可写层为空 → `ok:false` → 前端 `modelPhase` 判 `'failed'`（终态）。
+  4. 「重试」只重新探测，不触发播种 → 永久失败。
+  5. 文案还引导「关闭应用后重新打开（会自动重试）」——**重启同样不会播种**，属无效引导。
+- **注释与实现不一致（缺陷的证据）**：`frontend/electron/main.cjs:370-371` 注释写
+  「后端首次启动时把它播种到 TINGKEBANLV_HOME/whisper_models」，但后端启动路径上
+  并没有播种调用；主进程只通过 `TINGKEBANLV_SEED_MODEL_DIR` 把种子路径传下去。
+- **影响面**：首启正常路径（走完 6 步）被阻断，用户只能点「先跳过，稍后再说」；
+  且被误导去点无效的「重试」。**真实用户首次使用必然遇到。**
+- **修复建议（三选一，待决策）**：
+  - **方案 A（推荐，改动最小）**：后端 `lifespan` 启动时**后台异步**幂等播种
+    （`ensure_model` 本身幂等，已有 `has_verified_marker` 标记），
+    `model-status` 在「播种中」时返回 `ok:false` 但前端应把「种子可用且正在播种」
+    映射为 `preparing` 而非 `failed`。
+  - **方案 B（最贴合设计稿）**：`model-status` 接口在探测失败且 `seed_available()` 为真时
+    **自己触发一次后台播种**，并把状态机扩成三态（`preparing / ready / failed`）——
+    接口契约要从 `{ok, model}` 扩一个字段，前端 `modelPhase` 同步调整。
+  - **方案 C（仅文案）**：接口在前端探测失败但种子可用时仍返回 `ok:true`
+    （首次识别时自愈，只是慢几秒），第 3 步不再显示失败。语义最弱，但有自愈能力。
+- **测试盲区（本次逃逸的原因）**：`verify_install.py` 的「首启播种落盘」步骤之所以通过，
+  是因为脚本在此之前跑了**后端 `--selftest`**，而 `selftest` 会调 `ensure_model`
+  —— 等于**验收脚本替产品完成了播种**。修复缺陷 B 后，该步骤才真正验到「应用会播种」。
+  在此之前不建议把该步骤当作有效证据。
+
+### 11.5 待决策：第 6 步开关名与控制面板口径不一致
+
+| 位置 | 当前文案 | 含「提示词」 |
+|---|---|---|
+| 向导第 6 步（`onboarding.ts` `step6ToggleLabel`） | `参与识别的术语自动防循环` | 否 |
+| 字幕视图控制面板（`OverlayControlPanel.tsx`） | `术语提示词自动防循环降级` | **是** |
+
+两条红线在打架：`tests/onboarding-copy.test.mts` 的**禁词守卫**要求向导文案不出现
+「提示词」（实现术语），而控制面板是面向进阶用户的既有文案（B4/B5 时期定稿），
+并未纳入禁词守卫。§八 验收表第 ⑤ 条要求「开关名两处同口径」，当前**不完全一致**。
+
+可选处理：① 把面板文案也去「提示词」（`术语自动防循环降级`），两处统一；
+② 接受差异，明确「向导面向新手用白话、面板面向进阶用户用术语」，并放宽第 ⑤ 条口径要求；
+③ 两处都改成第三种白话说法（改动最大，需同步改面板与守卫）。
+
+### 11.6 验收工具维护记录
+
+- `scripts/verify_install.py`：修正过时断言 —— 原「迁移后设置保留」写死
+  `schemaVersion == 3`，而 M3 已升到 **4**（`overlay-settings.cjs:16`），导致误报 FAIL。
+  改为 `isinstance(int) and >= 3` + 文案去版本号。**教训：验收脚本里的版本号断言别绑死具体值。**
+- `scripts/drive-onboarding.cjs`（新增）：CDP 驱动打包应用的 4 个 mode；
+  踩到的三个坑已写进文件头注释 —— ① 第 3 步模型就绪后**自动跳步**，固定步数脚本必错位；
+  ② `__reactProps.onClick` **绕过 DOM disabled**，会把「按钮不可点」误判成「用户点了」；
+  ③ 点「开始使用」/「跳过」后主进程**立即关闭向导窗口**，之后所有 CDP 调用超时，
+  截图必须安排在点击之前；另有一个隐蔽坑：CDP 截图响应可能是**二进制帧**，
+  `JSON.parse` 抛错发生在事件回调里、外层 try 包不住，会静默带崩整个脚本。
+

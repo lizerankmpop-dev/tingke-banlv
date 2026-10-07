@@ -14,6 +14,8 @@ tingke-banlv/
 # electron-builder 构建产物（win-unpacked + 安装包，体积可达数百 MB）
 release/
 frontend/release/
+# 重建安装包前保留的旧包（用于升级场景对照），同样是大体积本地产物
+frontend/release.pre*/
 
 # 词表扩充过程的批次临时文件备份（内容已合并进 basic_vocab.json）
 backend/dictionary/_backup_batches/

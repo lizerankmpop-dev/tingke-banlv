@@ -22,7 +22,9 @@ v3.4.0 起新增 **S 层（稳定性加固）断言**。为什么非要在「实
 路径解析、原子改名语义都不在覆盖范围里；而主进程的迁移 / 节流 / 心跳
 三条链路又恰好全部只在打包后的 Electron 运行时里才会真正跑起来。
 
-    · 配置 v1→v3 迁移 + 迁移后用户设置原样保留（字号/颜色不能被重置）
+    · 配置 v1→最新版迁移 + 迁移后用户设置原样保留（字号/颜色不能被重置；
+      断言只要求 schemaVersion 为 ≥3 的整数、不绑定具体版本号，避免产品侧
+      每次升 schema 本脚本就跟着过时——M3 时 v3→v4 就踩过一次）
     · 原子写无残留（overlay.json.tmp / .lock 必须为空）
     · 悬浮窗按 `enabled: true` 自动恢复
     · 节流决策：出口=悬浮窗时必须「不节流」（否则字幕会停）
@@ -879,18 +881,19 @@ def main() -> int:
 
         migrated = MIGRATION_LOG in text
         report.step(
-            "S层·配置迁移 v1→v3",
+            "S层·配置迁移 v1→最新版",
             migrated,
-            "日志出现「配置已从旧版本迁移到 schemaVersion=3」"
+            "日志出现「配置已从旧版本迁移到 schemaVersion=…」"
             if migrated
-            else "未触发迁移（v1 配置被当成 v3 读了，老用户会丢设置）",
+            else "未触发迁移（v1 配置被当成最新版读了，老用户会丢设置）",
         )
 
         cfg = read_overlay_json(home) or {}
         cfg_bounds = cfg.get("bounds") or {}
+        cfg_schema = cfg.get("schemaVersion")
         preserved = all(
             (
-                cfg.get("schemaVersion") == 3,
+                isinstance(cfg_schema, int) and cfg_schema >= 3,  # 迁移只升不降；不绑死具体版本
                 cfg.get("fontSize") == 30,          # 用户改过的值必须原样保留
                 cfg.get("color") == "#ff5a5f",
                 cfg.get("backgroundUpdate") is True,  # v1→v2 补的默认值
@@ -902,7 +905,7 @@ def main() -> int:
         report.step(
             "S层·迁移后设置保留",
             preserved,
-            "schemaVersion=3 / fontSize=30 与颜色原样保留 / 已补 backgroundUpdate 与 anchor / 坐标已落盘"
+            "schemaVersion≥3 / fontSize=30 与颜色原样保留 / 已补 backgroundUpdate 与 anchor / 坐标已落盘"
             if preserved
             else f"迁移结果不符预期: {json.dumps(cfg, ensure_ascii=False)[:500]}",
             data={"config": cfg},
@@ -1150,7 +1153,7 @@ def main() -> int:
         report.step(
             "S层·重启不重复迁移",
             entered2 and MIGRATION_LOG not in text2,
-            "已是 schemaVersion=3，未再触发迁移"
+            "已是最新 schemaVersion，未再触发迁移"
             if MIGRATION_LOG not in text2
             else "重启后又报了一次迁移 → 上一轮没有把迁移结果落盘",
         )
