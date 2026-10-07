@@ -14,9 +14,10 @@ testset/chinese_lecture/real/
   metadata.json                    ← 素材清单（kind: "REAL" + sha256 + 时长）★入库
 ```
 
-> `.gitignore` 已屏蔽 `testset/**/*.{wav,mp3,m4a,flac,mp4,aac,ogg}` ——
+> `.gitignore` 已屏蔽 `testset/**/*.{wav,mp3,m4a,flac,mp4,aac,ogg,opus,m4s,webm}` ——
 > **音频不入库**（版权 + 体积），只入库逐字稿与 metadata。换机器跑评估时按 metadata 的
-> `sha256` 核对音频是否一致。
+> `sha256` 核对音频是否一致。（`opus` 覆盖学术数据集的格式，`m4s`/`webm` 覆盖视频站拉流的
+> 容器——这三种都曾漏屏蔽，属已修缺陷。）
 
 ## 音频要求
 
@@ -75,6 +76,14 @@ testset/chinese_lecture/real/
       "durationMinutes": 12.0,
       "referenceChars": 3200,
       "source": "自录 / 某公开课（写明来源与获取方式）",
+      "channel": "self-record | bilibili | dataset | other",
+      "provenance": {
+        "url": "<原始视频/音频页 URL，第三方素材必填>",
+        "title": "<原标题>",
+        "author": "<原作者/上传者>",
+        "clip": "<截取起止，如 12:30 ~ 23:05>",
+        "license": "<平台协议；学术数据集填官方许可，并注明镜像标注是否一致>"
+      },
       "consent": "仅用于本地评估，不再分发；含他人声音，故音频不入库",
       "recordedAt": "2026-10-XX",
       "notes": "手机录音，教室后排，有翻页声；中英混说术语 12 个"
@@ -82,6 +91,51 @@ testset/chinese_lecture/real/
   ]
 }
 ```
+
+## 素材获取渠道（2026-10-07 实测结论，避免重复踩坑）
+
+### ✅ 自录（首选，零版权风险）
+
+逐字稿可入库，CER 结论可外推性最强。要求见上文「音频要求」。
+
+### ✅ B 站公开课切片（链路已实测打通）
+
+2026-10-07 实测：`api.bilibili.com` 可达（200 / 0.9s），全链路走通 ——
+`ranking` → `view?bvid` 取 `cid` → `player/playurl?fnval=16` 拿 DASH 音频
+→ 带 `Referer: https://www.bilibili.com` 下载 `m4s` 成功（ftyp 头正确）。
+
+两条边界必须先知道：
+
+- **搜索 API 匿名被风控**（返回 HTML 而非 JSON）→ 不能自动找片，**需人工给出 BV 号/链接**。
+- **字幕 API 匿名返回空数组** → **B 站字幕不可依赖**（且其多为 ASR 自动生成，本身也不合
+  「人工逐字稿」的定义）。这反而与 `check_transcript.py` 的设计一致：逐字稿必须人工校。
+- 容器是 `m4s`（fMP4/AAC）。项目 venv 有 `av`，`eval_asr_quality.load_audio` 走 PyAV
+  分支即可解码，**无需 ffmpeg CLI**。
+
+版权：公开传播 ≠ 授权 → 按下方「第三方素材」条款处理，**音频与逐字稿都只留本地**。
+
+### ❌ WenetSpeech（已实测否决，不要再走）
+
+三重锁，全部实测确认：
+
+1. 音频以 **AES 加密包**分发，解压密码需**填写 Google 表单申请并等邮件** —— 本机
+   `google.com` 不可达，且有人工审批延迟。
+2. **元数据 `WenetSpeech.json.aes.tgz` 同样加密** → 「筛 `domain=talk` + 时长 > 600s」
+   这一步**根本执行不了**。ModelScope 上那个 `WenetSpeech.json` 只是 **681 字节的路径
+   描述文件**（指向上述 aes 包），不是数据。
+3. 总量 ~697 GB（HF 卡片标 1.02 TB），且**三分之二来源是 YouTube**（本机不可达）。
+
+另有两处事实口径要注意（别写进答辩）：
+
+- 官方**直接托管已转码的 `.opus` 音频包**，元数据里的 `url` 字段是**版权溯源**用途，
+  **不是**「需要自己按 URL 去拉」。
+- 许可在 **HF/官网 = CC BY 4.0 + 非商用**，而 **ModelScope 镜像页写的是 Apache-2.0**，
+  渠道标注自相矛盾。以官网/HF 为准，并在元数据里注明镜像标注不一致。
+
+### ❌ EchoFlow（`luzhenhua/echo-flow`）
+
+英语点读跟读工具，仓库**零音频零字幕语料**，README 自声明「不提供任何教材音频或课文
+内容」。其播放器交互（倍速/循环/连播）已借到 `review.html`，但**不能作素材源**。
 
 ## 隐私与合规
 
