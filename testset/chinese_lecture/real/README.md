@@ -36,9 +36,17 @@ testset/chinese_lecture/real/
 - 英文术语按实际读音记（读作字母则记字母，如 `f one score` → `f1score`；按读音则记 `adam`）
 - 宁缺毋滥：听不清的片段标 `[听不清]`，**不要猜**——猜出来的字会污染 CER
 
-## 制作流程（三步，工具已就绪）
+## 制作流程（四步，工具已就绪）
 
 ```bash
+# ⓪ 拉素材（仅第三方平台素材需要；自录的跳到 ①）
+#     BV 号 → DASH 音频 → 16k 单声道 WAV + 按时间戳连续切片
+<venv>/python.exe scripts/fetch_bili_audio.py BV1BA411i7PT \
+    --start 00:40 --end 11:10 --name real_zhlecture_<主题> \
+    --out-dir testset/chinese_lecture/real
+#     建议先加 --dry-run 看时长是否够切；工具会打印 RMS/峰值/近静音占比，
+#     近静音占比过高说明窗口选在了停顿/片头音乐里，换个区间重切。
+
 # ① 生成带时间戳的分段草稿（分块喂入，产出 draft.json/txt/srt + review.html）
 <venv>/python.exe scripts/asr_draft_transcript.py --audio testset/chinese_lecture/real/<name>.wav
 

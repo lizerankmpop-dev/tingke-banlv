@@ -95,10 +95,14 @@ def load_audio(path: Path) -> np.ndarray:
         raise SystemExit(f"无法读取 {path.name}：需要 PyAV 解码非 WAV 音频（{exc}）")
 
     chunks: list[np.ndarray] = []
+    declared_s = 0.0
     with av.open(str(path)) as container:
         stream = next((s for s in container.streams if s.type == "audio"), None)
         if stream is None:
             raise SystemExit(f"{path.name} 不含音频流")
+        # 容器自报时长，用于下面的完整性兜底（PyAV 的 container.duration 单位是微秒）
+        if container.duration:
+            declared_s = container.duration / 1_000_000
         resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
         for frame in container.decode(stream):
             for out in _as_frames(resampler.resample(frame)):
@@ -108,7 +112,20 @@ def load_audio(path: Path) -> np.ndarray:
 
     if not chunks:
         return np.zeros(0, dtype=np.float32)
-    return np.concatenate(chunks).astype(np.float32) / 32768.0
+    audio = np.concatenate(chunks).astype(np.float32) / 32768.0
+
+    # 完整性兜底：解码出来的时长必须与容器自报时长量级相符。
+    # 这条检查是被一个真实缺陷逼出来的 —— `_frame_to_mono` 曾把每帧压成 1 个样本，
+    # 1200s 的素材静默变成 3.5s，而所有下游只看到「一段短音频」，不报错、不崩溃。
+    # 「静默产出错误长度的音频」比「报错」危险得多，所以这里宁可直接失败。
+    decoded_s = len(audio) / SAMPLE_RATE
+    if declared_s and decoded_s < declared_s * 0.9:
+        raise SystemExit(
+            f"{path.name} 解码异常：容器自报 {declared_s:.1f}s，"
+            f"实际只解出 {decoded_s:.1f}s（{decoded_s / declared_s:.1%}）。\n"
+            f"  这通常意味着音频帧被错误地降维/降混了，请检查 _frame_to_mono 的布局约定。"
+        )
+    return audio
 
 
 def _as_frames(result) -> list:
@@ -119,9 +136,27 @@ def _as_frames(result) -> list:
 
 
 def _frame_to_mono(frame) -> np.ndarray:
+    """把 PyAV 音频帧转成 1-D 样本数组（不改变样本数量）。
+
+    ⚠️ 这里**只做展平，不做降混** —— 上游重采样器已固定 `layout="mono"`，
+    到手的每一帧本来就是单声道，任何「按声道取均值」都是多余的，而且会算错。
+
+    踩过的坑（P0，靠第一次喂非 WAV 素材才暴露）：本函数曾写成
+    `arr.reshape(arr.shape[0], -1).mean(axis=1)` —— 那是 `_load_wav` 里处理
+    **交错存储**（interleaved，shape 为 `(samples*channels,)`，需 reshape 成
+    `(-1, channels)`）的写法。但 `AudioFrame.to_ndarray()` 用的是另一套布局约定：
+    packed 格式返回 `(1, samples)`，把轴 1 当成声道做均值，会把**每一帧压成 1 个样本**。
+    实测 1200s 的音频只剩 3.5s（样本数比 0.00293）。
+
+    之所以长期没被发现：所有历史输入都是 `.wav`，走的是标准库 `_load_wav()` 分支，
+    这条 PyAV 分支**从未被真实调用过**。`make_asr_testset.py` 里同位置写的是
+    `arr.reshape(-1)`，是对的 —— 本条已与它口径一致。
+    """
     arr = frame.to_ndarray()
-    # s16 mono 的 ndarray 形状是 (1, n)；立体声会多一维
-    return arr.reshape(-1) if arr.ndim == 1 else arr.reshape(arr.shape[0], -1).mean(axis=1)
+    if arr.ndim == 2 and arr.shape[0] > 1:
+        # 防御分支：真正的平面多声道布局 (channels, samples)。正常走不到。
+        return arr.mean(axis=0)
+    return arr.reshape(-1)
 
 
 def _load_wav(path: Path) -> np.ndarray:

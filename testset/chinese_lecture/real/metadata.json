@@ -1,0 +1,38 @@
+{
+  "kind": "REAL",
+  "entries": [
+    {
+      "name": "real_zhlecture_origin_plot",
+      "audio": "real_zhlecture_origin_plot.wav",
+      "reference": "real_zhlecture_origin_plot.txt",
+      "sha256": "fa5ab03c4673b8845508d22b6c25cd9a47769db71604046dfc7fba9cfc8ca3ae",
+      "durationSeconds": 630.0,
+      "durationMinutes": 10.5,
+      "referenceChars": 0,
+      "source": "B站《Origin科研绘图超快速上手指南》（UP：你好西涯先生）",
+      "channel": "bilibili",
+      "bv": "BV1BA411i7PT",
+      "provenance": {
+        "url": "https://www.bilibili.com/video/BV1BA411i7PT",
+        "title": "Origin科研绘图超快速上手指南",
+        "author": "你好西涯先生",
+        "clip": "00:40 ~ 11:10",
+        "videoDurationSeconds": 1201.0,
+        "license": "平台公开传播；B站页面标注「未经作者授权，禁止转载」→ 音频与逐字稿均不入库，仅登记来源",
+        "fetchedAt": "2026-10-07",
+        "fetchedBy": "scripts/fetch_bili_audio.py"
+      },
+      "consent": "仅用于本地项目内部评估，不再分发；含他人声音，故音频不入库",
+      "recordedAt": "2026-10-07",
+      "notes": "单人授课中文专业课（科研绘图软件实操）；从 00:40 起连续截取 630s（不拼接）。已遍历全片所有 630s 窗口，此窗口静音占比最低（27.6%）——该类软件实操课停顿偏多，属固有特征。实测 RMS -30.9 dBFS / 峰值 -5.58 dBFS。预期术语：工作表、图层、拟合、误差棒、坐标轴、归一化、模板导出。referenceChars 待人工校对后回填。",
+      "audioStats": {
+        "rmsDbfs": -30.9,
+        "peakDbfs": -5.58,
+        "quietRatio": 0.276,
+        "sampleRate": 16000,
+        "channels": 1,
+        "format": "wav/16-bit PCM"
+      }
+    }
+  ]
+}
