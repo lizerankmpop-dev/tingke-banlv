@@ -35,7 +35,8 @@
 2. 快捷方式只报存在性，不做 FAIL 判定 —— 快捷方式自身不带图标，继承 target exe，
    图标正确性已由 exe 那一项覆盖（详见 `_report_shortcuts`）。
 3. 目视类判据（16px 可辨识性、任务栏是否只有一个图标、Alt+Tab、安装向导界面）
-   机器判不了，只能列成清单交给人，见 `docs/m3/icon_asset_spec.md` §6.2/§6.3。
+   机器判不了，只能列成清单交给人，见 `docs/m3/icon_asset_spec.md` §8.5.5
+   （该节所在的 §8.5 是**唯一执行清单**，含完整执行顺序与失败兜底）。
 
 不依赖 Pillow / pefile —— 本机 venv 没有 PIL，且这一个用途不值得引依赖。
 """
@@ -331,7 +332,9 @@ def audit() -> int:
         print(f"  （未安装：{installed} 不存在 —— 装完再跑本项；"
               "也可用 verify_install --keep-installed 保装）")
 
-    print("\n[5] 仍需人工目检（工具判不了，见 docs/m3/icon_asset_spec.md §6.2/§6.3）")
+    # 标题写「人工确认」而不是「目检」：末项是看构建日志，不是用眼睛看图。
+    # 清单本身与 §8.5.5 同源，改一处必须同步另一处。
+    print("\n[5] 仍需人工确认（工具判不了，见 docs/m3/icon_asset_spec.md §8.5.5）")
     for item in (
         "16px 下是否还能辨识（缩到 16px 目视，不可跳过）",
         "任务栏运行中只有一个图标（AUMID 生效的唯一可靠判据）",
