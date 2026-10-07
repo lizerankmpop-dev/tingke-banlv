@@ -500,6 +500,11 @@ python scripts/icon_assets.py audit
 ### 8.5.4 四、打包端到端验收
 
 ```bash
+# ① 完整端到端（57 步：安装 → 启动 → 150s 稳定性 → 向导全流程 → 卸载）
+<venv>/python.exe scripts/verify_install.py \
+  --installer frontend/release/tingkebanlv-<版本>-setup.exe
+
+# ② 需要把应用留在机器上做 §8.5.5 人工落点目检时，**单独**再跑一次带 --keep-installed 的
 <venv>/python.exe scripts/verify_install.py \
   --installer frontend/release/tingkebanlv-<版本>-setup.exe \
   --keep-installed
@@ -507,9 +512,11 @@ python scripts/icon_assets.py audit
 
 - `--installer` 是**必填**参数，路径按 `release/` 里的实际文件名（`artifactName` 模板
   为 `tingkebanlv-${version}-setup.${ext}`）。
-- **`--keep-installed` 必加**：默认流程跑完会**卸载**后半段，而 §8.5.5 的六处落点目检
-  必须在**已安装**状态下做；不加这个 flag 等于验完自动把证据拆了。
-- 报告落 `packaging/verify/report.json`（已被 `.gitignore`，属本地证据）。
+- 🚨 **`--keep-installed` 不是「正常验收 + 保留安装」的开关**：它会在后端自检之后
+  **提前 `return 0`**（verify_install.py 的 keep_installed 分支），**跳过启动应用、
+  150s 稳定性观察、向导全流程等约 41 步**。2026-10-07 图标彩排实测：带它跑只出
+  **16 步 / 33s**，看起来全绿，其实端到端一步没跑。所以**必须先跑 ①**，再视需要跑 ②。
+- 报告落 `packaging/verify/report.json`（`--report` 可改路径；已被 `.gitignore`，属本地证据）。
 
 ### 8.5.5 五、六处落点核验
 
