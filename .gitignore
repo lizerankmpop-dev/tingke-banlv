@@ -51,3 +51,6 @@ testset/**/*.wav
 testset/**/*.mp3
 testset/**/*.m4a
 testset/**/*.flac
+testset/**/*.mp4
+testset/**/*.aac
+testset/**/*.ogg
