@@ -365,3 +365,119 @@ def seed_available() -> dict:
         "available": True,
         "detail": f"{manifest.get('size')} {total_mb:.1f}MB，{len(expected)} 个文件，位于 {seed_dir}",
     }
+
+
+# ============ 后台播种（首启向导第 3 步「正在准备」的来源） ============
+#
+# 为什么需要它：`ensure_model` 原先只在**引擎加载模型**时调用，而首启向导第 3 步
+# 探测的是「模型文件是否已就位」—— 两者时机错位，于是全新安装的用户在第 3 步
+# 必然看到「模型准备失败」，而且点「重试」也不会触发播种（M3 实装验收发现，
+# 六步正常路径被阻断；本文件顶部的装配关系图本来就写着「首次启动播种」，
+# 但那个调用点此前并不存在）。
+#
+# 这三条是设计约束，不是实现细节：
+#   · **必须后台线程**：141MB 拷贝要几秒到几十秒，同步做会让后端就绪时间
+#     被拖长（主进程按「[backend] 就绪」标记解析端口，卡住等于整个应用起不来）。
+#   · **必须幂等**：`ensure_model` 自己先 check_installed，已就绪时毫秒级返回；
+#     并且与引擎加载共用 `_copy_lock`，既不会重复拷贝，也不会和识别抢文件。
+#   · **失败不崩溃**：异常与失败原因落在状态里，交给 `/api/asr/model-status`
+#     暴露给前端 —— 播种失败不该让后端起不来。
+
+_seed_thread: threading.Thread | None = None
+_seed_state_lock = threading.Lock()
+_seed_state: dict = {
+    "running": False,  # 后台线程是否正在播种
+    "done": False,     # 是否已得出过一次结论
+    "ok": None,        # None = 尚无结论
+    "error": None,     # 失败分类（机器可读枚举，见 _ERROR_KINDS）；细节只进日志
+    "at": None,        # 结论时间戳
+}
+
+# 失败分类：**只放稳定枚举，不放诊断文本**。
+# 接口会把 error 原样返回，而历史教训是「一旦返回中文细节，迟早有人按文本分支」
+# （那些文本随文案改造而变）；分类枚举能让排障/统计用，又不构成隐性契约。
+_ERROR_KINDS = {
+    "unavailable": "no-seed",   # 没有内置种子，且本地模型也不完整 → 需联网下载
+    "no-seed": "no-seed",       # 有种子目录但清单/文件不可用
+    "error": "io-error",        # 拷贝期 IO 异常
+    "verify-failed": "integrity",  # 播种完成但校验不过
+}
+
+
+def _error_kind(action: str) -> str:
+    return _ERROR_KINDS.get(action, "unknown")
+
+
+def seed_exists(size: str = "base") -> bool:
+    """
+    内置种子是否**可用于播种**（只查清单与文件，不做任何拷贝）
+
+    与 `seed_available()` 的分工：这一只回布尔、带尺寸参数，给接口用；
+    那个回中文 detail，给 `--selftest` 报告用。判据同源（都看 manifest 与文件齐全）。
+    """
+    seed_dir = seed_root()
+    if seed_dir is None:
+        return False
+    manifest = load_manifest(seed_dir)
+    if manifest is None or manifest.get("size") != size:
+        return False
+    return len(_seed_files(seed_dir, manifest)) == len(manifest["files"])
+
+
+def background_seed_state() -> dict:
+    """后台播种的当前状态快照（线程安全）"""
+    with _seed_state_lock:
+        return dict(_seed_state)
+
+
+def start_background_seed(size: str = "base") -> bool:
+    """
+    幂等启动后台播种
+
+    返回 True 表示本次真的起了线程；False 表示已在运行、或已经成功过（不必重复）。
+    **绝不做同步拷贝** —— 因此 lifetime 钩子与请求处理里都可以放心调用。
+    """
+    global _seed_thread
+    with _seed_state_lock:
+        if _seed_state["running"]:
+            return False
+        if _seed_state["done"] and _seed_state["ok"] is True:
+            return False
+        _seed_state["running"] = True
+        _seed_state["error"] = None
+
+    def _run() -> None:
+        try:
+            result = ensure_model(size)
+            ok = bool(result.get("ok"))
+            if ok:
+                error = None
+            else:
+                action = str(result.get("action") or "unknown")
+                error = _error_kind(action)
+                # 细节只进日志（与 routes.py 的约定一致）：用户看不到，排障时能拿到
+                logger.warning(f"后台播种未成功: action={action} detail={result.get('detail')}")
+        except Exception as exc:  # 兜底：线程里漏掉的异常会让状态永远停在 running
+            ok, error = False, "unknown"
+            logger.error(f"后台播种异常: {type(exc).__name__}: {exc}")
+        with _seed_state_lock:
+            _seed_state.update(
+                {"running": False, "done": True, "ok": ok, "error": error, "at": time.time()}
+            )
+
+    _seed_thread = threading.Thread(target=_run, name="model-seed", daemon=True)
+    _seed_thread.start()
+    return True
+
+
+def reset_background_seed_state_for_tests() -> None:
+    """
+    仅供测试：把状态清回初始
+
+    刻意不 join/打断正在跑的线程 —— 测试里用的是假种子，线程自己会很快结束；
+    强行 join 反而容易把「线程真的在跑」这种真实场景测成假象。
+    """
+    with _seed_state_lock:
+        _seed_state.update(
+            {"running": False, "done": False, "ok": None, "error": None, "at": None}
+        )

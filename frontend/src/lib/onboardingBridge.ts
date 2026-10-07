@@ -78,10 +78,14 @@ export const onboardingBridge = {
   },
 }
 
-/** 后端 + 模型探测结果（两个都是「真实信号」，用于第 3 步，见 lib/onboarding.ts） */
+/** 后端 + 模型探测结果（都是「真实信号」，用于第 3 步，见 lib/onboarding.ts） */
 export interface BackendProbe {
   pingOk: boolean
   modelOk: boolean | null
+  /** 后端是否正在后台播种（接口的 `seeding`）；旧后端不返回该字段时为 false */
+  seeding: boolean
+  /** 内置种子是否可用于播种（接口的 `seed_exists`）；旧后端不返回该字段时为 false */
+  seedExists: boolean
 }
 
 /**
@@ -91,11 +95,12 @@ export interface BackendProbe {
  * 模型可能仍在准备。向导要区分「正在启动本地服务」与「正在准备识别模型」，
  * 这是两句不同的话 —— 合成一个布尔就说不清了。
  *
- * 判据只看 `ok` 字段，**不解析任何错误文本**（接口刻意不返回它们，
- * 防止有人按中文字符串分支）。
+ * 判据只看**布尔字段**（`ok` / `seeding` / `seed_exists`），
+ * **不解析 `error` 的内容**：它只是给排障日志看的稳定分类，
+ * 按错误文本分支是本项目反复踩过的坑（那些文本随文案改造而变）。
  */
 export async function probeBackend(): Promise<BackendProbe> {
-  const result: BackendProbe = { pingOk: false, modelOk: null }
+  const result: BackendProbe = { pingOk: false, modelOk: null, seeding: false, seedExists: false }
 
   try {
     const ping = await fetch('/api/ping', { cache: 'no-store' })
@@ -109,6 +114,10 @@ export async function probeBackend(): Promise<BackendProbe> {
     if (res.ok) {
       const body = await res.json()
       result.modelOk = body?.ok === true
+      // 一律用 === true：后端若是旧版本、少了这些字段，这里就是 false，
+      // 状态机自然退回「按 ok 二分」的老路径，而不是把 undefined 当成「正在播种」
+      result.seeding = body?.seeding === true
+      result.seedExists = body?.seed_exists === true
     }
   } catch {
     /* 保持 null = 尚未知，由纯函数判成「准备中」 */

@@ -311,6 +311,12 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
 
                 默认开启，但必须可关：这是个「事后反应」的补救措施，它挡不住首次发生。
                 用户在专业术语密集的课上可能宁可接受偶发重复，也要保住完整术语表的识别收益。
+
+                关于**可见名称**：面板里曾经叫「术语提示词自动防循环降级」，M3 首启验收时
+                改成与向导第 6 步同口径的「参与识别的术语自动防循环降级」——
+                「提示词」是实现细节（Whisper 的 initial_prompt），不该出现在学生用户面前，
+                两处叫法不一致也会让人以为是两个不同的功能。
+                这条口径由 `tests/panel-copy.test.mts` 的守卫钉住（它会先剥注释再扫）。
               */}
               <div style={styles.row}>
                 <div style={styles.rowLabel}>
@@ -318,7 +324,7 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                     size={14}
                     color={termAutoDegrade ? 'var(--accent-light)' : 'var(--text-muted)'}
                   />
-                  <span id={A11Y_ID.termAutoDegrade}>术语提示词自动防循环降级</span>
+                  <span id={A11Y_ID.termAutoDegrade}>参与识别的术语自动防循环降级</span>
                 </div>
                 <button
                   onClick={() => set({ termAutoDegrade: !termAutoDegrade })}

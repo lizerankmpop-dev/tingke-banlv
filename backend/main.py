@@ -132,6 +132,19 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     await db.initialize()
     logger.info("数据库初始化完成")
+    # 内置模型播种：**必须后台线程**（141MB 拷贝几秒到几十秒，同步做会拖长就绪
+    # 时间，而主进程按「[backend] 就绪」标记解析端口 —— 卡住等于整个应用起不来）。
+    # 幂等：模型已就绪时 `ensure_model` 只做一次大小校验就返回（毫秒级）。
+    #
+    # 放在这里的理由：模块文档的装配图一直写着「首次启动播种」，但此前没有调用点，
+    # 播种只发生在引擎加载模型时 —— 于是首启向导第 3 步探测时可写目录还是空的，
+    # 必然显示「模型准备失败」（M3 实装验收发现的阻断缺陷）。
+    from asr.model_bootstrap import start_background_seed
+
+    # 测试环境显式关掉：conftest 会设 TINGKEBANLV_SKIP_BACKGROUND_SEED=1。
+    # 否则走 TestClient 的每个用例都会触发 lifespan，每个测试会话都真拷一遍 142MB 种子。
+    if os.environ.get("TINGKEBANLV_SKIP_BACKGROUND_SEED") != "1":
+        start_background_seed()
     # LLM 可用性在后台定期探测：health 接口只读缓存，绝不阻塞请求
     probe_task = asyncio.create_task(_llm_status_loop())
     yield

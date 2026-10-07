@@ -90,6 +90,8 @@ export const WIZARD_COPY = {
   step3NoManual: '无需你手动放置任何文件',
   step3PhaseStarting: '正在启动本地服务…',
   step3PhasePreparing: '正在准备识别模型…',
+  // 播种中：说清楚「在复制什么」而不是笼统的「准备中」，用户才知道这几秒是在等磁盘
+  step3PhaseSeeding: '正在复制模型种子，请稍候',
   step3PhaseReady: '模型已就绪',
   step3PhaseReadyNote: '马上进入下一步。',
   step3FailedTitle: '模型准备失败。',
@@ -208,35 +210,60 @@ export function isLastStep(step: number): boolean {
 
 // ---- 第 3 步的状态机 ----
 
-export type ModelPhase = 'backend-starting' | 'preparing' | 'ready' | 'failed'
+/**
+ * 第 3 步的五种状态。
+ *
+ * `seeding` 这一档是修复首启缺陷时新增的：后端会在应用启动时**后台播种**模型种子
+ * （141MB 从安装目录拷到可写目录）。这段时间里模型确实「不可用」，但它是**正常过程**
+ * 而不是失败 —— 旧实现只有 ok 二分，于是全新安装的用户首启必然看到「模型准备失败」，
+ * 还被引导去点一个不会触发播种的「重试」。
+ */
+export type ModelPhase = 'backend-starting' | 'preparing' | 'seeding' | 'ready' | 'failed'
 
 /**
- * 由两个真实信号推出第 3 步该显示什么。
+ * 播种的最长等待探测次数（1 次 ≈ 1 秒，与轮询间隔一致）
+ *
+ * 超过就判失败、给出「重试 / 跳过」—— 兜底「播种卡死」这类没法自愈的情况。
+ * 141MB 本机实测几秒，所以 90 秒是极宽松的上限。
+ */
+export const SEED_TIMEOUT_ATTEMPTS = 90
+
+/** 后端探针信号（字段名与 `/api/asr/model-status` 的响应对齐） */
+export interface ModelPhaseInput {
+  /** `/api/ping` 是否通（后端进程起来了没） */
+  pingOk: boolean
+  /** 模型状态接口的 `ok`；null = 还没问到 */
+  modelOk: boolean | null
+  /** 后端是否正在后台播种（接口的 `seeding`） */
+  seeding?: boolean
+  /** 内置种子是否可用于播种（接口的 `seed_exists`）；false = 再等也不会好 */
+  seedExists?: boolean
+}
+
+/**
+ * 由后端真实信号推出第 3 步该显示什么。判定顺序即优先级。
  *
  * **不要用假进度条**（设计稿明确要求）：所以这里没有「百分比」这个概念，
- * `preparing` 只表示「出现了不确定的等待」，界面显示不定长动画。
- * 两个信号都来自后端真实现状，没有任何本地计数器。
+ * 只表达「出现了不确定的等待」，界面显示不定长动画。所有信号都来自后端真实现状。
  *
- * @param pingOk    `/api/ping` 是否通（后端进程起来了没）
- * @param modelOk   模型状态接口的 `ok` 字段；null = 还没问到
- * @param attempts  已探测次数（用于区分「刚开始」和「问了很久都不通」）
+ * `seedExists` 那一支是刻意的：接口在探测到不可用时**顺手触发**播种，而「触发」与
+ * 下一次探测之间有一瞬 `ok=false` 且 `seeding` 还没置位 —— 若直接判 failed，
+ * 界面会闪一下「准备失败」。有种子就说明这事能成，按「正在准备」处理。
  */
-export function modelPhase(
-  pingOk: boolean,
-  modelOk: boolean | null,
-  attempts = 0,
-): ModelPhase {
+export function modelPhase(input: ModelPhaseInput, attempts = 0): ModelPhase {
+  const { pingOk, modelOk, seeding = false, seedExists = false } = input
   if (!pingOk) {
     // 后端长时间起不来，与「模型不可用」一样属于要给出可执行动作的失败，
     // 而不是无限转圈 —— 无限转圈会让用户一直等下去。
     return attempts >= 60 ? 'failed' : 'backend-starting'
   }
   if (modelOk === true) return 'ready'
-  if (modelOk === false) return 'failed'
+  if (seeding) return attempts >= SEED_TIMEOUT_ATTEMPTS ? 'failed' : 'seeding'
+  if (modelOk === false) return seedExists ? 'seeding' : 'failed'
   return 'preparing'
 }
 
-/** 模型状态是否已经不需要再轮询（ready / failed 都是终态） */
+/** 模型状态是否已经不需要再轮询（ready / failed 是终态；seeding 仍要继续等） */
 export function phaseIsFinal(phase: ModelPhase): boolean {
   return phase === 'ready' || phase === 'failed'
 }

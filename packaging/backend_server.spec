@@ -29,8 +29,8 @@
   控制台窗口不会真的弹出来 —— 主进程 spawn 时带 windowsHide: true。
 * 模型权重**不打进这个包**。base 模型由 electron-builder 放进
   `<安装目录>/resources/whisper_models/`（extraResources，不进 asar），
-  后端首启把它播种到 `<TINGKEBANLV_HOME>/whisper_models/` 后再加载，
-  见 asr/model_bootstrap.py。在这里塞一份等于让安装包多背 141MB 且要维护两处。
+  后端启动时（lifespan 的后台线程，不阻塞就绪）把它播种到
+  `<TINGKEBANLV_HOME>/whisper_models/` 后再加载，见 asr/model_bootstrap.py。在这里塞一份等于让安装包多背 141MB 且要维护两处。
   自检单独跑 exe 时，种子目录由 `exe 所在目录/../whisper_models` 反推得到。
 """
 

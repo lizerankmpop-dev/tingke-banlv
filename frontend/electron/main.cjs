@@ -25,7 +25,7 @@
  * 随包分发的资源（均在 process.resourcesPath 下，不进 asar）：
  *   backend/          后端源码（源码模式回退用）
  *   backend-server/   冻结好的独立后端 exe（真实用户机唯一可靠入口）
- *   whisper_models/   内置 base 模型种子，首启播种到 TINGKEBANLV_HOME
+ *   whisper_models/   内置 base 模型种子，服务启动时后台播种到 TINGKEBANLV_HOME
  *
  * 兼容模式（自动触发，无需配置）：
  *   若界面在 12 秒内未渲染完成，判定为 Chromium 沙箱被系统安全策略拦截，
@@ -368,8 +368,11 @@ function resolveDistDir() {
  * 内置模型种子目录
  *
  * 安装包把 base 模型放在 resources/whisper_models（extraResources，不进 asar），
- * 后端首次启动时把它播种到 TINGKEBANLV_HOME/whisper_models —— 即「程序本体只读、
- * 模型数据可写」，这样后续单独更新模型不必让用户重装整个应用。
+ * 后端在**服务启动时**把它后台播种到 TINGKEBANLV_HOME/whisper_models —— 即「程序本体
+ * 只读、模型数据可写」，这样后续单独更新模型不必让用户重装整个应用。
+ * 播种本体见 backend/asr/model_bootstrap.py 的 start_background_seed，
+ * 由 backend/main.py 的 lifespan 钩子触发，可用 TINGKEBANLV_SKIP_BACKGROUND_SEED=1 关闭
+ * （测试与 --selftest 会用到）；前端首启向导第 3 步据此区分「正在复制 / 就绪 / 失败」。
  *
  * 后端自己也能从 exe 位置反推出该目录（见 asr/model_bootstrap.py），
  * 但显式传递更稳妥：冻结后 sys.executable 的推导依赖目录层级未被改动。

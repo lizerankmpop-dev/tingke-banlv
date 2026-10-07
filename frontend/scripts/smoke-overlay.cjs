@@ -331,7 +331,9 @@ async function main() {
       fatal('应用未能在超时内打开两个窗口（后端可能没起来，见上面的输出）')
     }
 
-    const overlay = pages.find((p) => (p.url || '').includes('#/overlay'))
+    const findByHash = (list, hash) => list.find((p) => (p.url || '').includes(hash))
+
+    let overlay = findByHash(pages, '#/overlay')
     // 向导窗口在 whenReady 末尾才创建，可能晚于主窗口/悬浮窗出现在目标列表里
     // （waitForTargets 只要凑够 2 个页面就返回），所以要单独等它出现 ——
     // 等不到就是「首启自动弹出」这条验收失败，不能静默跳过。
@@ -342,7 +344,7 @@ async function main() {
         try {
           const list = await getJson(`http://127.0.0.1:${DEBUG_PORT}/json/list`)
           const all = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page')
-          const found = all.find((p) => (p.url || '').includes('#/onboarding'))
+          const found = findByHash(all, '#/onboarding')
           if (found) {
             wizard = found
             pages = all
@@ -352,7 +354,16 @@ async function main() {
         await new Promise((r) => setTimeout(r, 1000))
       }
     }
-    const main = pages.find((p) => p !== overlay && p !== wizard)
+
+    // 按 target id 判同一目标，**不要用对象身份**：上面的 `pages = all` 是重新拉取的
+    // 一批全新对象，拿旧对象做 `p !== overlay` 恒为真，于是 find() 返回的第一个非向导
+    // 页面可能又是悬浮窗自己，冒出假的「两个入口串了」。
+    // 这段曾经是**顺序相关**的（只有主窗口恰好排在悬浮窗之前才会通过），
+    // /json/list 顺序一变就红 —— 与产品行为无关，纯属脚本自身缺陷。
+    const sameTarget = (a, b) => !!a && !!b && (a.id ? a.id === b.id : a === b)
+    // pages 已刷新时把 overlay 指向同一目标的新对象，后续 evaluate 读到的 url 才是最新的
+    if (overlay) overlay = findByHash(pages, '#/overlay') || overlay
+    const main = pages.find((p) => !sameTarget(p, overlay) && !sameTarget(p, wizard))
 
     check('悬浮窗目标存在', !!overlay, overlay ? overlay.url : `页面数 ${pages.length}，无 #/overlay`)
     check('主窗口目标存在', !!main, main ? main.url : '缺失')

@@ -362,8 +362,15 @@ class WhisperEngine:
             # 启用高速下载
             os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
-            # 先看安装包内置的模型种子：
-            # 首启即可离线使用，且能自动修复损坏的缓存（不联网）
+            # 内置模型种子的**兜底**播种：
+            # 正常路径上，后端 lifespan 已在服务启动时后台播种（见 model_bootstrap
+            # 的 start_background_seed），用户看到的是首启向导第 3 步「正在复制模型
+            # 种子」。这里再调一次是双保险，覆盖三种漏网情形：
+            #   · 以其他方式加载引擎（--selftest / 脚本 / 单测），没走 lifespan；
+            #   · lifespan 的后台线程还没跑完，用户已提前点了「开始识别」；
+            #   · 上次播种中断留下损坏的缓存。
+            # ensure_model 自身幂等（先 check_installed，已就绪毫秒级返回），
+            # 因此重复调用没有额外拷贝开销；命中时同样能修复损坏缓存（不联网）。
             bootstrap = ensure_model(self.model_size)
             if bootstrap["action"] in ("seeded", "repaired"):
                 logger.info(f"已从内置模型播种: {bootstrap['detail']}")

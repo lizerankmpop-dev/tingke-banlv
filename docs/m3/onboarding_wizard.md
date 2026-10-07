@@ -557,7 +557,7 @@ critical=False 不影响结论），并生成随报告归档的人工清单
 | ② | 走完「完成」→ 重启不再弹出 | ✅ | 点「开始使用」后 `completed:true / stepReached:6 / durationMs:67418`；重启轮 25s 内无向导窗口、日志无「向导已打开」；`setup-02-第6步.png`、`setup-04-重启不弹（主窗口）.png` |
 | ③ | 点「跳过」→ 重启不再弹出 | ✅ | `dismissedAt` 已写入且 `completed` 仍为 false；重启轮无向导；`setup-05-跳过前.png`、`setup-07-跳过后重启（主窗口）.png` |
 | ④ | 升级场景不重复弹出 | ✅ | 预置 `completed:true` 后启动：25s 内无向导、日志干净、`onboarding.json` **逐字段一致**（升级不重置标记）；`setup-08-升级不弹（主窗口）.png` |
-| ⑤ | 第 4 步穿透提示 / 第 6 步降级文案与控制面板口径 | ⚠️ 文案检查通过，**开关名待决策** | 见 §11.5；`setup-09-第4步-穿越提示.png`、`setup-10-第6步-术语降级.png`、`copy-step4.txt`、`copy-step6.txt` |
+| ⑤ | 第 4 步穿透提示 / 第 6 步降级文案与控制面板口径 | ✅ 文案检查通过（口径已于 §12.5 统一） | 见 §11.5；`setup-09-第4步-穿越提示.png`、`setup-10-第6步-术语降级.png`、`copy-step4.txt`、`copy-step6.txt` |
 
 ⑤ 的自动化部分：两处文案**均无**禁词（`token/预算/截断/提示词/initial_prompt/智能降级`）；
 第 6 步含「重新开始听课（停止识别再开始）就会恢复完整术语表」。
@@ -573,6 +573,10 @@ critical=False 不影响结论），并生成随报告归档的人工清单
 | 抓取的文案 | `packaging/verify/copy-step4.txt`、`copy-step6.txt` |
 | 驱动工具 | `scripts/drive-onboarding.cjs` |
 
+> 上表是**首次验收（发现缺陷 B）**那一轮的证据，全部保留以便对照。
+> 缺陷 B 修复后的复验证据（`report-defectB.json`、`setup-11/12-*.png`、
+> `copy-step3-seeding.txt`、`onboarding-step3.log`）见 §12.2。
+
 ### 11.4 验收中发现的两个缺陷
 
 #### 缺陷 A（**已修复**）：安装包内后端不认识 `/api/asr/model-status`
@@ -586,7 +590,7 @@ critical=False 不影响结论），并生成随报告归档的人工清单
   旧后端改名 `packaging/out/backend-server.preM3` 保留。重打安装包后接口实测 **200 OK**。
 - **配套提醒**：只要 M3 之后动了 `backend/`，发布前**必须**单独重建后端，`electron:build` 不会做。
 
-#### 缺陷 B（**待修复，P0**）：首启向导第 3 步必然显示「模型准备失败」
+#### 缺陷 B（**已修复** — 复验见 §十二）：首启向导第 3 步必然显示「模型准备失败」
 
 - **现象**：全新安装首启，第 3 步显示「正在准备语音模型 → **模型准备失败。**」，
   按钮为「重试 / 导出日志 / 先跳过，稍后再说」。等 60s 也不会自愈，**反复点「重试」也无效**。
@@ -604,7 +608,8 @@ critical=False 不影响结论），并生成随报告归档的人工清单
   并没有播种调用；主进程只通过 `TINGKEBANLV_SEED_MODEL_DIR` 把种子路径传下去。
 - **影响面**：首启正常路径（走完 6 步）被阻断，用户只能点「先跳过，稍后再说」；
   且被误导去点无效的「重试」。**真实用户首次使用必然遇到。**
-- **修复建议（三选一，待决策）**：
+- **修复建议（三选一）**：→ **用户拍板选方案 A**（后端 `lifespan` 后台幂等播种 +
+  前端状态机加 `seeding` 档）。实施与复验见 **§十二**。
   - **方案 A（推荐，改动最小）**：后端 `lifespan` 启动时**后台异步**幂等播种
     （`ensure_model` 本身幂等，已有 `has_verified_marker` 标记），
     `model-status` 在「播种中」时返回 `ok:false` 但前端应把「种子可用且正在播种」
@@ -618,8 +623,10 @@ critical=False 不影响结论），并生成随报告归档的人工清单
   是因为脚本在此之前跑了**后端 `--selftest`**，而 `selftest` 会调 `ensure_model`
   —— 等于**验收脚本替产品完成了播种**。修复缺陷 B 后，该步骤才真正验到「应用会播种」。
   在此之前不建议把该步骤当作有效证据。
+  → **已于 §12.4 修掉**：原断言改名为「后端自检播种落盘（--selftest 触发，非应用行为）」
+  并降为非关键，另加「清空工作副本 → 启动应用 → 断言模型自己长出来」三步正面断言。
 
-### 11.5 待决策：第 6 步开关名与控制面板口径不一致
+### 11.5 待决策：第 6 步开关名与控制面板口径不一致（**已决策并落地，见 §12.5**）
 
 | 位置 | 当前文案 | 含「提示词」 |
 |---|---|---|
@@ -645,4 +652,158 @@ critical=False 不影响结论），并生成随报告归档的人工清单
   ③ 点「开始使用」/「跳过」后主进程**立即关闭向导窗口**，之后所有 CDP 调用超时，
   截图必须安排在点击之前；另有一个隐蔽坑：CDP 截图响应可能是**二进制帧**，
   `JSON.parse` 抛错发生在事件回调里、外层 try 包不住，会静默带崩整个脚本。
+
+---
+
+## 十二、缺陷 B 修复与复验（2026-10-07）
+
+> 本节是 §11 的续篇。§11 保留「首次验收 + 发现缺陷」的原始记录（以便对照缺陷是怎么
+> 逃过第一轮的），这里是修复实现与复验结果。两节合起来才是完整的验收留痕。
+
+### 12.1 修复方案（用户拍板：方案 A）
+
+**方案 A：后端 `lifespan` 后台幂等播种 + 前端状态机区分「种子存在 / 正在播种 / 播种完成 / 失败」。**
+
+选它的理由：最贴合本模块的原始设计意图 —— `model_bootstrap.py` 顶部的装配关系图
+一直写着「首次启动播种」，但那个调用点**此前并不存在**（见 §11.4 根因链）。所以这不是
+「新增一个机制」，而是**把注释里承诺的行为补上**。
+
+三条设计约束（写在 `model_bootstrap.py` 的模块注释里，视为约束而非实现细节）：
+
+| 约束 | 原因 |
+|---|---|
+| **必须后台线程** | 141MB 拷贝要几秒到几十秒（慢盘更久）。同步做会拖长后端就绪时间，而主进程是按日志里的「`[backend] 就绪`」标记解析端口的 —— 卡住等于整个应用起不来 |
+| **必须幂等** | `ensure_model` 自己先 `check_installed`（毫秒级），且与引擎加载共用 `_copy_lock`：既不会重复拷贝，也不会和识别抢文件 |
+| **失败不崩溃** | 异常与失败原因落在状态里、经 `/api/asr/model-status` 暴露给前端。播种失败不该让后端起不来 |
+
+落地文件：
+
+| 文件 | 改动 |
+|---|---|
+| `backend/asr/model_bootstrap.py` | 新增后台播种段：`seed_exists()` / `background_seed_state()` / `start_background_seed()`（幂等）/ `reset_background_seed_state_for_tests()`；失败原因映射为**稳定枚举**（`no-seed` / `io-error` / `integrity` / `unknown`），细节只进日志 |
+| `backend/main.py` | `lifespan` 钩子里调用 `start_background_seed()`；`TINGKEBANLV_SKIP_BACKGROUND_SEED=1` 可关（测试与 `--selftest` 用） |
+| `backend/api/routes.py` | `asr_model_status` 扩为四字段 `{ok, model, seed_exists, seeding, error}`；**兼作幂等触发点**（旧版本升上来的用户没跑过 lifespan，靠这里自愈） |
+| `frontend/src/lib/onboarding.ts` | `ModelPhase` 加 `seeding` 档；新增 `SEED_TIMEOUT_ATTEMPTS = 90`（兜底「卡死」）；`phaseIsFinal` 保持只有 ready/failed 是终态 |
+| `frontend/src/lib/onboardingBridge.ts` | `BackendProbe` 加 `seeding` / `seedExists`，一律 `=== true` 解析 —— 旧后端缺字段时自然退回「按 ok 二分」的老行为 |
+| `frontend/src/pages/OnboardingWizard.tsx` | 文案映射从深嵌套三元改为 `STEP3_PHASE_TEXT: Record<ModelPhase, string>` 映射表 |
+| `backend/tests/conftest.py` | 测试隔离：`TINGKEBANLV_HOME`（临时目录）+ `TINGKEBANLV_SKIP_BACKGROUND_SEED=1` —— 否则走 TestClient 的每个用例都会往用户真实目录里拷 141MB |
+| `backend/tests/test_model_seed_background.py`（新） | 11 条：状态机（成功/失败枚举/异常吞/成功后幂等/运行中幂等/失败后重试）+ `seed_exists` 四种情形 |
+| `backend/tests/test_onboarding_model_status.py`（重写） | 8 条：字段集合固定、`seeding` 随状态变化、**不可用时必须触发播种**、失败细节不泄漏（只给枚举） |
+
+### 12.2 复验结果（全部自动，可复核）
+
+| 段 | 手段 | 结论 |
+|---|---|---|
+| 全自动 | `scripts/verify_install.py --installer frontend/release/tingkebanlv-3.4.0-setup.exe`（隔离 `TINGKEBANLV_HOME`） | **57 步 55 OK / 2 WARN / 0 FAIL**（WARN 同 §11，仍为已知非阻断） |
+| CDP 向导 6 步 | `scripts/drive-onboarding.cjs <home> run12` | **11/11**（走完 6 步 → `completed:true` / `stepReached:6`；重启不再弹） |
+| 第 3 步播种态 | `scripts/drive-onboarding.cjs <home> step3`（**本轮新增模式**） | **3/3** |
+| 静态回归 | `tsc --noEmit` / `npm test` / `pytest` / `npm run test:smoke` | 0 错 / **150 通过** / **133 通过 + 1 跳过** / **12/12** |
+
+安装包：`tingkebanlv-3.4.0-setup.exe`（288.4MB，构建于 10-07 14:05，含重打的冻结后端）。
+重打前的版本保留在 `frontend/release.preDefectB/`（它正是第 3 步必失败的那个版本，可做前后对照）。
+
+### 12.3 端到端实测（run12）
+
+```
+推进轮 1：步=2 按钮= / 跳过 / 上一步 / 下一步
+推进轮 2：步=4 按钮= / 跳过 / 上一步 / 下一步     ← 第 3 步自动跳过
+...
+ok  ② 走完 6 步并点掉「开始使用」 — 已走到最后一步
+ok  ② 点「开始使用」后 completed=true — {stepReached:6, completed:true, durationMs:5932}
+ok  ② 重启后向导不再弹出 — 25s 内无向导窗口
+[drive] run12 结束：11/11 项符合预期
+```
+
+第 3 步「一闪而过」正是修复后的**预期行为**（模型已就绪 → 900ms 后自动跳第 4 步）。
+
+### 12.4 把 §11.4 的「测试盲区」堵上（新增 4 条断言）
+
+原「首启播种落盘」断言读的是数据目录，而脚本在此之前跑的后端 `--selftest` 已经
+替产品播种过一份 —— 所以它无论产品是否播种都会绿。改法是把断言拆成「先破坏、再观察」：
+
+| 断言 | 证明什么 | 为什么原来证明不了 |
+|---|---|---|
+| 后端自检播种落盘（--selftest 触发，非应用行为） | 只记录事实，**已降为非关键** | 名字里写清它不是产品行为的证据 |
+| 清空模型工作副本（为验证「应用自己播种」） | 创造前提：工作副本与完整性标记一起移走 | 原来是「已有 → 断言有」，恒真 |
+| **应用启动后自行播种模型（lifespan 后台线程）** | 此后唯一能写回模型的只有后端 lifespan | 日志直证：`开始播种内置模型（base，141.0MB，原因: seeded）` |
+| **播种幂等：二次启动不重复拷贝模型** | 重启轮日志**不得**再出现播种行 | 否则每次启动白拷 142MB，还会与识别抢文件 |
+
+实测证据（`report-defectB.json`）：
+
+```
+[ OK ] 清空模型工作副本（为验证「应用自己播种」）: 已移除 .../tkl-verify-defectB/whisper_models
+[ OK ] 应用启动后自行播种模型（lifespan 后台线程）: 138.5MB；
+       日志：... asr.model_bootstrap: 开始播种内置模型（base，141.0MB，原因: seeded）
+[ OK ] 播种幂等：二次启动不重复拷贝模型: run-2 未出现「开始播种内置模型」，命中 check_installed 快路径
+```
+
+另外用一个独立探针直接跑**冻结后的后端 exe**（不经过 Electron），确认新字段真的进了产物：
+
+```
+[probe] 0 {"ok": true, "model": "base", "seed_exists": true, "seeding": false, "error": null}
+[probe] 数据目录播种落盘: True（138.5MB）
+```
+
+### 12.5 文案口径的决定（用户拍板：统一）
+
+| 位置 | 修复前 | 修复后 |
+|---|---|---|
+| 控制面板（`OverlayControlPanel.tsx`） | `术语提示词自动防循环降级` | **`参与识别的术语自动防循环降级`** |
+| 向导第 6 步（`onboarding.ts`） | `参与识别的术语自动防循环`（未变） | 同左 |
+
+判断依据是**受众**而不是「哪个更准确」：「提示词」是 Whisper `initial_prompt` 的实现细节，
+面向学生用户的面板不该出现；而两处叫法不一致会让人以为是两个功能。
+
+守卫 `frontend/tests/panel-copy.test.mts`（6 条）钉住这条口径：
+
+- 三个文件的可见文案均不得出现 `提示词` / `initial_prompt`
+- 面板与向导的开关名必须包含同一核心短语 `参与识别的术语自动防循环`
+- 旧名 `术语提示词…` 不得复活
+- **先剥块注释再扫**（这两个文件的注释里大量出现「提示词」，是必要的工程说明）；
+  末尾附**变异验证**：往可见文案塞禁词必须报、塞进注释里必须不报
+
+> 教训：一条口径要在「代码 + 测试 + 文案 + 注释」四处同时落地。本轮就是因为先改了
+> 面板的代码与注释、却没同步向导口径，才在 §11.5 里留了个待决策项。
+
+### 12.6 第 3 步播种态怎么验（新增 `step3` 模式）
+
+难处：**本机把 141MB 种子拷进数据目录只要 0.1~0.4s**（NVMe + 页缓存），所以
+「正在复制模型种子，请稍候」存在但几乎不可见 —— 直接跑一遍只能看到第 3 步一闪而过，
+证明不了那句话真的会渲染。
+
+做法：用 CDP 的 **Fetch 域**把 `/api/asr/model-status` 的响应换成
+`{ok:false, seed_exists:true, seeding:true}`，把界面**钉在**播种态读真实 DOM；再解除
+拦截，验证它自己走到第 4 步。这不是编造数据 —— 被替换的响应正是后端**播种期间的
+返回值形状**（字段契约由 `test_onboarding_model_status.py` 钉住，而「后端在播种时确实
+会给出这个状态」由 §12.4 的断言覆盖；两段合起来才是完整链路）。
+
+实测（`step3` 模式 3/3）：
+
+```
+ok ⑥ 第 3 步显示「正在复制模型种子，请稍候」
+   — 第 3 / 6 步 正在准备语音模型 … 正在复制模型种子，请稍候 无需联网下载 …
+ok ⑥ 播种期间不停在失败态 — 当前步=3
+ok ⑥ 模型就绪后自动跳到第 4 步（无需用户点击） — 当前步=4
+```
+
+### 12.7 顺带修掉的验收工具缺陷（都在本轮暴露）
+
+1. **`smoke-overlay.cjs` 选靶顺序相关**（真红，11/12 → 12/12）：
+   `pages = all` 之后 `pages` 换成了**重新拉取的一批新对象**，而 `overlay` 还是旧对象，
+   于是 `p !== overlay` 恒为真、`find()` 可能又把悬浮窗认成主窗口，假报「两个入口串了」。
+   历史上它只是**恰好**因为 `/json/list` 把主窗口排在前面才通过。改为按 **target id** 判同一目标。
+   教训：拿对象身份去判「是不是同一个目标」，在重新拉取之后必然失效。
+2. **`verify_install.py` 播种断言盲区**：见 §12.4。
+3. **`drive-onboarding.cjs` 新增 `step3` 模式**：见 §12.6。
+
+### 12.8 遗留与注意
+
+- 「正在复制模型种子」在**本机**几乎不可见（0.1~0.4s）；只有慢盘/冷缓存/杀软扫描的
+  用户机上才会停留几秒。文案本身已由 `step3` 模式钉住，不需要真机慢盘复现。
+- 播种超时上限 `SEED_TIMEOUT_ATTEMPTS = 90`（≈90s）：超过就落到 `failed` 分支给
+  「重试 / 跳过」，兜底「播种卡死」这类没法自愈的情况。**这个值是拍的，尚未有真实
+  慢盘数据支撑**，等用户反馈再调。
+- `electron:build` **不重建后端**（§11.4 缺陷 A 的配套提醒仍然有效）：只要动了
+  `backend/`，发布前必须先用 venv PyInstaller 单独重建 `packaging/out/backend-server`。
+- P3 唯一缺口不变：**中文真实网课音频 ≥10min + 逐字稿**仍未拿到。
 

@@ -249,7 +249,7 @@ PYTHONPATH=backend TINGKEBANLV_TERM_PROMPT_MAX=200 \
 |------|------|------|
 | `resources/backend-server/` | PyInstaller 冻结的后端（自带解释器与依赖） | 安装版的**唯一**启动路径 |
 | `resources/backend/` | 后端源码 | 开发/调试兜底（配合 `TINGKEBANLV_PYTHON`） |
-| `resources/whisper_models/` | 内置 base 模型种子（含 `manifest.json`） | 首启播种到数据目录，**断网即可用** |
+| `resources/whisper_models/` | 内置 base 模型种子（含 `manifest.json`） | 服务启动时后台播种到数据目录，**断网即可用** |
 | `resources/dist/` | 前端构建产物 | 由 FastAPI 同源托管，前端 `fetch('/api/...')` 无需代理 |
 
 ### 为什么必须冻结后端
@@ -296,6 +296,21 @@ npx electron-builder --win         # 出 NSIS 安装包
 |------|------|------|
 | `<安装目录>/resources/whisper_models/` | 只读种子（真理源） | 否 |
 | `<TINGKEBANLV_HOME>/whisper_models/` | 工作副本（faster-whisper 实际加载这里） | 是 |
+
+**触发点有两个，主次分明**：
+
+1. **主路径 —— 后端 `lifespan` 启动钩子**（`backend/main.py` → `start_background_seed`）：
+   服务刚起来就丢进后台线程播种，**不阻塞就绪**。首启向导第 3 步读到的
+   `/api/asr/model-status` 的 `seeding` 字段就来源于此；播种成功后同一接口的 `ok`
+   翻真，界面自动跳到「准备就绪」。设 `TINGKEBANLV_SKIP_BACKGROUND_SEED=1` 可关闭
+   （测试与 `--selftest` 用）。
+2. **兜底 —— 引擎加载模型时再调一次**（`asr/whisper_engine.py`）：覆盖没走 lifespan
+   的加载路径（`--selftest`、脚本、单测）以及「用户没等播种完就点了开始识别」。
+
+两处都走同一个 `ensure_model()`，幂等（先 `check_installed`，已就绪毫秒级返回），
+并且共用 `_copy_lock`，因此既不会重复拷贝，也不会和识别抢文件。
+`/api/asr/model-status` 本身也兼作**幂等触发点**：探测到模型不可用且没在播种时，
+顺手拉起一次后台播种 —— 让「从旧版本升上来、没跑过首启」的用户也能自愈。
 
 播种逻辑见 `backend/asr/model_bootstrap.py`：`ensure_model()` 先校验工作副本，
 完整就直接用（`verified`），缺失或损坏就从种子重播（`seeded` / `repaired`），

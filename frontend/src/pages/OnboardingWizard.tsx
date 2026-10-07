@@ -71,7 +71,7 @@ export default function OnboardingWizard() {
       const probe = await probeBackend()
       if (!alive) return
       attemptsRef.current += 1
-      const next = modelPhase(probe.pingOk, probe.modelOk, attemptsRef.current)
+      const next = modelPhase(probe, attemptsRef.current)
       setPhase(next)
       if (phaseIsFinal(next)) {
         done = true
@@ -275,6 +275,21 @@ function Step2() {
   )
 }
 
+/**
+ * 第 3 步：phase → 进度文字
+ *
+ * 写成映射表而不是嵌套三元：`seeding` 这一档就是修复首启缺陷时加进来的，
+ * 当时那串三元已经深到看不出哪个分支对应哪句话了。
+ * 文案一律取自 WIZARD_COPY（组件里不写第二份中文字面量）。
+ */
+const STEP3_PHASE_TEXT: Record<ModelPhase, string> = {
+  'backend-starting': WIZARD_COPY.step3PhaseStarting,
+  preparing: WIZARD_COPY.step3PhasePreparing,
+  seeding: WIZARD_COPY.step3PhaseSeeding,
+  ready: WIZARD_COPY.step3PhaseReady,
+  failed: WIZARD_COPY.step3FailedTitle,
+}
+
 function Step3({
   phase, notice, onRetry, onExportLogs, onLater,
 }: {
@@ -284,9 +299,8 @@ function Step3({
   onExportLogs: () => void
   onLater: () => void
 }) {
-  const phaseText = phase === 'ready'
-    ? WIZARD_COPY.step3PhaseReady
-    : (phase === 'failed' ? WIZARD_COPY.step3FailedTitle : (phase === 'preparing' ? WIZARD_COPY.step3PhasePreparing : WIZARD_COPY.step3PhaseStarting))
+  // phase → 进度文字的唯一映射：新增状态时只改这里 + WIZARD_COPY（别再写嵌套三元）
+  const phaseText = STEP3_PHASE_TEXT[phase]
 
   return (
     <>

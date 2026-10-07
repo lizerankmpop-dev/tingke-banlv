@@ -44,6 +44,7 @@ import {
   isLastStep,
   modelPhase,
   phaseIsFinal,
+  SEED_TIMEOUT_ATTEMPTS,
 } from '../src/lib/onboarding.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -182,24 +183,48 @@ test('stepLabel / clampStep / next / prev / isFirst / isLast', () => {
   assert.ok(isLastStep(6) && !isLastStep(5));
 });
 
-test('modelPhase · 四态状态机全分支', () => {
+test('modelPhase · 五态状态机全分支（含播种档）', () => {
   // ping 不通：短时间 = 还在启动；问满 60 次 = 失败（不能无限转圈）
-  assert.equal(modelPhase(false, null, 0), 'backend-starting');
-  assert.equal(modelPhase(false, null, 59), 'backend-starting');
-  assert.equal(modelPhase(false, null, 60), 'failed');
-  // ping 通了，模型信号三态
-  assert.equal(modelPhase(true, true, 0), 'ready');
-  assert.equal(modelPhase(true, false, 0), 'failed');
-  assert.equal(modelPhase(true, null, 0), 'preparing');
-  // 状态机只认这两个信号，没有任何本地计数器伪造进度
-  assert.equal(modelPhase(true, null, 1000), 'preparing', 'preparing 不因时间自动变 ready');
+  assert.equal(modelPhase({ pingOk: false, modelOk: null }, 0), 'backend-starting');
+  assert.equal(modelPhase({ pingOk: false, modelOk: null }, 59), 'backend-starting');
+  assert.equal(modelPhase({ pingOk: false, modelOk: null }, 60), 'failed');
+
+  // ping 通了：模型信号三态
+  assert.equal(modelPhase({ pingOk: true, modelOk: true }), 'ready');
+  assert.equal(modelPhase({ pingOk: true, modelOk: false }), 'failed');
+  assert.equal(modelPhase({ pingOk: true, modelOk: null }), 'preparing');
+
+  // 播种中 → seeding，**不是 failed**。这是首启缺陷修复的核心：
+  // 旧实现只有 ok 二分，把「正在复制种子」判成「准备失败」，用户被卡在第 3 步。
+  assert.equal(modelPhase({ pingOk: true, modelOk: false, seeding: true }), 'seeding');
+  // 播种超时 → 失败分支（界面给「重试 / 跳过」，不能无限等）
+  assert.equal(
+    modelPhase({ pingOk: true, modelOk: false, seeding: true }, SEED_TIMEOUT_ATTEMPTS),
+    'failed',
+  );
+  assert.equal(
+    modelPhase({ pingOk: true, modelOk: false, seeding: true }, SEED_TIMEOUT_ATTEMPTS - 1),
+    'seeding',
+  );
+  // 种子可用但播种还没起来（接口触发与下次探测之间的那一瞬）→ 也算「正在准备」，
+  // 否则界面会闪一下「准备失败」
+  assert.equal(modelPhase({ pingOk: true, modelOk: false, seedExists: true }), 'seeding');
+  // 连种子都没有 → 失败得干脆，不给用户无限等待
+  assert.equal(modelPhase({ pingOk: true, modelOk: false, seedExists: false }), 'failed');
+  assert.equal(modelPhase({ pingOk: true, modelOk: false }), 'failed');
+
+  // 状态机不认任何本地计数器伪造进度
+  assert.equal(modelPhase({ pingOk: true, modelOk: null }, 1000), 'preparing', 'preparing 不因时间自动变 ready');
+  // 后端若是旧版本（不返回 seeding / seed_exists），退回按 ok 二分的旧行为
+  assert.equal(modelPhase({ pingOk: true, modelOk: false, seeding: false, seedExists: false }), 'failed');
 });
 
-test('phaseIsFinal · 只有 ready / failed 是终态', () => {
+test('phaseIsFinal · 只有 ready / failed 是终态（seeding 要继续轮询）', () => {
   assert.ok(phaseIsFinal('ready'));
   assert.ok(phaseIsFinal('failed'));
   assert.ok(!phaseIsFinal('preparing'));
   assert.ok(!phaseIsFinal('backend-starting'));
+  assert.ok(!phaseIsFinal('seeding'), 'seeding 必须继续轮询，否则播种完成也进不了下一步');
 });
 
 // ---------------------------------------------------------------- 变异验证

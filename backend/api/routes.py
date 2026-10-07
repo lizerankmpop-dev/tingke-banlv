@@ -829,31 +829,61 @@ async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
 @router.get("/asr/model-status")
 async def asr_model_status():
     """
-    语音模型是否可用（首启向导第 3 步用）
+    语音模型是否可用 + 是否正在后台播种（首启向导第 3 步用）
 
     **判据必须复用 `model_bootstrap.check_installed`** —— 引擎启动时用的就是它
     （`whisper_engine.py` 的 `is_model_available`）。向导若自己写一套探测，
     就会出现「引导说模型已就绪、点开始听课却报模型缺失」这种最尴尬的错位，
     而两处判断还都「看起来是对的」。
 
-    契约：调用方只看 `ok`，**不要**解析 `reason` / `action` / 错误文本。
-    因此这里刻意不返回它们 —— 一旦返回，迟早会有人按中文字符串做分支，
-    而 `action` 可能是 copied / reused / verified（都是成功），
-    历史上正是按 action 判断，把「播种后 sha256 仍不通」误报成通过。
+    返回四个字段，调用方**按位看**，严禁解析 `error` 的文本内容：
+
+    | 字段 | 含义 |
+    |---|---|
+    | `ok` | 模型已就位可用（为 True 时其余字段无意义） |
+    | `seed_exists` | 内置种子可用于播种；为 False 时「再等等」也不会好，直接失败分支 |
+    | `seeding` | 后台正在播种 —— 此时 UI 该显示「请稍候」而**不是**「失败」 |
+    | `error` | 失败原因，**仅供排障日志**；UI 不得据此分支（历史上正是按文本分支出的错） |
+
+    这个接口同时是**幂等触发点**：探测到模型未就绪且尚未播种成功时，顺手启动一次
+    后台播种（`start_background_seed` 幂等、立即返回、不阻塞请求）。这样即便是从
+    旧版本升上来的用户（lifespan 钩子那条路径没跑过），向导也能自愈。
 
     deep=False：只比文件大小（毫秒级）。向导会在启动路径上轮询它，
     这里绝不能做 sha256（秒级），否则「正在准备」会被卡成「一直没反应」。
     深度校验留给 `--selftest` 与「损坏自动修复」路径。
     """
-    from asr.model_bootstrap import check_installed
+    from asr.model_bootstrap import (
+        background_seed_state,
+        check_installed,
+        seed_exists,
+        start_background_seed,
+    )
     from asr.whisper_engine import DEFAULT_MODEL
 
     detail = check_installed(DEFAULT_MODEL, deep=False)
     ok = bool(detail["ok"])
-    if not ok:
+    has_seed = seed_exists(DEFAULT_MODEL)
+
+    if not ok and start_background_seed(DEFAULT_MODEL):
+        logger.info(f"首启向导探测到模型未就绪，已启动后台播种: model={DEFAULT_MODEL}")
+
+    state = background_seed_state()
+    seeding = (not ok) and bool(state["running"])
+    if not ok and not seeding:
         # 细节只进后端日志：用户看不到，排障时能拿到
-        logger.warning(f"首启向导探测模型不可用: model={DEFAULT_MODEL} problems={detail.get('problems')}")
-    return {"ok": ok, "model": DEFAULT_MODEL}
+        logger.warning(
+            f"首启向导探测模型不可用: model={DEFAULT_MODEL} problems={detail.get('problems')} "
+            f"seed_exists={has_seed} error={state.get('error')}"
+        )
+
+    return {
+        "ok": ok,
+        "model": DEFAULT_MODEL,
+        "seed_exists": has_seed,
+        "seeding": seeding,
+        "error": None if ok else state.get("error"),
+    }
 
 
 @router.post("/asr/start")

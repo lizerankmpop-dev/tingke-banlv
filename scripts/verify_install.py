@@ -99,6 +99,12 @@ ONBOARDING_WINDOW_LOG = "[onboarding] 向导窗口已创建"
 ONBOARDING_DONE_LOG = "[onboarding] 完成"
 ONBOARDING_DISMISS_LOG = "[onboarding] 跳过"
 
+# 后端播种真发生时才会打的日志（asr/model_bootstrap.py 的 seed_model）。
+# 它有两个用途，都是「靠副作用反推行为」的关键证据：
+#   1. run-1 必须出现 —— 证明播种是**应用自己**做的，而不是验收脚本代劳；
+#   2. run-2 必须消失 —— 幂等（已就绪走 verified 快路径，不再拷 142MB）。
+SEED_START_LOG = "开始播种内置模型"
+
 # Electron 主进程向「已销毁的渲染帧」发消息时，会由内部打一行
 #   Error sending from webFrameMain: Error: Render frame was disposed ...
 # 它只出现在渲染进程崩溃之后，属于 Electron 自身的告警，不是应用缺陷。
@@ -663,12 +669,18 @@ def main() -> int:
                 if hit:
                     report.step(f"  · {name}", hit["ok"], hit["detail"], critical=hit["critical"])
 
-        # 播种是否真的落到了数据目录
+        # 播种是否落到了数据目录。
+        #
+        # **注意这条断言证明不了「应用会播种」**：上面的 --selftest 自己就会调
+        # ensure_model 把模型拷进来，所以不论产品是否播种它都会绿。
+        # M3 实装验收正是因此漏掉了缺陷 B（首启第 3 步必然「模型准备失败」）。
+        # 真正验产品行为的断言在下面 3c + 4 那两条（先清空、再启动应用）。
         seeded = home / "whisper_models" / "models--Systran--faster-whisper-base" / "snapshots" / "seed" / "model.bin"
         report.step(
-            "首启播种落盘",
+            "后端自检播种落盘（--selftest 触发，非应用行为）",
             seeded.is_file(),
             f"{seeded}（{mb(seeded.stat().st_size) if seeded.is_file() else '不存在'}）",
+            critical=False,
         )
 
         if args.keep_installed:
@@ -688,6 +700,25 @@ def main() -> int:
             "预置 v1 配置（模拟老用户升级）",
             True,
             "overlay.json：无 schemaVersion / 无 anchor / fontSize=30（非默认，用于验证不被重置）",
+            critical=False,
+        )
+
+        # ---------- 3c. 清空模型工作副本：把「应用会不会自己播种」变成可断言的 ----------
+        # 为什么必须清：`--selftest`（第 3 步）已经替产品把模型播种到了数据目录，
+        # 于是「数据目录里有没有模型」这条断言对**应用行为**毫无分辨力 ——
+        # M3 实装验收就是这么把缺陷 B 放过去的（第 3 步必然「模型准备失败」，
+        # 而报告全绿）。这里把工作副本连同完整性标记一起移走，之后唯一还能把它
+        # 写回来的，就只有后端 lifespan 的后台播种线程。
+        #
+        # 完整性标记 .seed-integrity-base.json 就落在该目录内部，随目录一起删除 ——
+        # 留着它会让下一次 ensure_model 跳过深度校验，掩盖「模型其实已被删」的情形。
+        seeded_dir = home / "whisper_models"
+        if seeded_dir.exists():
+            shutil.rmtree(seeded_dir, ignore_errors=True)
+        report.step(
+            "清空模型工作副本（为验证「应用自己播种」）",
+            not seeded_dir.exists(),
+            f"已移除 {seeded_dir}" if not seeded_dir.exists() else f"仍存在：{seeded_dir}",
             critical=False,
         )
 
@@ -765,6 +796,25 @@ def main() -> int:
             interval=1.0,
         )
         report.step("界面加载完成", painted, "日志出现「界面加载完成」" if painted else "150s 内未出现")
+
+        # ---- 缺陷 B 的正面断言：模型是**应用自己**播种的 ----
+        # 前置条件由 3c 保证（工作副本已清空），所以这里的文件只可能来自
+        # 后端 lifespan 的后台播种线程。日志里那条「开始播种内置模型」是直接证据：
+        # 它由 seed_model 在真的开始拷贝时才打，已就绪的快路径不会打。
+        app_seeded = wait_for(lambda: seeded.is_file(), timeout=180, interval=1.0)
+        seed_start_line = next(
+            (ln for ln in read_log().splitlines() if SEED_START_LOG in ln), ""
+        )
+        report.step(
+            "应用启动后自行播种模型（lifespan 后台线程）",
+            app_seeded and bool(seed_start_line),
+            (
+                f"{mb(seeded.stat().st_size)}；日志：{seed_start_line.strip()}"
+                if app_seeded and seed_start_line
+                else f"文件已出现={app_seeded}，播种日志={'有' if seed_start_line else '无'}"
+                "（无日志说明走的是 ensure_model 快路径，播种其实不是这次做的）"
+            ),
+        )
 
         # 从日志里抓后端端口，用它做存活探测（比查进程更接近「真的能用」）。
         #
@@ -1156,6 +1206,17 @@ def main() -> int:
             "已是最新 schemaVersion，未再触发迁移"
             if MIGRATION_LOG not in text2
             else "重启后又报了一次迁移 → 上一轮没有把迁移结果落盘",
+        )
+
+        # 播种幂等：run-1 已经把模型播好了，这一轮必须走 ensure_model 的
+        # verified 快路径 —— 再拷一次 142MB 不只是慢，还会在每次启动时制造
+        # 一段「模型目录正在被覆写」的窗口，正好和识别抢文件。
+        report.step(
+            "播种幂等：二次启动不重复拷贝模型",
+            entered2 and SEED_START_LOG not in text2,
+            "run-2 未出现「开始播种内置模型」，命中 check_installed 快路径"
+            if SEED_START_LOG not in text2
+            else "run-2 又完整播种了一次 → 幂等失效（完整性标记可能没落盘）",
         )
 
         # M3：本轮没有任何人驱动向导「完成/跳过」，onboarding.json 仍是未完成态，

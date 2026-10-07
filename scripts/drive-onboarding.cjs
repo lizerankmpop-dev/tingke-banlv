@@ -20,6 +20,7 @@
  *   node drive-onboarding.cjs <home> run3  [port]   # ③跳过 → 重启不弹
  *   node drive-onboarding.cjs <home> run4  [port]   # ④已有 completed=true（老用户升级）不弹
  *   node drive-onboarding.cjs <home> run5  [port]   # ⑤第 4/6 步文案截图（人工对照控制面板）
+ *   node drive-onboarding.cjs <home> step3 [port]   # ⑥第 3 步「正在复制模型种子」+ 就绪后自动跳步
  *
  * 退出码：0 全部符合预期；1 有断言不符；2 环境不满足（起不来 / 找不到向导窗口）
  */
@@ -60,6 +61,11 @@ const BTN = {
   skipAll: '跳过',
   step3Later: '先跳过，稍后再说',
 }
+
+// 第 3 步的相位文案（同样与 WIZARD_COPY 一一对应）。
+// 播种那句是缺陷 B 修复后新增的可见文案，step3 模式专门验它真的会渲染。
+const COPY_STEP3_SEEDING = '正在复制模型种子，请稍候'
+const COPY_STEP3_FAILED = '模型准备失败'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const results = []
@@ -592,6 +598,94 @@ async function run5() {
   return results.every((r) => r.ok) ? 0 : 1
 }
 
+/**
+ * ⑥ 第 3 步「正在复制模型种子」——缺陷 B 修复的正面验收
+ *
+ * 为什么必须「构造」这个状态：本机把 141MB 种子从安装目录拷到数据目录只要
+ * **0.1~0.4s**（NVMe + 页缓存），这个中间态真实存在，但肉眼与 CDP 都抓不到，
+ * 直接跑一遍只能看到「第 3 步一闪而过」—— 证明不了那句文案真的会渲染。
+ * 所以这里用 CDP 的 Fetch 域把 `/api/asr/model-status` 的响应换成
+ * `{ok:false, seed_exists:true, seeding:true}`，把界面**钉在**播种态上读真实 DOM；
+ * 再解除拦截，验证它会自己走到第 4 步。
+ *
+ * 这不是编造数据：被替换的响应正是后端**播种期间的返回值形状**
+ * （契约见 backend/api/routes.py 的 `/asr/model-status`，
+ *   由 backend/tests/test_onboarding_model_status.py 钉住五个字段）。
+ * 换句话说，这里验的是「后端给出播种态时，界面会不会说人话」——
+ * 而「后端在播种时确实会给出这个状态」由上面那个后端测试与 verify_install 的
+ * 「应用启动后自行播种模型」断言分别覆盖，两段合起来才是完整链路。
+ */
+async function step3() {
+  await killApp()
+  if (fs.existsSync(OB_JSON)) fs.unlinkSync(OB_JSON) // 保证「全新」
+  if (fs.existsSync(LOG_FILE)) fs.unlinkSync(LOG_FILE)
+
+  launch()
+  const w = await openWizard(90)
+  if (!w) return 2
+  const { conn } = w
+
+  // 拦截必须在**到达第 3 步之前**启用：后端此刻已经播种好了，一旦放行真实响应，
+  // 第 3 步会在 900ms 后自己跳到第 4 步，根本没机会观察。
+  const stubbed = Buffer.from(
+    JSON.stringify({ ok: false, model: 'base', seed_exists: true, seeding: true, error: null }),
+    'utf8',
+  ).toString('base64')
+  // 每条被暂停的请求都必须 fulfill，否则页面会一直等（1s 轮询会越积越多）
+  conn.ws.addEventListener('message', (ev) => {
+    try {
+      const text = typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8')
+      const msg = JSON.parse(text)
+      if (msg.method === 'Fetch.requestPaused') {
+        conn.send('Fetch.fulfillRequest', {
+          requestId: msg.params.requestId,
+          responseCode: 200,
+          responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+          body: stubbed,
+        }).catch(() => {})
+      }
+    } catch { /* 二进制帧（截图）等非 JSON 消息，忽略 */ }
+  })
+  await conn.send('Fetch.enable', {
+    patterns: [{ urlPattern: '*model-status*', requestStage: 'Request' }],
+  })
+
+  await clickText(conn, BTN.start)
+  for (let i = 0; i < 8; i++) {
+    await sleep(900)
+    if ((await stepCounter(conn)) === 3) break
+    await clickText(conn, BTN.next)
+  }
+
+  let text = ''
+  for (let i = 0; i < 24; i++) {
+    await sleep(500)
+    text = String(await evalOn(conn, `document.body.innerText`))
+    if (text.includes(COPY_STEP3_SEEDING)) break
+  }
+  const stepAtSeed = await stepCounter(conn)
+  await shot(conn, 'setup-11-第3步-正在复制模型种子.png')
+  const flat = text.replace(/\s+/g, ' ')
+  fs.writeFileSync(path.join(OUT_DIR, 'copy-step3-seeding.txt'), text, 'utf8')
+  check('⑥ 第 3 步显示「正在复制模型种子，请稍候」', text.includes(COPY_STEP3_SEEDING), flat.slice(0, 200))
+  check('⑥ 播种期间不停在失败态', !text.includes(COPY_STEP3_FAILED), `当前步=${stepAtSeed}`)
+
+  // 解除拦截 → 真实响应 ok:true → 应自动跳到第 4 步
+  await conn.send('Fetch.disable')
+  let advanced = false
+  for (let i = 0; i < 24; i++) {
+    await sleep(1000)
+    const s = await stepCounter(conn)
+    if (typeof s === 'number' && s >= 4) { advanced = true; break }
+  }
+  await shot(conn, 'setup-12-第3步解除拦截后自动跳转.png')
+  check('⑥ 模型就绪后自动跳到第 4 步（无需用户点击）', advanced, `当前步=${await stepCounter(conn)}`)
+
+  archiveLog('step3')
+  await killApp()
+  return results.every((r) => r.ok) ? 0 : 1
+}
+
 // ============ 入口 ============
 // 全局兜底：异常若发生在事件回调里（CDP 消息、WebSocket 事件），外层 try 包不住，
 // 不加这个就会静默退出、只留下半截输出 —— 排查时最难的一类现象。
@@ -609,7 +703,7 @@ process.on('unhandledRejection', (e) => {
     console.error('[drive] 需要 Node 22+（依赖内置 WebSocket），当前 ' + process.version)
     process.exit(2)
   }
-  const table = { run12, run3, run4, run5 }
+  const table = { run12, run3, run4, run5, step3 }
   const fn = table[MODE]
   if (!fn) {
     console.error(`[drive] 未知 mode: ${MODE}（可选 ${Object.keys(table).join(' / ')}）`)
