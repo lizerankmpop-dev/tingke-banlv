@@ -220,6 +220,9 @@ REVIEW_HTML = """<!DOCTYPE html>
   textarea:focus { outline:1px solid var(--accent); }
   .flag { color:#d98b4a; font-size:11px; grid-column:1/-1; }
   .hint { color:var(--dim); font-size:12px; margin:6px 0 14px; }
+  .controls { display:flex; gap:16px; align-items:center; color:var(--dim); font-size:12px; margin:6px 0; }
+  .controls select { background:#26314a; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:3px 6px; }
+  .controls label { display:flex; gap:5px; align-items:center; cursor:pointer; }
   kbd { background:#26314a; border-radius:4px; padding:1px 5px; font-size:11px; }
 </style>
 </head>
@@ -233,10 +236,22 @@ REVIEW_HTML = """<!DOCTYPE html>
 </header>
 <main>
   <audio id="player" controls preload="metadata" src="__AUDIO__"></audio>
+  <div class="controls">
+    倍速 <select id="rate">
+      <option value="0.75">0.75×</option>
+      <option value="1" selected>1×</option>
+      <option value="1.25">1.25×</option>
+      <option value="1.5">1.5×</option>
+      <option value="2">2×</option>
+    </select>
+    <label><input type="checkbox" id="loop"> 循环本段</label>
+    <label><input type="checkbox" id="autoNext"> 播完自动下一段</label>
+  </div>
   <div class="hint">
     用法：按 <kbd>空格</kbd> 播放/暂停当前段，<kbd>Ctrl</kbd>+<kbd>←/→</kbd> 切段；
     每段文本直接改错字，自动保存在本浏览器。改完点「导出 txt」，覆盖到音频同名的 <code>.txt</code> 即完成逐字稿。
     橙色左边框 = 该块发生了合并降级，草稿文本可能跨多句，需对照听一遍。
+    <br>长音频建议 1.25×~1.5× 校对（同样的时间能多听一遍），遇到听不清的段落切回 1× 或 0.75×。
   </div>
   <div id="list"></div>
 </main>
@@ -244,7 +259,19 @@ REVIEW_HTML = """<!DOCTYPE html>
 const DRAFT = __DRAFT__;
 const KEY = 'tingke-transcript-' + DRAFT.info.audio;
 const player = document.getElementById('player');
+const rateSel = document.getElementById('rate');
+const loopChk = document.getElementById('loop');
+const nextChk = document.getElementById('autoNext');
 let cur = -1, stopAt = null;
+
+let rate = parseFloat(localStorage.getItem(KEY + '-rate') || '1');
+rateSel.value = String(rate);
+player.playbackRate = rate;
+rateSel.onchange = () => {
+  rate = parseFloat(rateSel.value);
+  player.playbackRate = rate;               // 只设一次会被某些浏览器在 play() 后重置，这里显式再设
+  localStorage.setItem(KEY + '-rate', String(rate));
+};
 
 const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
 const texts = saved && saved.length === DRAFT.segments.length
@@ -288,10 +315,18 @@ function playSeg(i) {
   const seg = DRAFT.segments[i];
   player.currentTime = Math.max(0, seg.audioStart - 0.2);
   stopAt = seg.audioEnd + 0.3;
+  player.playbackRate = rate;
   player.play();
 }
 player.addEventListener('timeupdate', () => {
-  if (stopAt !== null && player.currentTime >= stopAt) { player.pause(); stopAt = null; }
+  if (stopAt === null || player.currentTime < stopAt) return;
+  if (loopChk.checked && cur >= 0) {
+    player.currentTime = Math.max(0, DRAFT.segments[cur].audioStart - 0.2);
+    return;
+  }
+  player.pause();
+  stopAt = null;
+  if (nextChk.checked && cur >= 0 && cur + 1 < DRAFT.segments.length) playSeg(cur + 1);
 });
 document.addEventListener('keydown', e => {
   const typing = /^(TEXTAREA|INPUT)$/.test(document.activeElement.tagName);
