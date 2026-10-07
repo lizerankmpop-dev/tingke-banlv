@@ -10,17 +10,20 @@
 `frontend/dist/`（Vite 产物，被 gitignore）。`frontend/build/` **不在**
 `.gitignore` 里，图标作为源码资产正常入库。
 
-## 当前状态：⚠️ 占位图标（等待美术资源交付）
+## 当前状态：v4 海獭图标（几何骨架版，2026-10-07 按 §8.5 验收通过）
 
 | 文件 | 状态 |
 |---|---|
-| `icon.ico` | **占位版本**，由 `frontend/scripts/make-placeholder-icon.py` 生成 |
+| `icon.ico` | **v4 海獭版**，8 档（16/24/32/48/64/96/128/256），由 `icon-source/build_otter.py` 生成 |
 | `icon.icns` | 未做（暂不支持 macOS 分发，见设计稿 §7 待决策项 1） |
 | `installerIcon.ico` / `installerHeaderIcon.ico` | 未做（NSIS 缺失时回落 `icon.ico`，见待决策项 2） |
 
-占位图语义：深紫底（取 `global.css` 的 `--accent`）+ 两条居中字幕条。
-**它是能用的合格图标，但不是终稿** —— 美术资源交付后直接覆盖 `icon.ico`
-即可，代码与配置无需再改。
+- 16px / 24px 来自 `icon-source/tingke-otter-16.svg` / `-24.svg` **独立剪影**（非主矢量缩放）；
+  浅色/深色任务栏底实测均可辨识（黄色学士帽 = 色彩锚点）。
+- 旧占位图标（深紫底字幕条）保留在 git 历史（sha256 `8800c054…`），回滚：
+  `git checkout <旧提交> -- frontend/build/icon.ico`。
+- 美化迭代（帽子角度、五官、描边粗细）按 `icon-source/` 的**单一数据源约定**改脚本参数后重跑，
+  改完必须重走 §8.5。
 
 ## 替换占位图标时的交付清单（来自 `docs/m3/icon_asset_spec.md`）
 
