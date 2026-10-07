@@ -374,7 +374,8 @@ def _bare_engine(
     `WhisperEngine.__new__` 会绕过 `__init__`，所以这里必须手工补齐所有实例字段。
     新增字段时要同步加在这里，否则测试会在用到时抛 AttributeError。
     """
-    from asr.whisper_engine import WhisperEngine
+    from asr.prompt_echo import EchoCleaner
+    from asr.whisper_engine import SIMP_HINT_LANGS, WhisperEngine, get_simp_hint
 
     engine = WhisperEngine.__new__(WhisperEngine)   # 不触发模型加载
     engine.model_size = "base"
@@ -414,6 +415,13 @@ def _bare_engine(
     engine._prompt_sections = list(sections) if sections else None
     engine._prompt_original_sections = None
     engine._last_budget = None
+    # 提示词回显清洗，见 asr/prompt_echo.py
+    # 引导语只在中文场景注入（与 `_build_prompt` 的 SIMP_HINT_LANGS 判断一致），
+    # 所以英文用例拿到的必然是**未启用**的清洗器 —— 这正是「英文不可能回显」的语义。
+    engine._echo = EchoCleaner(
+        get_simp_hint() if (language or "").lower() in SIMP_HINT_LANGS else ""
+    )
+    engine._echo_logged = False
     return engine
 
 
@@ -795,6 +803,121 @@ class TestTermPromptGuard:
         assert engine._stat_out_segments == 6       # 每轮只有 1 条非空
         assert engine._prompt_degraded is False
         assert engine._recent_text == "a" * 6       # 只有非空文本进了缓冲
+
+
+class TestPromptEchoEndToEnd:
+    """提示词回显清洗在**真实 `_transcribe()` 路径**上的行为（不只是静态顺序守卫）
+
+    与 `tests/test_prompt_echo.py` 的分工：
+        * 那边覆盖纯函数两条规则 + 源码顺序守卫（静态）；
+        * 这里补「跑完一轮 `_transcribe` 之后，回调收到了什么、`_last_text`
+          变成了什么、计数怎么走」—— 静态守卫只能证明「代码写着清洗在前面」，
+          **证明不了清洗真的发生过**。
+
+    一个必须写下来的事实：**`isPureEcho=True` 必然 `text==""`**。
+    覆盖率判据是「归一化后 100% 被回显字面量覆盖」，删完就只剩分隔符，
+    `_tidy` 再把分隔符去掉 → 空串。所以引擎里
+    `if echo.isPureEcho: … continue` 与外层 `if not text: continue`
+    **在输出上完全等价**，唯一差别是前者会触发一次 `_log_echo_once()`。
+    这条推论有两个后果：
+        1. 「纯回显被丢弃」不能靠输出断言区分（两条路径都丢），
+           只能靠**日志**与 `segmentsDropped` 埋点 —— 所以下面用 `caplog`。
+        2. 该分支的价值是**可观测性**，不是过滤强度；若哪天把
+           `is_pure` 阈值放宽（`test_almost_pure_echo_is_not_dropped` 拦的就是这个），
+           它就会开始真的丢掉残字 —— 那时行为差异才会显形。
+
+    变异探针（= 本组用例的否定形式，三个都实测过，方法：把源码在内存里改掉后
+    以 `sys.modules` 注入再跑本类，不落任何真实文件）：
+        * 删掉 `if echo.isPureEcho: … continue` 分支 → **只**红
+          `test_pure_echo_segment_is_dropped_end_to_end`（caplog 断言），另两条照过；
+        * 让 `build_blacklist()` 返回 `[]`（模拟黑名单派生失效）→ 纯回显与混入
+          两条都红（引导语原样进回调），英文那条照过；
+        * 把清洗结果丢掉、仍用 `raw_text` 写 `_last_text` → **只**红
+          `test_echo_inside_real_text_is_stripped_end_to_end`（自我喂食那条断言）。
+
+    真实素材依据：B站 `BV1BA411i7PT`（630s，近静音 27.6%）草稿里引导语命中 17 次，
+    其中一条 2.5s 静音片段整段就是「请使用简体中文转写。」= 一条纯虚假字幕。
+    """
+
+    def test_pure_echo_segment_is_dropped_end_to_end(self, caplog):
+        """规则①整链：整段只有提示词 → 不回回调、不进 `_last_text`、不计产出"""
+        import logging
+
+        from asr.whisper_engine import get_simp_hint
+
+        real = "那么我们现在打开 Origin 这个软件。"
+        seen: list[str] = []
+        engine = _bare_engine(initial_prompt=LONG_PROMPT, language="zh")
+        engine.on_partial = lambda text, words: seen.append(text)
+        engine._model = _FakeModel([get_simp_hint(), real])
+
+        with caplog.at_level(logging.INFO, logger="asr.whisper_engine"):
+            engine._transcribe(np.zeros(16000, dtype=np.float32), 0.0, 1.0, 1)
+
+        assert seen == [real], f"纯回显不该变成字幕，实际收到 {seen}"
+        assert engine._last_text == real
+        # 回显段不产出字幕 → 产出计数是 1 而不是 2。
+        # 这个计数进的是「字幕/片段」辅助告警的分母，虚高会引发假告警。
+        assert engine._stat_in_segments == 1
+        assert engine._stat_out_segments == 1
+        echo = engine.echo_stats()
+        assert echo["enabled"] is True
+        assert echo["segmentsDropped"] == 1
+        assert echo["segmentsCleaned"] == 0
+        # 唯一能区分「纯回显分支」与「空文本分支」的判据（见类文档字符串）
+        assert any("[echo]" in r.getMessage() for r in caplog.records), (
+            "纯回显被丢弃时必须留痕 —— 否则『清洗在跑』和『清洗一条没匹配到』"
+            "在日志上无法区分，又回到静默失效"
+        )
+
+    def test_echo_inside_real_text_is_stripped_end_to_end(self, caplog):
+        """规则②整链：回显夹在真实文本里 → 只剔除回显，其余原样进回调"""
+        import logging
+
+        from asr.whisper_engine import get_simp_hint
+
+        raw = f"我们要继续做行图线, {get_simp_hint()}也就是这个文件了。"
+        seen: list[str] = []
+        engine = _bare_engine(language="zh")
+        engine.on_partial = lambda text, words: seen.append(text)
+        engine._model = _FakeModel([raw])
+
+        with caplog.at_level(logging.INFO, logger="asr.whisper_engine"):
+            engine._transcribe(np.zeros(16000, dtype=np.float32), 0.0, 1.0, 1)
+
+        assert len(seen) == 1
+        assert "简体中文转写" not in seen[0], f"回调拿到的是未清洗文本：{seen[0]!r}"
+        assert "我们要继续做行图线" in seen[0]
+        assert "也就是这个文件了" in seen[0]
+        # `_last_text` 会被下一轮 `_build_prompt()` 当成连贯性提示 —— 若这里仍是
+        # 带回显的原串，就形成自我喂食（实测同一 14s 块滚到 16 次）。
+        assert engine._last_text == seen[0], "_last_text 必须是清洗后的文本"
+        echo = engine.echo_stats()
+        assert echo["segmentsDropped"] == 0
+        assert echo["segmentsCleaned"] == 1
+        assert echo["substringsRemoved"] >= 1
+        assert any("[echo]" in r.getMessage() for r in caplog.records)
+
+    def test_english_never_gets_echo_cleaning(self):
+        """反向断言：英文场景不注入引导语，就不可能回显 —— 清洗器必须不介入。
+
+        两个方向都要钉住：
+            * 若清洗器在英文下被**无条件启用**，英文音频里任何恰好撞上中文
+              引导语的句子都会被静默删除；
+            * 反过来，若 `enabled is False` 但代码仍走清洗路径，
+              又会引入无意义开销与未来的误删面。
+        英文段落照原样产出，且埋点显示 `segmentsSeen == 0`（清洗器压根没被调用）。
+        """
+        engine = _bare_engine(initial_prompt=LONG_PROMPT, language="en")
+        engine._model = _FakeModel(["hello world", "this is a lecture"])
+        engine._transcribe(np.zeros(16000, dtype=np.float32), 0.0, 1.0, 1)
+
+        assert engine._stat_out_segments == 2
+        echo = engine.echo_stats()
+        assert echo["enabled"] is False
+        assert echo["inertReason"], "未启用必须说明原因，不能静默"
+        assert echo["segmentsDropped"] == 0
+        assert echo["segmentsSeen"] == 2, "英文下清洗器仍在被调用（inert 时也应计数）"
 
 
 class TestBuildPromptSimpHint:

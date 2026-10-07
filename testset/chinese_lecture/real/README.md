@@ -8,16 +8,32 @@
 
 ```
 testset/chinese_lecture/real/
-  <name>.wav|mp3|m4a|mp4|aac|ogg   ← 音频（不入库：体积大 + 含他人声音）
-  <name>.txt                       ← 逐字稿（UTF-8 无 BOM，一段一行）★核心资产，入库
-  <name>.draft.json / .draft.txt   ← ASR 草稿（校对过程中间产物，可不入库）
-  metadata.json                    ← 素材清单（kind: "REAL" + sha256 + 时长）★入库
+  <name>.wav|mp3|m4a|mp4|aac|ogg   ← 音频（本地持有，不入库）
+  <name>.txt                       ← 人工校对后的逐字稿（本地持有，不入库）
+  <name>.draft.json / .draft.txt   ← ASR 草稿（本地持有，不入库）
+  <name>.draft.srt / .review.html  ← 字幕式 / 校对页（本地持有，不入库）
+  metadata.json                    ← 素材清单（kind: "REAL" + sha256 + 时长）★唯一入库
+  README.md                        ← 本文件 ★入库
 ```
 
-> `.gitignore` 已屏蔽 `testset/**/*.{wav,mp3,m4a,flac,mp4,aac,ogg,opus,m4s,webm}` ——
-> **音频不入库**（版权 + 体积），只入库逐字稿与 metadata。换机器跑评估时按 metadata 的
-> `sha256` 核对音频是否一致。（`opus` 覆盖学术数据集的格式，`m4s`/`webm` 覆盖视频站拉流的
-> 容器——这三种都曾漏屏蔽，属已修缺陷。）
+> **本目录除 `README.md` 与 `metadata.json` 外，一律不入库**（`.gitignore` 用白名单实现）。
+> 音频含他人声音自不必说；**人工校对后的逐字稿同样是原音频的衍生转录作品，受版权保护**
+> —— 与素材本身承担同一套约束（2026-10-07 裁决）。
+>
+> **为什么用白名单而不是逐个后缀屏蔽**：逐个列是「默认泄漏」的写法 —— 以后多出任何一种
+> 中间产物（新的导出格式、临时切片…），漏加一条就进仓库了。白名单的默认值是安全的那一侧。
+>
+> **代价（明确接受过）**：P3 结论无法从仓库直接复现。缓解方式是 metadata 里记全
+> `bv` + 截取区间 + `sha256`：音频可按 BV 号与区间重新获取，但**逐字稿需要重新校对**。
+
+## 素材可复现性
+
+| 产物 | 能否重新获得 | 方式 |
+|---|---|---|
+| 音频 | ✅ | 按 `metadata.json` 的 `bv` + `provenance.clip` 重跑 `fetch_bili_audio.py` |
+| 音频一致性 | ✅ 可核验 | 比对 `sha256` |
+| ASR 草稿 | ✅ | 同一音频 + 同一模型/参数重跑 `asr_draft_transcript.py` |
+| **人工逐字稿** | ❌ | 需重新人工校对（这是不入库的代价） |
 
 ## 音频要求
 
@@ -48,6 +64,9 @@ testset/chinese_lecture/real/
 #     近静音占比过高说明窗口选在了停顿/片头音乐里，换个区间重切。
 
 # ① 生成带时间戳的分段草稿（分块喂入，产出 draft.json/txt/srt + review.html）
+#     输出末尾会打印「提示词回显」埋点：丢弃整段 / 剔除子串 的条数。
+#     静音段多时模型会把提示词当成上文接着念（实测命中 17 次），清洗逻辑见
+#     backend/asr/prompt_echo.py；这里看的是它到底有没有生效。
 <venv>/python.exe scripts/asr_draft_transcript.py --audio testset/chinese_lecture/real/<name>.wav
 
 # ② 打开 review.html 逐段校对（空格播放当前段 / Ctrl+←→ 切段 / 自动存浏览器）
@@ -148,9 +167,10 @@ testset/chinese_lecture/real/
 ## 隐私与合规
 
 - 音频含教师/同学声音：**只做本地评估，不上传、不入库、不外发**。
-- **自录素材**：逐字稿与 metadata 入库（自己写的，可入库）。
-- **第三方素材（公开课/数据集/他人录音）**：音频与逐字稿**都只留在本地**，只在
-  `metadata.json` 里登记来源、授权方式与 `sha256` —— 逐字稿同样是受版权保护的转录作品，
-  不能因为是我们整理的就可以入库。
+- **本目录统一规则**：除 `README.md` 与 `metadata.json` 外**全部不入库**，
+  自录与第三方素材**同一标准**（2026-10-07 裁决）。自录素材在版权上本可入库，
+  但规则越简单越不会被绕过 —— 一处例外就会变成长期的口子。
+- **第三方素材**：`metadata.json` 里登记来源、授权方式与 `sha256`。
+  **逐字稿同样是受版权保护的转录作品**，不能因为是我们整理的就可以入库。
 - 逐字稿入库前确认不含姓名、学号、联系方式等个人信息（口误里常出现点名，注意删改）。
 - 公开课素材请注明来源与授权方式；不确定时优先用**自己录的课**。

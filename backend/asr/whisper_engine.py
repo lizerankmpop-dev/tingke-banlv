@@ -17,6 +17,7 @@ import numpy as np
 from asr.model_bootstrap import check_installed, ensure_model, model_root
 from asr import prompt_budget
 from asr import repetition
+from asr.prompt_echo import EchoCleaner
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,15 @@ class WhisperEngine:
 
         # 多轮识别共享的"上一段文本"，让跨片段的术语拼写保持连贯
         self._last_text: Optional[str] = None
+
+        # ---- 提示词回显清洗（见 asr/prompt_echo.py 模块注释）----
+        # 引导语只在中文场景注入（`_build_prompt` 同样按 SIMP_HINT_LANGS 判断），
+        # 不注入就不可能被回显，所以这里也按同一条件构造，保持两边同源。
+        # 清洗器内部从**实际生效的引导语文案**派生黑名单，不另抄常量。
+        self._echo = EchoCleaner(
+            get_simp_hint() if (self.language or "").lower() in SIMP_HINT_LANGS else ""
+        )
+        self._echo_logged = False
 
         self._model = None
         self._loading = False
@@ -612,6 +622,24 @@ class WhisperEngine:
 
             # 处理识别结果
             for segment in segments:
+                raw_text = segment.text.strip()
+
+                # 提示词回显清洗，位置是刻意的：必须在**回调之前、`_last_text` 之前**。
+                # 静音段上 Whisper 会把 initial_prompt 接着念下去，若让这段回显进了
+                # `_last_text`，下一轮的提示词里又会带上它 —— 自我喂食，越滚越多
+                # （实测同一个 14s 块里回显 16 次）。详见 asr/prompt_echo.py。
+                echo = self._echo.clean(raw_text)
+                if echo.isPureEcho:
+                    # 整段只有提示词、没有任何语音内容 —— 这不是字幕，是模型的续写。
+                    # 丢弃它，且不计入 produced（否则会污染字幕/片段比值告警）。
+                    self._log_echo_once()
+                    continue
+                text = echo.text
+                if not text:
+                    continue
+                if echo.hits:
+                    self._log_echo_once()
+
                 words = []
                 if segment.words:
                     for w in segment.words:
@@ -623,7 +651,7 @@ class WhisperEngine:
                         ))
 
                 segment_data = SubtitleSegment(
-                    text=segment.text.strip(),
+                    text=text,
                     words=words,
                     start=segment_start + segment.start,
                     end=segment_start + segment.end,
@@ -672,6 +700,29 @@ class WhisperEngine:
                 f"[perf] 辅助指标：字幕/片段 = {adv['ratio']:.3f} 已越过 {adv['threshold']}"
                 f"（{adv['note']}）"
             )
+
+    def _log_echo_once(self):
+        """提示词回显第一次命中时留痕（埋点，只记一次，避免刷日志）。
+
+        为什么要记：这类清洗最容易变成「看起来在跑、其实一条都没匹配到」的静默失效。
+        要么在第一次命中时就说明「确实在生效」，要么在建构造时就说明「为什么没生效」
+        （见 EchoCleaner.inertReason）。
+        """
+        if self._echo_logged:
+            return
+        self._echo_logged = True
+        logger.info(
+            f"[echo] 检测到提示词回显，已启用清洗："
+            f"字面量 {len(self._echo.blacklist)} 条，示例 {self._echo.blacklist[:2]}"
+        )
+
+    def echo_stats(self) -> dict:
+        """回显清洗的累计埋点（供草稿/评估脚本汇总上报）。"""
+        stats = self._echo.stats.asDict()
+        stats["enabled"] = self._echo.enabled
+        stats["inertReason"] = self._echo.inertReason
+        stats["blacklistSize"] = len(self._echo.blacklist)
+        return stats
 
     def _prompt_cost_tokens(self) -> int:
         """

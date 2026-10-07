@@ -67,3 +67,14 @@ testset/**/*.draft.json
 testset/**/*.draft.txt
 testset/**/*.draft.srt
 testset/**/*.review.html
+
+# real/ 是「第三方真实素材」目录：除 README 与 metadata 外**默认全部不入库**。
+# 用「白名单」而不是逐个后缀屏蔽 —— 逐个列是**默认泄漏**的写法：
+# 以后多出任何一种中间产物（新的导出格式、临时切片…），漏加一条就进仓库了。
+# 人工校对后的逐字稿同样在此列：它是原音频的衍生转录作品，受版权保护，
+# 与素材本身的约束保持一致（2026-10-07 用户裁决）。
+# 代价是 P3 结论不可从仓库直接复现 —— 用 metadata 的 BV 号 + 截取区间可重新获取
+# 音频，但逐字稿需重新校对；这个成本是明确接受过的。
+testset/chinese_lecture/real/*
+!testset/chinese_lecture/real/README.md
+!testset/chinese_lecture/real/metadata.json

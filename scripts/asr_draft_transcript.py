@@ -170,6 +170,10 @@ def transcribe_blocks(path: Path, args, engine, router: SubtitleRouter) -> tuple
             )
 
     stats_after = engine.get_stats()
+    # 提示词回显清洗的埋点（见 asr/prompt_echo.py）。草稿脚本一直用真实素材，
+    # 是观测这个缺陷出现频次最合适的地方 —— 它同时也是「清洗到底有没有生效」的
+    # 唯一证据：enabled=False 却什么都没删，和 enabled=True 删了 0 条，是两件事。
+    echo_stats = engine.echo_stats() if hasattr(engine, "echo_stats") else {}
     info = {
         "audio": path.name,
         "durationSeconds": round(duration, 3),
@@ -179,6 +183,7 @@ def transcribe_blocks(path: Path, args, engine, router: SubtitleRouter) -> tuple
         "mergedBlocks": merged_blocks,
         "chars": sum(len(s["text"]) for s in segments),
         "elapsedSeconds": round(time.perf_counter() - t0, 1),
+        "promptEcho": echo_stats,
         "engine": {
             "model": engine.model_size,
             "language": args.language,
@@ -427,6 +432,22 @@ def main() -> int:
     print("-" * 90)
     print(f"段落 {info['paragraphs']}（VAD 片段 {info['vadSegments']}）｜{info['chars']} 字｜"
           f"{info['durationMinutes']} 分钟｜合并块 {info['mergedBlocks']}｜用时 {info['elapsedSeconds']}s")
+
+    # 提示词回显清洗的埋点：把「这个缺陷出现了多少频次」变成可统计的数字，
+    # 而不是靠肉眼在几千字草稿里找。三种状态要能区分开：
+    # 未启用（英日韩/无引导语）／启用了但零命中（可能是素材干净，也可能是匹配失效）。
+    echo = info.get("promptEcho") or {}
+    if echo:
+        if not echo.get("enabled"):
+            print(f"  提示词回显：未启用（{echo.get('inertReason') or '无引导语'}）")
+        else:
+            print(
+                f"  提示词回显：字面量 {echo.get('blacklistSize')} 条｜丢弃整段 "
+                f"{echo.get('segmentsDropped', 0)}｜剔除子串 {echo.get('substringsRemoved', 0)} 处"
+                f"（{echo.get('charsRemoved', 0)} 字）"
+                + ("　← 零命中" if not echo.get("segmentsDropped")
+                   and not echo.get("substringsRemoved") else "")
+            )
     for k, v in files.items():
         print(f"  {k:5s} → {v}")
     print("下一步：打开 review.html 校对，导出 txt 覆盖为 <同名>.txt，再跑 scripts/check_transcript.py")
