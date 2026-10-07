@@ -69,6 +69,32 @@
   （如「豆包AI生成」角标）——水印必须去除；实底背景需重做成透明；
   且这类图通常只有 256~512px，**没有 1024 母版余量**，正式交付请走矢量重绘。
 
+### 矢量源与生成脚本（2026-10-07 起，零美术路线）
+
+`icon-source/` 是图标的**矢量源与生成器**目录：
+
+| 文件 | 说明 |
+|---|---|
+| `tingke-otter-master.svg` | 256 母版，**分层多色**（6 个 Inkscape 图层：底色 / 主体渐变 / 面部 / 学士帽 / 笔记本声波 / 白描边），可逐层开关 |
+| `tingke-otter-24.svg` | 24px **独立手绘**剪影（圆头 + 学士帽 + 极简笔记本色块），**不是**主矢量缩放 |
+| `tingke-otter-16.svg` | 16px **独立手绘**剪影（仅头部 + 学士帽），零细节、高对比 |
+| `build_otter.py` | 生成器：同一套几何参数**双端输出** SVG 与位图 |
+
+**单一数据源约定**：几何参数集中在 `build_otter.py` 顶部常量区。改参数 → 重跑脚本，
+SVG 与 PNG/ico 一起更新。**不要只手工改 SVG 而不跑脚本**（两边会漂移）。
+需要精修造型时，用 Inkscape 打开 SVG 调锚点，改完把参数回填脚本再重跑。
+
+```bash
+# 依赖 Pillow + numpy —— 注意：项目 venv 里没有 PIL，用系统 python 或托管 env
+python frontend/build/icon-source/build_otter.py --out <输出目录>
+```
+
+产物：`<输出目录>/png/icon_{256,128,96,64,48,32,24,16}.png` + `<输出目录>/tingke-otter.ico`
+（8 档，已含 24 / 96）。**不需要 Inkscape / ImageMagick**，打包由 Pillow 完成。
+
+> ⚠️ 生成/替换 ico 之后必须走 `docs/m3/icon_asset_spec.md` **§8.5 唯一清单**验收
+> （清 `release/` → 重新打包 → `audit` → verify_install → 六处落点目检）。
+
 ## 换图后的机器校验（`scripts/icon_assets.py`）
 
 > 📌 **完整流水线见 `docs/m3/icon_asset_spec.md` §8.5（唯一执行清单）**，
