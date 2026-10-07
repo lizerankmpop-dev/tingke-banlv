@@ -54,3 +54,6 @@ testset/**/*.flac
 testset/**/*.mp4
 testset/**/*.aac
 testset/**/*.ogg
+testset/**/*.opus
+testset/**/*.m4s
+testset/**/*.webm
