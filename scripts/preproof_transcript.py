@@ -290,13 +290,39 @@ def preproof(draft: dict, corrections: list[Correction]) -> tuple[dict, list[App
 
 
 def write_suspects_md(base: str, segments: list[dict], corrections: list[Correction]) -> str:
-    """存疑片段清单（Markdown）：按段号排序，带时间码与上下文，便于对照音频。"""
+    """存疑片段清单（Markdown）：按段号排序，带时间码与上下文，便于对照音频。
+
+    「0 处」不是边缘情况，而是**裁决完成后的终态**：原 suspect 已逐行消化成
+    `fix`（有确定候选）与 `note`（定不死、原样保留）。此时若还照抄那句
+    「去把 `【?】` 改成听清的词」，就是把读者指向一个**已经不存在的动作**，
+    而真正需要他知道的信息 ——「哪些碎片仍然定不死」—— 反而在清单里看不见。
+    所以零存疑时改印终态说明 + 未锁定碎片表（这就是「改动机制后必须搜遍所有
+    描述该机制的文案」那条教训在产物侧的应用）。
+    """
     notes = {c.pattern: c.note for c in corrections}
     total = sum(len(s.get("suspects") or []) for s in segments)
     n_seg = sum(1 for s in segments if s.get("suspects"))
-    lines = [
-        f"# 存疑片段清单 · {base}",
-        "",
+    lines = [f"# 存疑片段清单 · {base}", ""]
+
+    if total == 0:
+        lines += [
+            "**本素材已无待核验的 `【?】` 标记。**",
+            "",
+            "这不是「都听清了」，而是「不猜」：`【?…?】` 是过程标记，裁决后逐行消化成",
+            "两种终态 —— 得到确定候选的改成 `fix`（见 `.preproof.changes.tsv`），",
+            "仍无候选可锁定的改成 `note`（**文本一字不动**，不确定性记录在修正表与",
+            "`.preproof.rulings.md` 里，正文不会因此被脑补）。",
+            "",
+        ]
+        kept = [c for c in corrections if c.kind == "note"]
+        if kept:
+            lines += [f"仍定不死、按原样保留的碎片共 **{len(kept)}** 处：", "",
+                      "| 片段 | 备注 |", "|---|---|"]
+            lines += [f"| `{c.pattern}` | {c.note} |" for c in kept]
+            lines.append("")
+        return "\n".join(lines)
+
+    lines += [
         "规则：**原样保留，不猜**。每一条都要在 `review.html` 里对着音频确认——",
         "确认后在页面文本框中把 `【?】…【?】` 改成听清的词（连标记一起去掉）。",
         "",

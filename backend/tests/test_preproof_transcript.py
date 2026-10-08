@@ -309,6 +309,23 @@ def test_write_suspects_md_declares_real_total_and_marks_multiplicity(pp):
     assert md.count("| `招呼`") == 1, "3 行内容完全相同的重复行会把 1 个位置读成 3 个位置"
 
 
+def test_write_suspects_md_states_terminal_when_no_suspects_left(pp):
+    """零存疑时印的是「裁决已完成」的终态说明，不能还叫读者去改不存在的 `【?】`。
+
+    反向断言两条：① 那句「把 `【?】` 改成听清的词」必须不再出现（它指向一个
+    已不存在的动作）；② 尚未锁定的 `note` 碎片必须仍然可见 —— 否则读者会把
+    「0 处」读成「全听清了」，而那批不确定性就此从产物里消失。
+    """
+    cs = pp.parse_corrections("fix\t布可\tBook\t\nnote\t铁针头\t\tC档·无法还原\n")
+    draft, _ = pp.preproof(_small_draft(), cs)
+    md = pp.write_suspects_md("clip.preproof", draft["segments"], cs)
+
+    assert "已无待核验" in md, md
+    assert "改成听清的词" not in md, "零存疑时不该再出现「去改标记」的指示（动作已不存在）"
+    assert "`铁针头`" in md and "C档·无法还原" in md, "未锁定碎片必须仍然可见"
+    assert "共 0 处" not in md
+
+
 def test_write_changes_tsv_has_header_and_rows(pp):
     cs = pp.parse_corrections("fix\t布可\tBook\t说明\nsuspect\t招呼\t\t\n")
     _draft, applied = pp.preproof(_small_draft(), cs)
