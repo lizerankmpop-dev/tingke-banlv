@@ -118,12 +118,22 @@ testset/chinese_lecture/real/
     --draft testset/chinese_lecture/real/<name>.draft.json \
     --corrections testset/chinese_lecture/real/<name>.corrections.tsv
 
-# ③ 打开 preproof.review.html 逐段复核（空格播放当前段 / Ctrl+←→ 切段 / 自动存浏览器）
-#     把每一处 `【?】…【?】` 对着音频改成听清的词（连标记一起删），导出的 txt
-#     覆盖为 <name>.txt —— 这就是定稿逐字稿。
+# ③ 人工复核：打开 preproof.review.html（空格播放当前段 / Ctrl+←→ 切段 / 自动存浏览器）
+#     把每一处 `【?】…【?】` 对着音频改成听清的词（连标记一起删），导出后再覆盖回去。
+#     ✔ **本目录约定的「定稿」就是 `<name>.preproof.txt` 本身**，不要另存一份
+#       `<name>.txt`：两份并存 = 留一份会静默过期的副本，而
+#       `eval_asr_quality.reference_path()` 优先取 `.preproof.txt`。
+#     裁决后仍没有候选可锁定的碎片，把该行 kind 改成 `note`（**文本一字不动、
+#       只撤标记**）——它们会列在 `.preproof.suspects.md` 的「仍定不死」表里，
+#       不确定性留在产物里，而不是靠脑补写进正文。
 
 # ④ 合规校验（字数/语速/未校对标记/重复段/校对痕迹，含 --selftest 探针）
-<venv>/python.exe scripts/check_transcript.py --audio testset/chinese_lecture/real/<name>.wav
+#     定稿叫 `.preproof.txt`，所以要**显式 --transcript**（默认只找 <name>.txt）。
+#     第 7 项「与 draft 的差异度」需要同级存在 `<定稿名>.draft.txt`
+#     （即 <name>.preproof.draft.txt），没有就 skip 该项。
+<venv>/python.exe scripts/check_transcript.py \
+    --audio testset/chinese_lecture/real/<name>.wav \
+    --transcript testset/chinese_lecture/real/<name>.preproof.txt
 ```
 
 只有 ④ 打印「可用 ✓」的逐字稿才算完成，之后才能跑最终评估：
@@ -135,8 +145,63 @@ testset/chinese_lecture/real/
   --report packaging/eval/real-<name>.json
 ```
 
-再对同一素材跑一轮 `--terms off` 与 `--autodegrade off`，即可回答 P3 的四个问题：
-**真实场景 CER 是多少 / 术语热词是否帮上忙 / 防循环兜底是否必要 / 延迟与稳定性是否达标**。
+四格对照（**术语 on/off × 防循环兜底 on/off**）直接跑 `scripts/ab_terms_compare.py`，
+它会把四格拉平成一张表，并把每格真实的命令行与环境变量（`TINGKEBANLV_TERM_AUTODEGRADE`）
+一并写进报告，用来回答 P3 的四个问题：**真实场景 CER 是多少 / 术语热词是否帮上忙 /
+防循环兜底是否必要 / 延迟与稳定性是否达标**。
+
+```bash
+<venv>/python.exe scripts/ab_terms_compare.py \
+  --audio-dir testset/chinese_lecture/real --language zh --realtime \
+  --conditions off-noguard,off-guard,on-noguard,on \
+  --out packaging/eval/real_<name>_ab4.json
+```
+
+⚠️ **长音频必须加 `--realtime`。** 非实时喂入会把整段音频瞬间灌满队列，引擎来不及
+消费就按背压丢片段 —— 实测 630s 素材丢掉 46/63 段，WER 报 0.7771，这个数量的是
+「丢弃策略」而不是识别准确率，而且各格丢的段不同、彼此不可比。遇到丢弃 runner 会
+**直接中止**（`--allow-drops` 才继续）。四格的名字与含义见该脚本的模块文档。
+
+### 单格准入失败后怎么补跑（2026-10-08 实测流程）
+
+某一格因丢弃被中止、其余格 `totalDropped = 0` 时，**不必整组重跑**，按下面三步补该格：
+
+```bash
+# ① 作废的那一格先改名留证，别让它被覆盖
+mv packaging/eval/real_<name>_ab4.<cond>.json \
+   packaging/eval/real_<name>_ab4.<cond>.FAILED-dropped<N>.json
+# ② 只重跑该格（--out 换个名字，避免污染原有三格的证据）
+<venv>/python.exe scripts/ab_terms_compare.py \
+  --audio-dir testset/chinese_lecture/real --language zh --realtime \
+  --conditions <cond> --out packaging/eval/real_<name>_ab4.<cond>rerun.json
+# ③ 把补跑的单格原始报告复制回规范名，四格文件名保持齐整
+cp packaging/eval/real_<name>_ab4.<cond>rerun.<cond>.json \
+   packaging/eval/real_<name>_ab4.<cond>.json
+```
+
+补跑必须在 §9.3 里**注明哪一格用的是补跑结果**（本仓库记的是
+`real_zhlecture_ab4_rt.onrerun.json`），并说明补跑那次跑在该格的
+`commands` / `env` 字段里 —— 否则「四格来自同一次调用」这个前提就变成默认假设了。
+
+⚠️ **跑之前先防休眠。** `--realtime` 靠墙钟节拍喂入；机器一旦休眠/长时间卡顿，
+恢复瞬间会**追赶式突发**灌满队列 → 背压丢片段。实测本机 13:40 真休眠过一次。
+可用一次性看门进程（不改系统设置，退出即失效）：
+
+```bash
+<venv>/python.exe -c "
+import ctypes, time
+ES_CONTINUOUS=0x80000000; ES_SYSTEM_REQUIRED=0x00000001
+k=ctypes.windll.kernel32
+for _ in range(360):
+    k.SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED); time.sleep(5)
+k.SetThreadExecutionState(ES_CONTINUOUS)"
+```
+
+⚠️ **看清「terms on」到底注入了什么。** 不传 `--domain` / `--custom-terms` 时，
+提示词里只剩**词表短语层**（`basic_vocab.json` 里的英文多词短语）。实测 794 字符里
+是 41 个通用英文术语（`gradient descent, loss landscape, ... prosocial behavior`）——
+**与中文课内容无关**。要测术语层的真实价值，术语表必须来自当前课程
+（`--custom-terms @zh` 或课程内已发现术语）；否则测到的只是「无关词表的伤害」。
 
 ## metadata.json 模板
 

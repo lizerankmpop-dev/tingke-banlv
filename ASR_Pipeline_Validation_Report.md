@@ -757,7 +757,7 @@ byte-level BPE 对常用字表外的专业词会回退到 UTF-8 字节序列，�
 | **P0-1** | 修复中文繁体输出：`initial_prompt` 注入简体引导语（**已验证**：繁体占比 34.4%→0.1%）；无术语时也必须注入，不能依赖术语表顺带解决 | **已落地**（引导语追加在最末尾，见 §6.4 / `TestBuildPromptSimpHint` 7 项） |
 | **P0-2** | 引擎换用文本重复块判据（主）+ 字幕/片段比值（辅助告警），保留原有可关闭开关语义 | **已落地**（`asr/repetition.py` + 22 项单测；旧比值已确认不再触发任何动作） |
 | **P0-3** | 术语提示词上限从**字符数**改为 **token 数**（≤220），并把提示词按重要性**倒序**拼接使尾部截断保留关键内容；截断打日志 | **已落地**（`asr/prompt_budget.py` + `build_prompt_sections()`；真实场景自定义术语存活 **37.5% → 100%**，见 §6.11） |
-| P0 | 获取**中文专业课 10min+ 音频 + 逐字稿**，跑最终 A/B（P3 唯一阻塞项） | **阻塞中，等素材** |
+| P0 | 获取**中文专业课 10min+ 音频 + 逐字稿**，跑最终 A/B（P3 唯一阻塞项） | **已完成**（§9：定稿 35 段｜2791 字，8 项校验全过；四格对照见表） |
 | P0 | 重跑中文代理集 A/B 取 **P0-3 修复后的新基线**（提示词组合方式已变，旧基线不可比） | **已完成**（§6.12：术语命中率 0.3815 → 0.5665，+48.5%） |
 | P1 | 简体引导语**文案**对照：短句 vs 长句（用户指定原文），确认简繁效果是否等价 | **已完成**（§6.13：0.1% vs 0.2%，等价且都在噪声级 ⇒ **保留现文案**，长句多花 14% 预算换零收益） |
 | P1 | 精简提示词以压制实时性代价：799 字符 → 收尾 7–12s，需在「术语覆盖」与「实时性」之间取值 | **待真实素材**（P0-3 已把真实场景提示词 791 → 253 字符、257 → 129 token，代价应显著下降） |
@@ -774,4 +774,191 @@ byte-level BPE 对常用字表外的专业词会回退到 UTF-8 字节序列，�
 2. **新重复块检测计算开销高** → 已做窗口裁剪（只扫尾部 160 字符，单次 O(160)），
    实测单次检测 < 1ms，暂不需要进一步优化；
 3. **中文术语收益不明显** → 先完成验证闭环，再考虑术语加权、少量词表微调。
+
+---
+
+## 9. 真实素材（REAL）验收：人工定稿基准 + 四格对照
+
+> 本节是 P3 的**非代理**结论：素材是真人中文专业课（B站 `BV1BA411i7PT` 00:40~11:10，
+> 630s），参考答案是**人工逐字核对过的定稿** —— 不是合成 TTS，也不是模型自己的输出。
+
+### 9.1 素材与基准
+
+| 项 | 值 |
+|---|---|
+| 音频 | `testset/chinese_lecture/real/real_zhlecture_origin_plot.wav`（630.0s；含他人声音，本地不入库） |
+| 来源 | B站 `BV1BA411i7PT`，截取 00:40~11:10（Origin 绘图教学） |
+| 定稿 | `<name>.preproof.txt`：**35 段｜2791 字** |
+| 定稿怎么来 | ASR 草稿 → 预校对（81 处高置信修正）→ 55 处存疑分 A/B/C 三档人工裁决 → 8 项合规校验 |
+| 未锁定碎片 | 11 处按原样保留（C 档 + 重复循环登记），逐条列在 `.preproof.suspects.md` 的「仍定不死」表 |
+| 校验 | `check_transcript.py` 8 条规则全 OK；人工修改率 7.2%（与草稿相似度 0.928） |
+| 命名约定 | **定稿就是 `.preproof.txt`**；`eval_asr_quality.reference_path()` 优先取它 |
+
+**基准的诚实性边界（报绝对 CER 时必须注明）**：C 档 11 处没有任何候选能被锁定，
+按「不猜」原则**文本一字未动**。不是不想标，是两条路都更差 ——
+`【?…?】` 是过程标记，留着会被 `check_transcript` 判「未校对痕迹」FAIL；换 `[听不清]`
+则给参考稿凭空加 3 个内容字（`eval_asr_quality._PUNCT` 含 `【】[]`，CJK 分支直接丢标点，
+而「听不清」是内容字），实测 15 处 = **+45 字被记成识别错误**。
+代价是这 11 处基准用的仍是 ASR 自身的输出 → **对绝对 CER 偏乐观**；
+对四格**相对比较无影响**（同位置同偏差，一起抵消）。
+
+### 9.2 四格配置（显式锁死，逐格可追溯）
+
+| 格名 | `--terms` | `--autodegrade` | `TINGKEBANLV_TERM_AUTODEGRADE` | 提示词字符数 |
+|---|---|---|---|---|
+| `off-noguard` | off | off | `0` | 0 |
+| `off-guard` | off | on | `1` | 0 |
+| `on-noguard` | on | off | `0` | 794（+ hint 层 8 = 引擎 `initial_prompt` 802） |
+| `on` | on | on | `1` | 同左（= 出厂默认） |
+
+* 模型 `base` / `cpu` / `int8`；`--language zh`；**`--realtime`**（理由见 §9.4）。
+* 术语表：**不传** `--domain` / `--custom-terms`，复刻定稿来源草稿当时的配置 ——
+  `build_terminology(domain="", custom_terms=[])` 出 794 字符，引擎 hint 层再加 8 字符
+  （「请使用简体中文。」）= 草稿 `info.engine.promptChars` 记录的 **802**。
+* 代码锚点 = 提交 `9e5ea9d`。每格**真实下发过的命令行与环境变量**记在
+  `packaging/eval/real_zhlecture_ab4_rt.json` 的 `commands` / `env` 字段里
+  （`--autodegrade` 是运行时覆盖，而 `TINGKEBANLV_TERM_AUTODEGRADE` 是
+  `whisper_engine.AUTO_DEGRADE_ENABLED` 这个 **import 时读的模块级默认值**，
+  只写 CLI 就无法事后回答「当时那个开关到底是哪个值」）。
+
+### 9.3 结果（四格对照）
+
+**硬性准入条件执行记录**：本次四格串行（`--realtime`）跑完后，第 4 格 `on` 首次运行
+触发背压**丢弃 23/63 段** → 被守卫拦住并中止（合并报告未生成，该格产物改名
+`real_zhlecture_ab4_rt.on.FAILED-dropped23.json` 留证）→ 按准入条件**单独补跑该格**
+（`real_zhlecture_ab4_rt.onrerun.*`，丢弃 0 通过），下表第 4 格用的是补跑结果。
+
+| 格 | `--terms` | `--autodegrade` | 提示词 | 片段→字幕 | 合并 | 复读判定 | 降级 | **丢弃** | 收尾 s | **CER = WER** |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **G1** `off-noguard` | off | off | 0 字符 / 43 tok | 63→88 | 0 | 0 | 0 | **0** | 1.865 | **0.2085** |
+| **G2** `on-noguard` | on | off | 794 / 177 tok | 63→56 | 16 | 2 | 0 | **0** | 10.551 | **0.2977** |
+| **G3** `off-guard` | off | on | 0 字符 / 43 tok | 63→87 | 2 | 0 | 0 | **0** | 1.867 | **0.2033** |
+| **G4** `on`（补跑） | on | on | 794 / 67 tok | 63→76 | 5 | 3 | 1 | **0** | 1.916 | **0.2909** |
+
+四格合计 **252 个片段 → 307 条字幕、丢弃 0**；`referenceSource` 一律是
+`real_zhlecture_origin_plot.preproof.txt`。G4 的 `promptTokens` 是**降级后**的值
+（`budget` 从 220 降到 70），G2 未降级所以是 177。
+
+#### ① 真实场景 CER 是多少
+
+**0.203 ~ 0.291**，取决于提示词配置；最好的一格是 **G3 = 0.2033**（术语关 + 兜底开）。
+同一素材上「关掉术语层」的两格（0.2085 / 0.2033）就是当前管道的真实水平。
+
+#### ② 主效应：术语层是**负收益**
+
+| 比较 | CER | 差值 |
+|---|---|---|
+| terms **off**（G1、G3 均值） | 0.2059 | — |
+| terms **on**（G2、G4 均值） | 0.2943 | **+0.0884（相对 +42.9%）** |
+| autodegrade **off**（G1、G2 均值） | 0.2531 | — |
+| autodegrade **on**（G3、G4 均值） | 0.2471 | **−0.0060（相对 −2.4%）** |
+
+两对配对**方向一致**（+0.0892/+0.0876；−0.0052/−0.0068）→ 结论稳健。
+术语打开还伴随**合并数上升**（0→16、2→5）与**复读判定出现**（0→2、0→3），
+说明术语提示词在本素材上不仅没帮上忙，还主动引入了两类退化。
+
+#### ③ ⚠️ 本轮「terms on」= 注入 **41 个与课程无关的英文术语**（解读边界，必须看）
+
+`--domain` / `--custom-terms` 为复刻草稿配置而**故意不传**，所以提示词里**只剩词表短语层**。
+实测 `build_initial_prompt(domain="", custom_terms=[])` 的 794 字符**全文**是：
+
+```
+gradient descent, loss landscape, learning rate, data augmentation, transfer learning,
+natural language, cognitive psychology, behavioral psychology, clinical psychology,
+developmental psychology, social psychology, cognitive science, prefrontal cortex,
+functional MRI, working memory, long-term memory, short-term memory, memory consolidation,
+forgetting curve, spaced repetition, classical conditioning, operant conditioning,
+positive reinforcement, negative reinforcement, intrinsic motivation, extrinsic motivation,
+theory of mind, Big Five, emotional intelligence, problem solving, decision making,
+availability heuristic, framing effect, cognitive bias, confirmation bias, loss aversion,
+prospect theory, behavioral economics, bounded rationality, cognitive dissonance, prosocial behavior
+```
+
+而素材是**中文 Origin 绘图教学**。术语表的 6 个召回目标（`深度学习 / 神经网络 /
+卷积神经网络 / 注意力机制 / 注意力 / 循环网络`）同样与课程无关 —— 四格**命中数一律为 0**。
+所以：**本轮测到的不是「术语热词有没有用」，而是「把一张无关词表塞进中文课会掉多少分」**。
+按本结果**不能**得出「术语功能无用」的结论；要测术语层的真实价值，术语表必须来自
+**当前课程**（`--custom-terms @zh`，或课程内已发现术语）。这是下一轮的 P0。
+
+#### ④ 防循环兜底：小幅正收益，但**救不了当期**
+
+autodegrade 两对配对都是改善（−0.0052 / −0.0068，相对 −2.4%），**必要但不够**：
+它只在**检出复读后**缩减**后续**片段的预算（日志：`151 → 70 token`），
+而拖慢管道的那一段**早已解完** —— 这正是第 4 格首次运行丢掉 23 段的原因
+（详见 §9.5）。真正的修法是**对单段解码的前置约束**（限 `max_new_tokens` /
+复读一检出就中止该段），而不是事后缩预算。
+
+#### ⑤ 延迟与稳定性：延迟**本轮不可得**，稳定性分两说
+
+* **延迟不可得（已知边界）**：四格 `meanLatency / peakLatency` 全为 `None`。
+  `pair()` 要求「字幕数 == 片段数」才做 1:1 配对，而本 harness 的
+  `on_partial=router` 会把**中间增量结果也计入字幕**，加上合并降级的双重扰动，
+  四格分别是 88 / 87 / 56 / 76 条字幕（片段恒为 63）→ **1:1 前提一律不成立**。
+  脚本会如实打印「未做延迟配对（数字缺失是如实标记，不是算错）」。
+  **在 `on_partial` 计入字幕的现状下，真实素材上拿不到延迟指标** —— 这是下一轮要修的量测缺口。
+* **稳定性**：三格收尾 1.87~1.92s（健康），G2 收尾 10.55s（偏高，来自 16 次合并）；
+  第 4 格首次运行 `pipelineSeconds = 2692s`、`feedSeconds = 2061.79s`（音频仅 630s）、
+  `starvationSeconds = 1.86e7` —— 严重跟不上实时并伴随丢弃（见 §9.5）。
+
+#### ⑥ 观测陷阱：`lastRepeat` 是**末次快照**，不是全程汇总
+
+四格报告的 `lastRepeat` 都写「未检测到重复循环（窗内重复率 0.000）」，但
+`repetitionEvents` 分别是 0 / 2 / 0 / 3 —— **补跑那格明明降级了，`lastRepeat` 却说没复读**。
+因为它只是最后一次检测的窗口状态。**判「全程有没有复读」要看 `repetitionEvents`**，
+只看 `lastRepeat` 会得出完全相反的结论。
+
+**代码锚点**：`9e5ea9d`（评估脚本本轮冻结未改）。逐格真实命令行与环境变量见
+`packaging/eval/real_zhlecture_ab4_rt.{off-noguard,off-guard,on-noguard}.json` 与
+`real_zhlecture_ab4_rt.onrerun.json` 的 `commands` / `env` 字段
+（后者的 `env` = `{"on": {"TINGKEBANLV_TERM_AUTODEGRADE": "1"}}`）。
+
+### 9.4 一次作废的尝试：长音频不能用「尽快喂入」
+
+第一次四格按非实时跑，结果**整轮作废**：63 个 VAD 片段只产出 10~17 条字幕、
+**丢掉 46~48 段**，WER 报 0.7771。这个数量的是**背压丢弃策略**而不是识别准确率，
+而且各格丢的段不同、格与格之间也不可比 —— 它看起来像一张「正常」的对照表。
+产物改名 `*.NONREALTIME-INVALID.*` 留证；现在 `ab_terms_compare` 遇到丢弃**直接中止**
+（`--allow-drops` 才继续）。换成 `--realtime` 后丢弃回到 0。
+
+**通用判据**：一个数字看起来差，先问「输入的每一段都真的走到被测环节了吗」。
+
+### 9.5 第二次作废：第 4 格首次运行被「复读 → 极慢解码」拖垮
+
+`on` 格**首次**运行（产物改名 `*.on.FAILED-dropped23.json`）的表现：
+
+| 字段 | 首次（作废） | 补跑（采用） |
+|---|---|---|
+| `pipelineSeconds` | **2692.16** | 631.92 |
+| `feedSeconds`（音频 630s） | **2061.79** | 630.0 |
+| `tailSeconds` | **630.369** | 1.916 |
+| `droppedSegments` | **23**（63 段只送入 40） | 0 |
+| `starvationSeconds` | **1.86e7** | 0.0 |
+| `repetitionEvents` / `degradeEvents` | 1 / 1 | 3 / 1 |
+| CER | 0.5466（无效） | 0.2909 |
+
+首次运行的日志给出了直接证据 —— 模型进入了**严重复读**：
+
+```
+[WARN] 检测到字幕重复循环，自动缩减术语提示词预算: 151 → 70 token。
+       检测到重复循环（窗内重复率 0.961，最长重复 80 字符）：'于这些地方对于这' 出现 26 次
+```
+
+**机制**：复读让该段解码异常之久 → 喂入循环被拖到 **3.3× 实时** → 队列超过
+`MAX_PENDING_JOBS` → 背压丢弃最旧的片段（丢 23 段）→ 字幕缺内容、CER 失去意义。
+
+⚠️ **`starvationSeconds = 1.86e7` 不是「等了 1.86e7 秒」**：喂入循环的滞后按**平方累积**
+（每块落后 Δ 秒，ΣΔ ≈ Δ·N²/2；N≈19688 块 → Δ≈0.096s/块）。
+这个字段只能当「有没有被拖住」的**信号**读，不能当**时长**读。这是量测缺口，下一轮应改成
+「最大单块滞后」或直接报 `feedSeconds / audioSeconds` 的比值。
+
+**诚实性边界（重要）**：补跑时复读**复现了**（`'试试试试试试试试' 出现 102 次`、
+窗内重复率 0.660、同样触发 `151 → 70` 降级），但**「极慢解码 → 丢弃」没有复现**
+（补跑 `feedSeconds = 630.0`、丢弃 0）。所以只能说：
+* 复读**与 terms on 相关、可复现**（terms on 的两格都触发了降级，而 terms off 的两格从未触发）；
+* 而**那一次的灾难性变慢还叠加了不可复现的因素**，不能整体归因给配置。
+  因此本轮**没有**把它写成「terms on 必然丢片段」的结论。
+
+**通用判据**：一个失败只在某一次出现、重跑就消失时，**先问「差的那部分里有多少是环境叠加的」**，
+再决定写成「配置缺陷」还是「运行环境约束」—— 按实测写，不按推测写。
+
 
