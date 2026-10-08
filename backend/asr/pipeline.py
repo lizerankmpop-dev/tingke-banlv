@@ -53,11 +53,15 @@ class ASRPipeline:
 
         # 构建术语热词（自定义术语 + 领域术语 + 词表短语）
         # 作用：让 Whisper 把 "convolution" 拼对，而不是听成 "convalution"
+        #
+        # `language` 必须传：词表短语层只能命中英文多词短语，对中文课是纯干扰
+        # （实测 CER 相对 +42.9%），terminology 需要知道语种才能关掉该层（缺陷 b）。
         try:
             from dictionary.terminology import build_terminology
             self._terminology = build_terminology(
                 domain=course_config.get("domain", ""),
                 custom_terms=course_config.get("custom_terms", []),
+                language=course_config.get("language", "auto"),
             )
             initial_prompt = self._terminology["prompt"]
             if initial_prompt:

@@ -142,6 +142,18 @@ def truncate_to_tokens(text: str, max_tokens: int, count: Callable[[str], int]) 
 
     必须从尾部截而不是头部：调用方拿到的上一段文本要保留的是**最近**的内容。
     token 数对子串长度单调不减，所以直接二分。
+
+    🔴 `max_tokens` 小于**单个字符**的代价时必须返回空串（2026-10-08 修复）
+
+    实测：byte-level BPE 对中文单字会回退到 UTF-8 字节序列，**一个汉字 ≈ 4 token**
+    （`count("好") == 4`）。于是 `max_tokens=1` 时**任何非空子串都超预算** ——
+    二分找不到可行解，`lo` 停在 0，而最后的 `text[-lo:]` 在 `lo == 0` 时
+    **等于 `text[0:]` 也就是全文**（Python 里 `-0 == 0`，这不是笔误而是语义陷阱）。
+
+    后果不是「截得不够」而是**反向吃光预算**：预算 90 的场景下
+    `prev_budget = min(48, 90-28-1-60) = 1` → 本该留 0 字符的上一段文本
+    实际留下整段 120 字符 / 100 token，把术语层的 `remaining` 挤成 **-40**，
+    24 个术语**一个都没进去**（`kept=[]`）。这条路径在真实降级运行里会命中。
     """
     if not text or max_tokens <= 0:
         return ""
@@ -154,6 +166,10 @@ def truncate_to_tokens(text: str, max_tokens: int, count: Callable[[str], int]) 
             lo = mid
         else:
             hi = mid - 1
+    if lo <= 0:
+        # 连 1 个字符都放不下（中文单字 4 token 这类情形）—— 明确返回空，
+        # 绝不能让 `text[-0:]` 把全文放回去。
+        return ""
     return text[-lo:]
 
 
@@ -193,6 +209,67 @@ class BudgetedPrompt:
         return "；".join(parts)
 
 
+class _PickResult:
+    """单层「按预算挑选」的结果（内部用，不外露）"""
+
+    __slots__ = ("kept", "dropped", "cost")
+
+    def __init__(self, kept: list[str], dropped: list[str], cost: int):
+        self.kept = kept
+        self.dropped = dropped
+        self.cost = cost
+
+
+def _pick_within_budget(
+    terms: list[str],
+    budget: int,
+    count: Callable[[str], int],
+) -> "_PickResult":
+    """
+    在一层术语里挑出放得进 `budget` 的那些（按传入顺序贪心，直到放不下）
+
+    从 `assemble` 里抽出来只为可读性与可测性，**语义与内联版逐字一致**。
+
+    历史记录（别再走一遍）：这里曾加过 `rank` 参数用来「按价值排序再抢预算」，
+    想把降级时「按列表顺序丢词」改成「按重要性丢词」。**实测证明那是伪问题**：
+
+        budget=70、24 词课程术语表，保留 5 个词时覆盖的真实出现次数 ——
+            原顺序（书写序）  38/66
+            按词长降序        7/66   ← 更差
+            按真实频次降序    38/66  ← 与原顺序相同
+
+    原因：词表本就按语义重要性书写，高频词天然在前列；而 `assemble` 是
+    **按层**依次抢预算，层内顺序不是瓶颈。G4 那次「丢掉 `坐标系`（18 次）」
+    的真实原因是**降级预算只够放 5 个词**（`坐标系` 成本 8 token、剩余额度 41），
+    不是排序 —— 加排序参数救不了，只是凭空多出一个没人用的 API。
+
+    结论：预算不足时该做的是**提高预算**或**缩短词表**，不是重排。
+
+    Args:
+        terms: 该层术语，原顺序即保留优先级、也是输出顺序
+        budget: 该层可用的 token 预算
+        count: token 计数器
+
+    Returns:
+        `_PickResult`（`kept` 保持原顺序）
+    """
+    cleaned = [t.strip() for t in ((x or "").strip() for x in terms) if t]
+    if not cleaned:
+        return _PickResult([], [], 0)
+
+    remaining = budget
+    kept: list[str] = []
+    dropped: list[str] = []
+    for term in cleaned:
+        cost = count(term) + SEP_TOKENS
+        if cost > remaining:
+            dropped.append(term)
+            continue
+        remaining -= cost
+        kept.append(term)
+    return _PickResult(kept, dropped, budget - remaining)
+
+
 def assemble(
     sections=None,
     prev_text: str = "",
@@ -220,6 +297,9 @@ def assemble(
         4. 领域术语      标准术语表
         5. 词表短语      最泛的一层
         6. 上一段文本    有独立配额，物理位置也在最前（超额时第一个被牺牲）
+
+    **层内**按传入顺序贪心到放不下为止。⚠️ 别想着「按重要性重排能救回更多词」——
+    实测过，那是伪问题（见 `_pick_within_budget` 的历史记录）。
 
     **B. `prebuilt_body`（退化路径）**
     调用方只给了一段已经拼好的字符串、拿不到分层信息时走这里。此时**不重排**
@@ -286,18 +366,12 @@ def assemble(
     kept: dict[str, list[str]] = {}
     dropped: list[str] = []
     for name, terms in sections:
-        got: list[str] = []
-        for term in terms or []:
-            term = (term or "").strip()
-            if not term:
-                continue
-            cost = count(term) + SEP_TOKENS
-            if cost > remaining:
-                dropped.append(term)
-                continue
-            remaining -= cost
-            got.append(term)
-        kept[name] = got
+        # 「谁先抢预算」只跟**层**的优先级有关，层内就是传入顺序 ——
+        # 别在这里再排一次：见 `_pick_within_budget` 的历史记录（排序是伪问题）。
+        picked = _pick_within_budget(terms or [], remaining, count)
+        remaining -= picked.cost
+        kept[name] = picked.kept
+        dropped.extend(picked.dropped)
 
     # 拼接：低优先级在前，高优先级贴尾（尾部才是库的保留窗口）
     order_low_to_high = [name for name, _ in reversed(list(sections))]

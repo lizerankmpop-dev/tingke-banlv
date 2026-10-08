@@ -235,10 +235,36 @@ def _dedup_keep_order(items: list[str]) -> list[str]:
     return out
 
 
+# 走「短语层」的语种。中文课堂一律排除 —— 短语层只能命中英文多词短语，
+# 对中文课是纯干扰（实测 CER +42.9%，详见 build_prompt_sections 的 docstring）。
+# 用白名单式反选（列出**已知不该注入**的）而不是列出该注入的：语种代码是开放集合，
+# 漏列一个新语种只会退化成旧行为，而漏在正选名单外会静默砍掉该语种的能力。
+_PHRASES_LAYER_EXCLUDED_LANGS = frozenset({"zh", "yue", "wuu", "cmn"})
+
+
+def _phrases_layer_enabled(language: str) -> bool:
+    """
+    该语种是否产出「词表短语层」
+
+    - `zh` / `zh-CN` / `zh-TW` / `yue` 等中文语种 → False（短语层只有英文，对中文课是干扰）
+    - `auto` / 空 / 其它 → True（保持既有行为，英文课不受影响）
+
+    ⚠ 必须按**主语言子标签**判（`zh-CN` 要能命中 `zh`）：语种代码普遍带地区后缀，
+    只做整串精确匹配会漏掉 `zh-CN` / `zh-TW` 这类**最常被人手填的写法**。
+    实测：写成整串匹配时 `zh` 生效而 `zh-CN` 漏网，短语层照旧注入 60 个英文词。
+    """
+    tag = (language or "").strip().lower().replace("_", "-")
+    if not tag:
+        return True                      # 空 = 未指定，走旧行为
+    primary = tag.split("-", 1)[0]       # zh-CN → zh；cmn-Hans → cmn
+    return primary not in _PHRASES_LAYER_EXCLUDED_LANGS
+
+
 def build_prompt_sections(
     domain: str = "",
     custom_terms: Optional[list[str]] = None,
     discovered_terms: Optional[list[str]] = None,
+    language: str = "auto",
 ) -> list[tuple[str, list[str]]]:
     """
     按优先级分层返回术语（**不做任何截断**），交给调用方按 token 预算组装
@@ -252,21 +278,37 @@ def build_prompt_sections(
         1. custom     用户手填，一定是课程核心词
         2. discovered 本课程已被 ASR+LLM 提取出的词（说明课堂确实在用）
         3. domain     领域标准术语表
-        4. phrases    词表里的多词短语
+        4. phrases    词表里的多词短语（**仅非中文语种**，见下）
 
     ⚠ 短语层刻意**不在此处排序取前 60** —— 排序需要知道最终预算，属于组装方的
     职责。这里只保证「层内顺序 = 领域命中优先」。
+
+    🔴 `language`（2026-10-08 修复，缺陷 b）：
+        `basic_vocab.json` 是**英汉对照词典**，而短语层的挑选规则是「含空格且 <40
+        字符」—— 这个规则**只会命中英文多词短语**（gradient descent / loss
+        landscape / prosocial behavior ...），对中文词一个也匹配不到。于是中文课
+        走默认配置时，提示词里会被塞进 60 个与课堂毫无交集的英文短语。
+
+        第一组真实素材 A/B 已实测这一刀的代价：`terms on` 注入的正是这批英文短语，
+        CER **+0.0884（相对 +42.9%）**，术语命中数四格全为 0（因为课上一个都没说）。
+        第二组换成本课原生中文术语后，同一份代码 CER **−0.0236（相对 −11.9%）**。
+        → 结论：这不是「术语功能没用」，而是「往中文课里塞英文短语层」这个默认行为
+        本身有害。故 **zh 语种直接不产出短语层**。
+
+        `language="auto"` 时**保持旧行为**（产出短语层）—— 不能因为要修中文课就把
+        英文课的既有能力一起关掉；且 auto 下引擎会自行检测语种，此刻无法预判。
     """
     resolved = resolve_domain(domain)
 
     phrases: list[str] = []
-    vocab = load_basic_vocab()
-    phrases = [w for w in vocab if " " in w and len(w) < 40]
-    # 领域命中优先，避免大词表里无关短语挤占空间
-    if resolved:
-        domain_lower = [t.lower() for t in DOMAIN_TERMS.get(resolved, [])]
-        phrases.sort(key=lambda w: (w.lower() not in domain_lower, len(w)))
-    phrases = phrases[:60]
+    if _phrases_layer_enabled(language):
+        vocab = load_basic_vocab()
+        phrases = [w for w in vocab if " " in w and len(w) < 40]
+        # 领域命中优先，避免大词表里无关短语挤占空间
+        if resolved:
+            domain_lower = [t.lower() for t in DOMAIN_TERMS.get(resolved, [])]
+            phrases.sort(key=lambda w: (w.lower() not in domain_lower, len(w)))
+        phrases = phrases[:60]
 
     return [
         ("custom", _dedup_keep_order(custom_terms or [])),
@@ -281,6 +323,7 @@ def build_initial_prompt(
     custom_terms: Optional[list[str]] = None,
     discovered_terms: Optional[list[str]] = None,
     max_chars: Optional[int] = None,
+    language: str = "auto",
 ) -> str:
     """
     构建 Whisper initial_prompt（**字符口径**的兜底实现）
@@ -300,11 +343,13 @@ def build_initial_prompt(
     真正的修复在引擎侧（`asr/prompt_budget.py`，按 token 预算组装，还会额外
     安排简体引导语与上一段文本）；这个函数保留字符口径，供不经引擎的调用方使用。
 
+    `language` 透传给 `build_prompt_sections`：中文语种不产出词表短语层（缺陷 b）。
+
     Returns:
         一段逗号分隔的术语文本；无可用术语时返回空字符串（此时应传 initial_prompt=None）
     """
     max_chars = max_chars if max_chars is not None else get_prompt_max_chars()
-    sections = build_prompt_sections(domain, custom_terms, discovered_terms)
+    sections = build_prompt_sections(domain, custom_terms, discovered_terms, language=language)
 
     # 与引擎同口径：按高 → 低分配字符预算（保证高优先级不被丢），再按低 → 高输出
     remaining = max_chars
@@ -331,9 +376,13 @@ def build_terminology(
     domain: str = "",
     custom_terms: Optional[list[str]] = None,
     discovered_terms: Optional[list[str]] = None,
+    language: str = "auto",
 ) -> dict:
     """
     构建课程术语库摘要，供上层判断"这个词有没有现成释义"
+
+    `language` 透传给 `build_prompt_sections`：中文语种不产出词表短语层（缺陷 b，
+    实测往中文课注入英文短语层使 CER 相对 +42.9%）。
 
     Returns:
         {
@@ -346,8 +395,8 @@ def build_terminology(
             "stats": {"total": n, "inVocab": n, "vocabHits": {...}}
         }
     """
-    prompt = build_initial_prompt(domain, custom_terms, discovered_terms)
-    sections = build_prompt_sections(domain, custom_terms, discovered_terms)
+    prompt = build_initial_prompt(domain, custom_terms, discovered_terms, language=language)
+    sections = build_prompt_sections(domain, custom_terms, discovered_terms, language=language)
 
     entries: list[dict] = []
     seen: set[str] = set()

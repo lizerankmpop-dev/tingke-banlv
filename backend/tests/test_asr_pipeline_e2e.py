@@ -1158,6 +1158,162 @@ class TestPromptTokenBudget:
         assert stats["promptTokenExact"] is False      # 无模型 → 启发式估算
 
 
+class TestTruncateToTokensEdge:
+    """
+    `truncate_to_tokens` 在「配额小于单个字符代价」时必须返回空串
+
+    2026-10-08 修复的真实缺陷（不是理论问题，是被 `test_prev_text_*` 之外的
+    预算区间命中的）：
+
+    byte-level BPE 对中文单字回退到 UTF-8 字节序列，**一个汉字 ≈ 4 token**
+    （`count("好") == 4`，用真 tokenizer 实测）。于是 `max_tokens=1` 时任何非空
+    子串都超预算 → 二分找不到可行解、`lo` 停在 0 → 最后的 `text[-lo:]` 在
+    `lo == 0` 时**等于 `text[0:]` 也就是全文**（Python 里 `-0 == 0`）。
+
+    后果是**反向吃光预算**：预算 90 时 `prev_budget = min(48, 90-29-60) = 1`，
+    本该留 0 字符的上一段文本实际留下整段 120 字符 / 100 token，把术语层的
+    remaining 挤成负数，24 个术语**一个都没进去**（`kept=[]`、`used=126 > 90`）。
+
+    命中区间实测为 budget ∈ [90, 92]（3 个值）—— 默认 220 与降级 70 都不在其内，
+    但 `TINGKEBANLV_TERM_PROMPT_TOKENS` 是用户可配的环境变量，落在区间里就会中招。
+
+    ⚠️ 这个用例**必须用真 tokenizer**：启发式 `estimate_tokens` 按字符数算，
+    单字代价 = 1，根本构造不出「连 1 个字都放不下」的情形 —— 用它写出来的
+    用例是**空的**（前提断言就会失败，这正是第一版踩的坑）。
+    真 tokenizer 不可用时跳过，而不是退化成假用例。
+    """
+
+    PREV = "老师说这个坐标系的横坐标要设置成厘米，纵坐标也要跟着一起改。" * 4
+
+    @staticmethod
+    def _real_tokenizer():
+        """
+        真 tokenizer（`安装空间/whisper_models/plain/tokenizer.json`）
+
+        单字 ≈ 4 token 这个性质只有它能体现；不可用时返回 None，由调用方跳过。
+        """
+        import os
+        from pathlib import Path
+
+        candidates = []
+        env = os.environ.get("TINGKEBANLV_TOKENIZER_JSON")
+        if env:
+            candidates.append(Path(env))
+        # 仓库 → 桌面/听课伴侣/安装空间/whisper_models/plain/tokenizer.json
+        here = Path(__file__).resolve()
+        for parent in here.parents:
+            candidates.append(parent / "安装空间" / "whisper_models" / "plain" / "tokenizer.json")
+            candidates.append(parent.parent / "安装空间" / "whisper_models" / "plain" / "tokenizer.json")
+
+        for p in candidates:
+            try:
+                if p.is_file():
+                    from tokenizers import Tokenizer
+                    from asr.prompt_budget import make_counter
+                    return make_counter(Tokenizer.from_file(str(p)))[0]
+            except Exception:
+                continue
+        return None
+
+    def _require_tokenizer(self):
+        count = self._real_tokenizer()
+        if count is None:
+            import pytest
+            pytest.skip("真 tokenizer 不可用（设 TINGKEBANLV_TOKENIZER_JSON 可指定）")
+        return count
+
+    def test_tiny_quota_returns_empty_not_full_text(self):
+        """极小额配额：必须返回空串，绝不能把全文放回去（-0 陷阱）"""
+        from asr.prompt_budget import truncate_to_tokens
+
+        count = self._require_tokenizer()
+        one_char = count(self.PREV[-1])          # 单个汉字的真实代价（≈4）
+        assert one_char > 1, (
+            f"前提：中文单字代价应大于 1，实测 {one_char}。"
+            "若这里失败，说明 tokenizer 不是预期的 byte-level BPE"
+        )
+
+        for quota in range(1, one_char):
+            out = truncate_to_tokens(self.PREV, quota, count)
+            assert out == "", (
+                f"配额 {quota} 连 1 个字都放不下，应返回空串，"
+                f"实际返回 {len(out)} 字符 —— `text[-0:]` 把全文放回去了"
+            )
+
+    def test_zero_and_negative_quota_return_empty(self):
+        from asr.prompt_budget import truncate_to_tokens
+
+        assert truncate_to_tokens(self.PREV, 0, self._require_tokenizer()) == ""
+        assert truncate_to_tokens(self.PREV, -5, self._require_tokenizer()) == ""
+
+    def test_normal_quota_still_truncates_from_tail(self):
+        """反向断言：正常配额下不能因为修了小额分支就把截断也关掉"""
+        from asr.prompt_budget import truncate_to_tokens
+
+        count = self._require_tokenizer()
+        quota = count(self.PREV) // 4
+        assert quota > count(self.PREV[-1]), "前提：配额要够放几个字"
+
+        out = truncate_to_tokens(self.PREV, quota, count)
+        assert out, "正常配额必须截出内容"
+        assert count(out) <= quota, "截断结果超预算"
+        assert out == self.PREV[-len(out):], "必须从尾部截"
+
+    def test_assemble_keeps_terms_when_prev_quota_is_tiny(self):
+        """
+        端到端后果：`prev_budget` 落在极小区间时，术语**不许**被挤光
+
+        修复前（真 tokenizer，budget=90）`kept=[]`、`used=126 > 90`。
+        """
+        from asr import prompt_budget as pb
+
+        count = self._require_tokenizer()
+        terms = ["项目管理器", "工作区", "工具栏", "菜单栏", "新建图",
+                 "画布", "坐标系", "图层", "子图", "折线图"]
+        hint = "以下是普通话的句子，请使用简体中文转写。"
+
+        hint_cost = count(hint) + pb.SEP_TOKENS
+        # 让 prev_budget = budget - hint_cost - MIN_TERMS_TOKENS 落在 (0, 单字代价)
+        budget = hint_cost + pb.MIN_TERMS_TOKENS + 1
+
+        b = pb.assemble(
+            [("custom", terms)], prev_text=self.PREV, hint=hint,
+            budget=budget, count=count,
+            prev_max_tokens=pb.DEFAULT_PREV_TEXT_TOKENS,
+        )
+
+        assert b.prev_kept == "", (
+            f"预算 {budget} 下上一段文本配额仅 1 token（低于单字代价），应留空，"
+            f"实际留了 {len(b.prev_kept)} 字符"
+        )
+        assert b.kept["custom"], (
+            f"上一段文本不该吃掉术语预算；实际 kept={b.kept['custom']}"
+        )
+        assert b.used_tokens <= budget, (
+            f"组装结果超预算：used={b.used_tokens} > budget={budget}"
+        )
+
+    def test_oversized_prev_does_not_starve_terms(self):
+        """
+        反向断言：修好小额分支后，**大额**配额下上一段文本仍应正常保留
+
+        否则「一律返回空串」也能让上面那个用例变绿 —— 那是把功能砍掉换绿灯。
+        """
+        from asr import prompt_budget as pb
+
+        count = self._require_tokenizer()
+        hint = "以下是普通话的句子，请使用简体中文转写。"
+        b = pb.assemble(
+            [("custom", ["坐标系"])], prev_text=self.PREV, hint=hint,
+            budget=220, count=count,
+            prev_max_tokens=pb.DEFAULT_PREV_TEXT_TOKENS,
+        )
+
+        assert b.prev_kept, "预算充足时上一段文本必须有内容"
+        assert count(b.prev_kept) <= pb.DEFAULT_PREV_TEXT_TOKENS
+        assert "坐标系" in (b.kept.get("custom") or [])
+
+
 # ============ 7. 端到端（需要模型，缺失自动跳过）============
 
 def _resolve_test_model() -> str | None:
