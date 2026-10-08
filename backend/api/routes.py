@@ -127,6 +127,9 @@ class AskRequest(BaseModel):
 class PreviewTerminologyRequest(BaseModel):
     domain: str = ""
     customTerms: list[str] = []
+    # 课程语种。默认 "auto" = 保持既有行为（不关短语层）；
+    # 前端从课程配置里带过来，中文课据此关掉英文短语层（缺陷 b）。
+    language: str = "auto"
 
 
 def _parse_custom_terms(course: dict) -> list[str]:
@@ -633,10 +636,13 @@ async def get_terminology(course_id: str):
     discovered = [v.get("word", "") for v in vocabulary if v.get("word")]
 
     from dictionary.terminology import build_terminology
+    # `language` 必须带上：中文课的短语层是英文多词短语、纯干扰（缺陷 b）。
+    # 漏传会让本接口把 41 条英文短语当成「本课会重点识别的词」展示给用户。
     result = build_terminology(
         domain=course.get("domain", ""),
         custom_terms=custom_terms,
         discovered_terms=discovered,
+        language=course.get("language", "auto"),
     )
 
     # 补充运行中管道的信息（若正在监听，热词是运行时的最新状态）
@@ -678,6 +684,7 @@ async def preview_terminology(req: PreviewTerminologyRequest):
     return build_terminology(
         domain=req.domain,
         custom_terms=req.customTerms,
+        language=req.language,
     )
 
 

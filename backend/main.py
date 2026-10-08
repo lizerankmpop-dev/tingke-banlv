@@ -376,12 +376,18 @@ def run_selftest() -> int:
     def _terms():
         from dictionary.terminology import build_terminology
         # 领域名用前端 CourseConfig.tsx 中的中文键，与真实调用保持一致
+        # `language="zh"`：自检必须覆盖「中文课不产出英文短语层」这条（缺陷 b）。
+        # 漏传 language 时这里会退回 auto、短语层照旧生成 —— 自检就测不到该回归。
         built = build_terminology(
-            domain="计算机", custom_terms=["backpropagation", "convolutional"]
+            domain="计算机",
+            custom_terms=["backpropagation", "convolutional"],
+            language="zh",
         )
+        phrases = dict(built.get("sections") or []).get("phrases") or []
         return (
             f"术语 {built['stats']['total']} 个，"
-            f"热词提示 {built['promptChars']} 字符"
+            f"热词提示 {built['promptChars']} 字符，"
+            f"短语层 {len(phrases)} 条"
         )
 
     check("术语热词库", _terms)

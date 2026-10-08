@@ -272,6 +272,14 @@ def run_condition(args, cond: str, report: Path, custom: list[str],
         cmd += ["--terms", "on", "--autodegrade", "on"]
     elif cond == "on-noguard":
         cmd += ["--terms", "on", "--autodegrade", "off"]
+    elif cond == "phrases-on":
+        # 短语层开 = **修复前**的行为：术语语种 auto → 中文课照旧注入词表短语层
+        # （实测 41 条英文多词短语，794 字符 / 177 token）。兜底关，避免降级混淆。
+        cmd += ["--terms", "on", "--autodegrade", "off", "--term-language", "auto"]
+    elif cond == "phrases-off":
+        # 短语层关 = **修复后**的行为：术语语种 zh → 该层不产出。
+        # 与 phrases-on 构成单变量对照（同锚点、同素材、同 ASR 语种，只差术语语种）。
+        cmd += ["--terms", "on", "--autodegrade", "off", "--term-language", "zh"]
     elif cond == "simp":
         # 只注入一段简体中文引导语、不注入任何术语表（domain 置空，见下方 domain_c）：
         # 用来单独检验「提示词里的简体中文能不能把 Whisper 从繁体拉回来」，
@@ -283,6 +291,11 @@ def run_condition(args, cond: str, report: Path, custom: list[str],
         cmd += ["--terms", "on", "--autodegrade", "off"]
     else:
         raise SystemExit(f"未知条件: {cond}")
+
+    # 全局 `--term-language`：只对**没有自己指定**的条件生效（条件级优先）。
+    # `phrases-on` / `phrases-off` 就是各自指定语种的，靠它们做单变量对照。
+    if args.term_language and "--term-language" not in cmd:
+        cmd += ["--term-language", args.term_language]
 
     # 注意：这里必须用展开后的 custom（而不是 args.custom_terms 的原始字符串）。
     # 踩过的坑：`--custom-terms @zh` 的哨兵是在 main() 里展开成 55 个中文术语的，
@@ -353,6 +366,13 @@ def main() -> int:
     p = argparse.ArgumentParser(description="术语热词 A/B 对照")
     p.add_argument("--audio-dir", required=True)
     p.add_argument("--language", default="zh")
+    p.add_argument(
+        "--term-language",
+        default=None,
+        help="单独指定术语层语种（默认跟随 --language）。用于把「术语语种分流」"
+        "当唯一变量做对照：`--language zh --term-language auto` = 修复前行为，"
+        "`--term-language zh` = 修复后行为；不动 --language 以免 ASR 语种也变。",
+    )
     p.add_argument("--domain", default="")
     p.add_argument("--custom-terms", default="",
                    help='逗号分隔；传 "@zh" 或 "@zh-origin" 表示用脚本内置的中文术语清单'
@@ -431,6 +451,40 @@ def main() -> int:
         return vals[0] if vals else default
 
     names = list(runs.keys())
+
+    # ---- 被测输入对拍：唯一变量真的改变了喂给模型的提示词吗？ ----
+    # 🔴 实测踩过：修复代码已提交，但 harness 漏传 `language` → 两个代码锚点下发的
+    # 提示词 md5 **逐字节相同** → 四格 CER 的差异全是运行波动，却被当成「修复生效」
+    # 写进了报告。所以每次对照先打印这张指纹表：
+    # **md5 相同的条件，其被测输入完全相同**，它们之间的差异不可归因于配置。
+    print("\n" + "=" * 90)
+    print("被测输入对拍（术语提示词指纹）—— md5 相同 = 喂给模型的输入完全相同")
+    print("=" * 90)
+    fingerprints: dict[str, str] = {}
+    for c in names:
+        cfg = runs[c].get("config", {})
+        md5 = cfg.get("termPromptMd5") or ""
+        fingerprints[c] = md5
+        chars = summary(c).get("termPromptChars")
+        print(
+            f"  [{c:<14}] md5 {(md5[:16] if md5 else '(空 · 未注入术语层)'):<20}"
+            f" 术语语种 {str(cfg.get('termLanguage') or '-'):<6}"
+            f" 提示词 {str(chars if chars is not None else '-'):<5} 字符"
+            f" 分层 {cfg.get('termPromptSections') or '-'}"
+        )
+    # ⚠️ 只能覆盖「组内」这一半：若每个条件注入的内容**完全一致**（且确实有内容），
+    #    那这组对照没有可观测的输入变量。**跨运行**的「唯一变量没引起输入变化」
+    #    它看不到（实测踩过：两个代码锚点 md5 逐字节相同却报「验证通过」）——
+    #    那种情况靠三样东西挡：① 改开关后 grep 全部调用点；② 产物里的
+    #    `config.termPromptMd5` 字段可跨运行对拍；③ 跑之前先证变量真的变了。
+    vals = list(fingerprints.values())
+    if len(names) > 1 and len(set(vals)) == 1 and vals[0]:
+        print(
+            "  ⚠️ 警告：所有条件注入的术语提示词**完全相同**（md5 一致且有内容）——\n"
+            "     本组没有可观测的输入变量，差异只能反映运行波动。\n"
+            "     跨运行对拍请看各产物 `config.termPromptMd5` 字段。"
+        )
+
     print("\n" + "=" * 90)
     print(f"对照结果（语言 {args.language}｜领域 {args.domain or '未指定'}｜"
           f"{'真实速率' if args.realtime else '尽快喂入'}）")
@@ -450,6 +504,14 @@ def main() -> int:
         ("产出字幕数（引擎累计）", lambda c: summary(c).get("totalOutSegments"), "lower"),
         ("重复循环判定次数", lambda c: summary(c).get("totalRepetitionEvents"), "lower"),
         ("提示词字符数", lambda c: summary(c).get("termPromptChars"), "lower"),
+        # 下面两行是「注入的到底是什么」的紧凑指纹：`phrases` 条目数直接暴露
+        # 「中文课有没有被塞英文短语层」，比字符总数更能说明问题。
+        (
+            "术语层 phrases 条目",
+            lambda c: (runs[c].get("config", {}).get("termPromptSections") or {}).get("phrases"),
+            "lower",
+        ),
+        ("术语语种", lambda c: runs[c].get("config", {}).get("termLanguage"), "lower"),
         ("平均延迟 s", lambda c: summary(c).get("meanLatency"), "lower"),
         ("峰值延迟 s", lambda c: summary(c).get("peakLatency"), "lower"),
         ("丢弃片段", lambda c: summary(c).get("totalDropped"), "lower"),

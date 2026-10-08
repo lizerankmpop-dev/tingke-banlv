@@ -50,6 +50,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import statistics
@@ -835,6 +836,15 @@ def main() -> int:
     parser.add_argument("--model", default=None, help="模型规格，默认取管道默认值（base）")
     parser.add_argument("--model-timeout", type=float, default=300.0, help="模型加载超时（秒）")
     parser.add_argument("--language", default="auto", help="auto|zh|en")
+    parser.add_argument(
+        "--term-language",
+        default=None,
+        help="单独指定**术语层**语种；不传则跟随 --language。"
+        "用途：把「术语语种分流」当唯一变量做对照 —— 例如 "
+        "`--language zh --term-language auto` 复现修复前的行为（短语层照旧注入），"
+        "`--language zh --term-language zh` 才是修复后的行为。"
+        "不动 --language 是为了不让 ASR 语种一起变成变量。",
+    )
     parser.add_argument("--terms", choices=("on", "off"), default="on", help="是否注入术语热词")
     parser.add_argument("--domain", default="", help="术语领域（配合 --terms on）")
     parser.add_argument(
@@ -882,13 +892,27 @@ def main() -> int:
     print("=" * 96)
 
     prompt = ""
+    # 术语层的语种。默认跟随 ASR 语种；单独给 `--term-language` 是为了能把
+    # 「术语语种分流」当**唯一变量**做对照 —— 只改它而不动 ASR 语种，
+    # 否则 ASR 侧也跟着变，就不是单变量了。
+    term_language = args.term_language or args.language
+    prompt_md5 = ""
+    prompt_sections: dict[str, int] = {}
     if args.terms == "on":
         try:
             from dictionary.terminology import build_terminology
 
             custom = [x.strip() for x in (args.custom_terms or "").split(",") if x.strip()]
-            term = build_terminology(domain=args.domain, custom_terms=custom)
+            # 🔴 `language` 必须传。中文课的「词表短语层」全是英文多词短语，对中文课
+            #    是纯干扰（缺陷 b，实测 CER 相对 +42.9%）。漏传会静默退回 `auto`、
+            #    短语层照旧生成 60 条 —— 实测踩过：修复代码在，但 A/B 测不到它，
+            #    两次运行的提示词 md5 完全相同，整组对照变成空实验。
+            term = build_terminology(
+                domain=args.domain, custom_terms=custom, language=term_language
+            )
             prompt = term["prompt"]
+            prompt_md5 = hashlib.md5(prompt.encode("utf-8")).hexdigest()
+            prompt_sections = {k: len(v) for k, v in (term.get("sections") or [])}
             total = term["stats"]["total"]
             print(
                 f"  术语热词: {total} 个"
@@ -896,6 +920,11 @@ def main() -> int:
                 + ("（未指定 --domain，仅词表多词短语）" if total == 0 else "")
             )
             print(f"  提示词  : {term['promptChars']} 字符")
+            # 下面三行是「被操纵的变量真的变了吗」的取证字段：跑完 A/B 后要看
+            # 各条件的 md5 是否如预期地不同 —— 全都相同 = 这组对照什么都没测到。
+            print(f"  提示词 md5 : {prompt_md5[:16]}")
+            print(f"  分层条目数 : {prompt_sections}")
+            print(f"  术语语种   : {term_language}（ASR 语种 {args.language}）")
         except Exception as exc:
             print(f"  ⚠ 术语热词构建失败，按不注入处理: {exc}")
 
@@ -938,10 +967,15 @@ def main() -> int:
         "config": {
             "model": args.model,
             "language": args.language,
+            "termLanguage": term_language,
             "terms": args.terms,
             "domain": args.domain,
             "realtime": args.realtime,
             "maxWer": args.max_wer,
+            # 「本次下发的术语提示词长什么样」的取证字段。跨条件/跨锚点对账时
+            # **先比 md5**：相同就说明唯一变量没有引起任何变化，这组对照无效。
+            "termPromptMd5": prompt_md5,
+            "termPromptSections": prompt_sections,
         },
         "summary": summary,
         "verdict": {"passed": passed, "notes": notes},

@@ -140,10 +140,13 @@ class ASRPipeline:
         try:
             from dictionary.terminology import build_terminology
             new_custom = custom_terms if custom_terms is not None else self.course_config.get("custom_terms", [])
+            # `language` 必须与首次构建（见 __init__）用同一个来源，否则热更新会把
+            # 已关掉的中文课短语层又装回来 —— 用户改一次术语表就等于把缺陷 b 复原。
             term = build_terminology(
                 domain=self.course_config.get("domain", ""),
                 custom_terms=new_custom,
                 discovered_terms=self._discovered_terms,
+                language=self.course_config.get("language", "auto"),
             )
             self._terminology = term
             self._whisper.set_initial_prompt(term["prompt"], term.get("sections"))

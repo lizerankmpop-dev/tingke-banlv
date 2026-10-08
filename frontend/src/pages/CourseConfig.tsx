@@ -45,8 +45,11 @@ interface TermStats {
  *
  * 让用户在启动监听前就看到"这节课会重点识别哪些词"，
  * 并实时反映自定义术语的增删 —— 把识别优化从"看不见的黑盒"变成可见的反馈。
+ *
+ * `language` 必须一起送后端：中文课的「词表短语层」全是英文多词短语、与课程无关，
+ * 后端要靠语种才能关掉它。漏传时中文课会显示 41 条英文短语（缺陷 b 的现场）。
  */
-function TerminologyPreview({ domain, customTerms }: { domain: string; customTerms: string[] }) {
+function TerminologyPreview({ domain, language, customTerms }: { domain: string; language: string; customTerms: string[] }) {
   const [terms, setTerms] = useState<TermEntry[]>([])
   const [stats, setStats] = useState<TermStats | null>(null)
   const [promptChars, setPromptChars] = useState(0)
@@ -60,7 +63,7 @@ function TerminologyPreview({ domain, customTerms }: { domain: string; customTer
       fetch('/api/terminology/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain, customTerms }),
+        body: JSON.stringify({ domain, language, customTerms }),
       })
         .then(r => r.json())
         .then(data => {
@@ -72,7 +75,7 @@ function TerminologyPreview({ domain, customTerms }: { domain: string; customTer
         .finally(() => setLoading(false))
     }, 400)
     return () => clearTimeout(timer)
-  }, [domain, customTerms.join(',')])
+  }, [domain, language, customTerms.join(',')])
 
   if (!stats || stats.total === 0) return null
 
@@ -327,6 +330,7 @@ export default function CourseConfig() {
 
           <TerminologyPreview
             domain={domain}
+            language={language}
             customTerms={customTerms.split(/[,，]/).map(t => t.trim()).filter(Boolean)}
           />
         </div>

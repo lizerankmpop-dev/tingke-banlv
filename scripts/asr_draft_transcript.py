@@ -63,7 +63,10 @@ def load_prompt(args) -> str:
         from dictionary.terminology import build_terminology
 
         custom = [x.strip() for x in (args.custom_terms or "").split(",") if x.strip()]
-        term = build_terminology(domain=args.domain, custom_terms=custom)
+        # `language` 必须传，否则中文课会照旧注入英文短语层（缺陷 b）
+        term = build_terminology(
+            domain=args.domain, custom_terms=custom, language=args.language
+        )
         return term["prompt"]
     except Exception as exc:  # 术语构建失败不该阻断出草稿
         print(f"  ⚠ 术语热词构建失败，按不注入处理: {exc}")
