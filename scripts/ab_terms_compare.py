@@ -80,6 +80,60 @@ CHINESE_TERMS = {
 # 多领域共用词：不管 domain 传什么，这些词出现了都值得统计
 COMMON_TERMS = ["深度学习", "神经网络", "卷积神经网络", "注意力机制", "注意力", "循环网络"]
 
+# ============ 课程原生术语表（第二组 A/B，2026-10-08） ============
+#
+# 为什么要有第二份、而不是改 CHINESE_TERMS：
+#   第一组 A/B 的结论「terms 让 CER +42.9%」是在 `@zh`（= 6 个 AI 术语）条件下
+#   得到的。若直接把 CHINESE_TERMS 改成本课词表，第一组报告就**再也无法复现** ——
+#   同一个哨兵在不同时间指向不同词表，等于把「可比性」静默毁掉。所以新增哨兵
+#   `@zh-origin`，`@zh` 原样冻结。
+#
+# 🔴 第一组的致命偏差（这是本组的立项理由）：
+#   第一组 `--terms on` 实际注入了 `basic_vocab.json` 里按「含空格的多词短语」挑出的
+#   **41 个通用英文术语**（gradient descent ... prosocial behavior）。素材是中文
+#   Origin 绘图课，两者毫无交集 → 第一组测到的是「往中文课里塞无关英文词表会掉多少
+#   分」，**不能**推出术语功能本身有没有用。术语召回命中数四格全为 0 就是这个的旁证。
+#
+# 本表来源（可逐词回溯，这是它的价值所在）：
+#   1. `real_zhlecture_origin_plot.corrections.tsv` 的 `replacement` 列 —— 那 81 条
+#      fix 的右端就是老师真实说出的词（`做标戏`→`坐标系` 这类误识别形态的左端一律不收）；
+#   2. `real_zhlecture_origin_plot.preproof.txt` 定稿全文（35 段 / 2791 字）逐段核对，
+#      只收「老师作为知识点讲出来的名词性术语」。
+#
+# 收词三条边界（定过就得守着，否则 CER 口径会漂）：
+#   · 只收**名词性专业术语**。虚词、口语（其实/就是/等等）、动词短语（想要/选择/添加）
+#     一律不收 —— 它们不是「热词能救回来的东西」，收进来只会稀释预算。
+#   · **不收 `Book` / `Graph` / `Origin` / `Label` 这四个英文词**。理由不是它们不重要，
+#     而是它们本来就以英文形态出现在定稿里，而提示词注入英文词对中文课是已验证的
+#     干扰项（第一组结论）。要测的是「中文术语热词」这一个变量，不能把这个干扰
+#     重新夹带进来 —— 那正是第一组的错误。
+#   · 规模上限按 **token 预算**定，不按个数定：本表 26 词 = 158 token（真 tokenizer 实测），
+#     加简体引导语 26 + 上一段文本配额 48 = 232，逼近但**不超** faster-whisper 的
+#     223 保留窗口（`max_length//2-1`）。再多收一个词就可能触发静默截断，把
+#     「高优先级贴尾」的安全边界悄悄吃掉。
+COURSE_TERMS_ORIGIN = [
+    # Origin 界面结构（老师逐个介绍的部分名）
+    "项目管理器", "工作区", "工具栏", "菜单栏",
+    # Graph 三层结构
+    "新建图", "画布", "坐标系", "图层", "子图",
+    # 图型
+    "折线图", "柱形图",
+    # 数据文件与数据表
+    "数据表", "曲线数据",
+    # 菜单项与对话框
+    "图表绘制", "对话框",
+    # 轴 / 列标语义
+    "横坐标", "纵坐标", "误差", "数据标签",
+    # 尺寸与单位（老师反复讲的排版约束）
+    "单位", "厘米", "毫米", "双栏", "单栏",
+]
+
+# 哨兵 → 词表。`@zh` 冻结在第一组的值上，新实验一律用 `@zh-origin`。
+CUSTOM_TERM_SENTINELS = {
+    "@zh": lambda domain: CHINESE_TERMS.get(domain, []) + COMMON_TERMS,
+    "@zh-origin": lambda domain: list(COURSE_TERMS_ORIGIN),
+}
+
 # `simp` 条件用的简体中文引导语
 #
 # Whisper 的 language="zh" 不区分简繁，模型倾向输出繁体。业界常用的做法是往
@@ -301,7 +355,9 @@ def main() -> int:
     p.add_argument("--language", default="zh")
     p.add_argument("--domain", default="")
     p.add_argument("--custom-terms", default="",
-                   help='逗号分隔；传 "@zh" 表示用脚本内置的中文术语清单')
+                   help='逗号分隔；传 "@zh" 或 "@zh-origin" 表示用脚本内置的中文术语清单'
+                        '（"@zh" = 6 个 AI 术语，第一组实验冻结用；'
+                        '"@zh-origin" = 本课 Origin 原生术语，做课程内 A/B 用这个）')
     p.add_argument("--conditions", default="off,on")
     p.add_argument("--realtime", action="store_true")
     p.add_argument("--model", default=None)
@@ -320,14 +376,23 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     domain_terms = load_domain_terms(args.domain)
-    cn_terms = CHINESE_TERMS.get(args.domain, []) + COMMON_TERMS
     custom = [t.strip() for t in args.custom_terms.split(",") if t.strip()]
-    # "@zh" 是内置中文术语清单的简写：命令行塞 50 个中文词又长又容易因编码出问题，
-    # 用哨兵值代替，实际清单仍会完整写进报告，可追溯
-    if custom == ["@zh"]:
-        custom = list(cn_terms)
+    # "@zh" / "@zh-origin" 是内置词表的简写：命令行塞几十个中文词又长又容易因
+    # 编码出问题，用哨兵值代替，实际清单仍会完整写进报告，可追溯。
+    #
+    # ⚠️ 召回目标（`cn_terms`）必须跟着**注入内容**走，不能固定成 CHINESE_TERMS。
+    #    第一组就是这么错的：注入的是 41 个英文短语，召回目标却统计 6 个 AI 术语
+    #    → 命中数四格全 0，表格看着"术语一个都没救回来"，其实两个清单毫无交集，
+    #    这个 0 什么也没证明。这里改成：用哪份词表注入，就用哪份词表算召回。
+    cn_terms = CHINESE_TERMS.get(args.domain, []) + COMMON_TERMS
+    sentinel = custom[0] if len(custom) == 1 and custom[0] in CUSTOM_TERM_SENTINELS else None
+    if sentinel:
+        custom = CUSTOM_TERM_SENTINELS[sentinel](args.domain)
+        cn_terms = list(custom)      # 召回目标 = 实际注入的清单
 
     print(f"目标英文术语（产品术语表 · {args.domain}）: {len(domain_terms)} 个")
+    if sentinel:
+        print(f"自定义术语来源                           : 哨兵 {sentinel}")
     print(f"目标中文术语（本次评测专用清单）        : {len(cn_terms)} 个")
     print(f"自定义术语                              : {custom or '（无）'}")
 
