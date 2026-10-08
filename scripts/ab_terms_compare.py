@@ -17,6 +17,21 @@
   on-noguard  注入术语表但关闭兜底（用于观察「完全不干预时重复循环能持续多久」）
   simp     只注入一段简体中文引导语、不注入任何术语表（检验简繁引导，见 SIMP_HINT）
 
+**2×2 正式对照条件（术语 × 防循环兜底，两轴都显式锁死 —— 推荐做结论时用这四格）**：
+
+  off-noguard   术语 off × 兜底 off
+  off-guard     术语 off × 兜底 on
+  on-noguard    术语 on  × 兜底 off
+  on            术语 on  × 兜底 on（= 出厂默认）
+
+`off` 只是历史别名，等价于「术语 off + 兜底沿用引擎默认」；做正式对照请用上面四个
+名字，并把 `_env` 里记下的 `TINGKEBANLV_TERM_AUTODEGRADE` 一并写进报告。
+
+⚠️ **长音频（>2min）必须加 `--realtime`。** 非实时喂入会把整段音频瞬间灌满队列，
+引擎来不及消费就按背压**丢片段** —— 实测 630s 素材丢掉 46/63 段，WER 报 0.77，
+这个数其实量的是「丢弃策略」而不是识别准确率，而且各格丢的段不同、彼此也不可比。
+现在这种情况会**直接中止**（要观察丢弃行为本身才加 `--allow-drops`）。
+
 用法：
   <venv>/Scripts/python.exe scripts/ab_terms_compare.py \
       --audio-dir testset/chinese_lecture/long --language zh --domain 计算机 \
@@ -83,6 +98,27 @@ SIMP_HINT_ORIGINAL = "下面的内容为简体中文课堂讲课内容，输出�
 SIMP_HINT_VARIANTS: dict[str, dict[str, str]] = {
     "simp-current": {"TINGKEBANLV_SIMP_HINT": SIMP_HINT},
     "simp-original": {"TINGKEBANLV_SIMP_HINT": SIMP_HINT_ORIGINAL},
+}
+
+# 「防循环兜底」的显式锁定：CLI 开关 + 环境变量**双写**。
+#
+# 为什么两边都要写：`--autodegrade` 走 `engine.set_auto_degrade()`（运行时覆盖），
+# 而 `TINGKEBANLV_TERM_AUTODEGRADE` 是 `whisper_engine.AUTO_DEGRADE_ENABLED`
+# 这个**模块级默认值**（import 时读一次）。只写一边，报告里的 `termAutoDegrade`
+# 就可能与引擎默认值不一致，事后无法判断「当时到底哪个开关生效」。
+#
+# 这条不是洁癖：本素材上真实踩过 —— 同一份音频两次跑，一次触发了自动降级
+# （206→70 token，字数多出 672），另一次没触发，而两次日志都没记下 promptChars，
+# 差异**再也无法追溯**。所以现在把真实环境变量原样写进报告（`_env`）。
+#
+# 刻意不给 `simp` / `simp-*` 列值：那几条历史条件当时没传 `--autodegrade`，
+# 保持「沿用引擎默认」才能与历史报告对得上。
+AUTODEGRADE_ENV: dict[str, str] = {
+    "off": "1",
+    "off-guard": "1",
+    "off-noguard": "0",
+    "on": "1",
+    "on-noguard": "0",
 }
 
 
@@ -169,6 +205,12 @@ def run_condition(args, cond: str, report: Path, custom: list[str],
 
     if cond == "off":
         cmd += ["--terms", "off"]
+    elif cond == "off-guard":
+        # 术语 off × 兜底 on。这是个**对照格**：没有提示词时兜底理应无事可做，
+        # 它若与 off-noguard 有差异，说明差异来自别处（噪声/顺序），不是来自兜底。
+        cmd += ["--terms", "off", "--autodegrade", "on"]
+    elif cond == "off-noguard":
+        cmd += ["--terms", "off", "--autodegrade", "off"]
     elif cond in SIMP_HINT_VARIANTS:
         # 简体引导语对照：与 off 完全同构（无术语），只靠环境变量换那一句引导语
         cmd += ["--terms", "off"]
@@ -202,7 +244,13 @@ def run_condition(args, cond: str, report: Path, custom: list[str],
     if domain_c:
         cmd += ["--domain", domain_c]
 
-    tail = f"  [{env_extra}]" if env_extra else ""
+    # 防循环兜底：CLI 与环境变量双写（理由见 AUTODEGRADE_ENV 上方注释）
+    env_all = dict(env_extra or {})
+    guard = AUTODEGRADE_ENV.get(cond)
+    if guard is not None:
+        env_all["TINGKEBANLV_TERM_AUTODEGRADE"] = guard
+
+    tail = f"  [{env_all}]" if env_all else ""
     print("\n" + "#" * 90)
     print(f"# 条件 [{cond}]  {' '.join(cmd[2:])}{tail}")
     print("#" * 90, flush=True)
@@ -210,7 +258,7 @@ def run_condition(args, cond: str, report: Path, custom: list[str],
     proc = subprocess.run(
         cmd,
         cwd=str(PROJECT_ROOT),
-        env={**os.environ, **(env_extra or {})},
+        env={**os.environ, **env_all},
     )
     elapsed = time.time() - started
     if not report.is_file():
@@ -221,8 +269,8 @@ def run_condition(args, cond: str, report: Path, custom: list[str],
     # 把真实下发过的命令行记进报告：参数拼错时（比如哨兵没展开）从报告就能看出来，
     # 不用去翻日志。踩过坑，所以留证。
     data["_cmd"] = cmd
-    if env_extra:
-        data["_env"] = env_extra
+    if env_all:
+        data["_env"] = env_all
     return data
 
 
@@ -259,6 +307,11 @@ def main() -> int:
     p.add_argument("--model", default=None)
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--drain-timeout", type=float, default=900.0)
+    p.add_argument(
+        "--allow-drops",
+        action="store_true",
+        help="即使有片段被背压丢弃也继续出对照表（默认直接中止 —— 见下方说明）",
+    )
     p.add_argument("--out", default="packaging/eval/ab_terms.json")
     args = p.parse_args()
 
@@ -280,10 +333,28 @@ def main() -> int:
 
     runs: dict[str, dict] = {}
     for cond in conds:
-        report = out_path.with_name(f"_ab_{cond}.json")
+        # 每个条件的**原始**报告名从 `--out` 派生，不再用固定名 `_ab_<cond>.json`。
+        # 固定名的含义是「换一份素材重跑一次，就静默覆盖掉上一份素材的证据」——
+        # 英文测试集的 `_ab_on.json` / `_ab_on-noguard.json` 就是这么被撞掉的。
+        # 派生后不同 A/B 运行的产物互不干扰，且从文件名就能看出属于哪一次。
+        report = out_path.with_name(f"{out_path.stem}.{cond}.json")
         runs[cond] = run_condition(
             args, cond, report, custom, SIMP_HINT_VARIANTS.get(cond)
         )
+        # 丢弃片段 = 背压溢出，字幕直接缺内容。此时表里的 WER/CER 量的是
+        # 「丢弃策略」而不是「识别准确率」，**格与格之间也不可比**（各格丢的段不同）。
+        # 实测：630s 素材按「尽快喂入」跑，63 个 VAD 片段只产出 10~17 条字幕、
+        # 丢掉 46~48 段，WER 报 0.77 —— 这个数字看着像「识别很差」，其实绝大部分
+        # 是根本没送去识别。所以默认**中止**，而不是照常打印一张漂亮的表。
+        # 长音频请用 `--realtime`（按真实速率喂入，引擎跟得上就不会积压）。
+        dropped = runs[cond].get("summary", {}).get("totalDropped") or 0
+        if dropped and not args.allow_drops:
+            raise SystemExit(
+                f"条件 [{cond}] 丢弃了 {dropped} 个片段（背压触发）—— 已中止。\n"
+                f"  长音频请加 --realtime（非实时喂入会把音频瞬间灌满队列，"
+                f"引擎来不及消费就丢；这跟真实使用不是一回事）。\n"
+                f"  确实想观察丢弃行为本身时，加 --allow-drops 继续。"
+            )
 
     def summary(cond):
         return runs[cond].get("summary", {})
@@ -401,6 +472,11 @@ def main() -> int:
         "runs": {c: {"summary": runs[c].get("summary"), "results": runs[c].get("results")} for c in names},
         # 每个条件实际跑过的命令行，便于事后核对参数到底生效没有
         "commands": {c: runs[c].get("_cmd") for c in names},
+        # 每个条件真实下发的环境变量（`TINGKEBANLV_TERM_AUTODEGRADE`、
+        # `TINGKEBANLV_SIMP_HINT`）。只记 CLI 是不够的：`AUTO_DEGRADE_ENABLED`
+        # 是 **import 时读的模块级默认值**，只受环境变量影响 —— 少了这一栏，
+        # 事后就无法回答「当时那个开关到底是哪个值」。
+        "env": {c: runs[c].get("_env") for c in names},
     }
     out_path.write_text(json.dumps(combined, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"\n对照报告已写入: {out_path}")

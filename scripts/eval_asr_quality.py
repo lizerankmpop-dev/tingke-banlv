@@ -31,8 +31,10 @@
 
 参考文本
 --------
-与音频同名的 `.txt`（UTF-8）即为参考答案。有则算 WER/CER，没有则只输出识别文本
-供人工核对 —— 真实网课录音很难拿到逐字稿，所以「缺参考文本」是常态而非错误。
+与音频同名的 `.txt`（UTF-8）即为参考答案 —— 但**优先取 `<stem>.preproof.txt`**
+（预校对 + 人工裁决后的定稿，见 `reference_path()`）。有则算 WER/CER，没有则只输出
+识别文本供人工核对 —— 真实网课录音很难拿到逐字稿，所以「缺参考文本」是常态而非错误。
+实际用的是哪一份写进结果的 `referenceSource` 字段，便于事后核对。
 
 场景分类
 --------
@@ -471,14 +473,35 @@ def drain(engine, timeout: float = 600.0, quiet: float = 1.0) -> bool:
 
 # ============ 单个文件的评测 ============
 
+def reference_path(path: Path) -> Path | None:
+    """参考答案：优先人工校对过的 `<stem>.preproof.txt`，再退化到 `<stem>.txt`。
+
+    为什么要加这一级：`<stem>.preproof.txt` 是**预校对 + 人工裁决后的定稿**
+    （见 `scripts/preproof_transcript.py`），而裸 `<stem>.txt` 可能只是草稿或
+    早期版本。定稿一旦更新，`.txt` 不会跟着变 —— 拿它当参考就是拿一份会静默
+    过期的副本当基准。**能脱离音频独立阅读的只有一份，就是定稿**。
+
+    判据必须能从报告里查出来：谁被当成参考要写进 `referenceSource` 字段，
+    而不是靠回忆「当时用的是哪份」。
+
+    加这一级的直接原因：real/ 素材的定稿就叫 `*.preproof.txt`，按裸 `.txt`
+    找不到 → 返回 None → 整轮只输出识别文本、**WER/CER 全部静默消失**，
+    而且不报错。这种「基准悄悄缺席」比报错危险得多。
+    """
+    for cand in (path.with_suffix(".preproof.txt"), path.with_suffix(".txt")):
+        if cand.is_file():
+            return cand
+    return None
+
+
 def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
     audio = load_audio(path)
     if audio.size == 0:
         return {"file": path.name, "error": "音频为空或无法解码"}
 
     duration = len(audio) / SAMPLE_RATE
-    ref_path = path.with_suffix(".txt")
-    ref_text = ref_path.read_text(encoding="utf-8").strip() if ref_path.is_file() else None
+    ref_path = reference_path(path)
+    ref_text = ref_path.read_text(encoding="utf-8").strip() if ref_path else None
 
     recorder = Recorder()
     # 关键：把字幕回调切到本文件的 Recorder，否则字幕会记到上一个/顶层实例上
@@ -558,6 +581,9 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
         "drained": completed,
         "recognition": recognized,
         "reference": ref_text,
+        # 参考稿到底取的哪一份（定稿 `.preproof.txt` 还是裸 `.txt`）。
+        # 判据要能从报告里查出来，而不是靠回忆当时用的是哪份文件。
+        "referenceSource": ref_path.name if ref_path else None,
         # ---- 术语提示词防循环（P3 核心观测项）----
         # 全都是差值：engine 是多个文件共用的，读累计值会让第一个文件
         # 之后的每个文件都「继承」上一个文件触发过的降级
