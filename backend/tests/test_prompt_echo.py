@@ -171,6 +171,42 @@ def test_blacklist_includes_politeness_variant():
     assert "使用简体中文转写" in BLACKLIST
 
 
+def test_blacklist_includes_clause_suffix_variant():
+    """从句中接上引导语也要能救：`普通话的句子` 是第一个分句的**后缀**。
+
+    实测残留（B站 Origin 课，段 29）：老师说了「这一项是」，模型接着把引导语从句中
+    续上，吐成 `这一项是普通话的句子`。整句派生与剥礼貌前缀**都生成不出**
+    `普通话的句子` —— 前缀/整句和这个后缀没有任何公共路径 —— 于是这条一直漏救，
+    只能靠人工在校对表里补一刀（旧注释里那句「部分回显会漏救」说的就是它）。
+
+    判据用**后缀覆盖率**而不是只测那一个串：只钉一个串的话，以后有人把派生写成
+    「硬编码这一个例外」也能过，而下一个变体照旧漏。
+    """
+    assert "普通话的句子" in BLACKLIST
+    for clause in ("以下是普通话的句子", "请使用简体中文转写"):
+        for i in range(len(clause) - MIN_ECHO_CHARS + 1):
+            assert clause[i:] in BLACKLIST, f"分句后缀 {clause[i:]!r} 未派生"
+
+
+def test_partial_echo_starting_mid_clause_keeps_real_head():
+    """反向断言：剔回显**不能连真实语音一起删掉**。
+
+    这里 `这一项` 是老师真说的话，`普通话的句子` 才是回显 —— 清洗后必须恰好剩下
+    `这一项`。删多（把句首也当回显）或删少（留着回显尾巴）都是错的，
+    而两者都不会报错。
+    """
+    got = clean_text("这一项是普通话的句子", BLACKLIST)
+    assert got.text == "这一项", f"应只剩真实语音部分，实际 {got.text!r}"
+    assert got.isPureEcho is False, "这不是纯回显，不该整段丢弃"
+
+
+def test_ordinary_sentences_are_not_touched_by_suffix_derivation():
+    """反向断言：后缀派生只认引导语的后缀，不能扩大成「含常见词就删」。"""
+    for s in ("大家注意句子的结构", "我们今天讲普通话的发音", "这一项我们先跳过"):
+        got = clean_text(s, BLACKLIST)
+        assert got.text == s, f"正常句子被误删：{s!r} → {got.text!r}"
+
+
 # ============ 派生 / 归一化 ============
 
 

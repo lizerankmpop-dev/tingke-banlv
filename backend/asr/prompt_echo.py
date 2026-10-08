@@ -133,10 +133,22 @@ def build_blacklist(hint: str, min_chars: int = MIN_ECHO_CHARS) -> list[str]:
         for prefix in _POLITE_PREFIXES:
             if clause.startswith(prefix):
                 add(clause[len(prefix):])
+        # 后缀同样要加：模型不一定从引导语的**开头**接，它可能从句中任意位置续上。
+        # 实测残留：老师说了「这一项是」，模型接着把引导语从句中续上，吐成
+        # `这一项是普通话的句子` —— `普通话的句子` 是 `以下是普通话的句子` 的**后缀**，
+        # 靠上面那两行（整句 / 剥礼貌前缀）**永远生成不出来**，所以这条一直漏救，
+        # 只能靠人工在校对表里补一刀。这就是旧注释里「部分回显会漏救」的成因。
+        for suffix in _suffixes(clause, min_chars):
+            add(suffix)
 
     # 长的先匹配：否则「请使用简体中文转写」会被更短的变体切碎，留下「请」残字。
     candidates.sort(key=len, reverse=True)
     return candidates
+
+
+def _suffixes(s: str, min_chars: int) -> list[str]:
+    """`s` 的全部后缀（长度 ≥ min_chars，长的在前）。"""
+    return [s[i:] for i in range(len(s) - min_chars + 1)]
 
 
 def _split_clauses(hint: str) -> list[str]:

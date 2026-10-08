@@ -16,8 +16,13 @@ ASR 草稿里两类错误性质完全不同，处理方式也必须不同：
 --------------------------------
 逐字稿是 P3 的**评估基准**。任何一处脑补都会让后续 CER / 术语命中率失去意义，
 而且**不会报错** —— 改错了只会让基准悄悄偏离真实录音，然后把偏差记到
-「ASR 在真实网课上的表现」头上。所以本工具只承认两种动作：`fix` 与 `suspect`。
+「ASR 在真实网课上的表现」头上。所以本工具只承认两种**动作**：`fix` 与 `suspect`。
 不做：润色、改断句/分段、补字、删口头语、删除重复（重复循环只在清单里登记）。
+
+第三种 `kind` 是 `note`：**它不改文本**，只留一条记录。两种用途 ——
+① 标注「这里是 ASR 重复循环，不是新内容」；② 人工裁决后确认「没有任何候选能
+被锁定」的碎片（终态留白：我不猜，也不谎称校对过）。note 是**终态**，
+不是「还没处理」，所以它不出现在存疑清单里。
 
 为什么修正表是**外置的 TSV 而不是写死在代码里**
 ----------------------------------------------
@@ -156,6 +161,13 @@ def order_for_apply(corrections: list[Correction]) -> list[Correction]:
       反过来会让这些行一条都匹配不上 —— 而匹配不上**不报错**。
     * 组内长优先，否则 `会致成图线` 会被短模式 `会致` 先命中，删出残字。
       实测教训：前缀匹配只要漏掉长变体就会留下没说出口的残字，且**不报错**。
+
+    ⚠️ 别以为这里 key 的 `0 if fix else 1` 分量就是「fix 先跑」的保证 ——
+    `apply_corrections` 是把结果**再拆成两组**（`fixes` / `suspects`）分别跑的，
+    它压根不看这个分量；删掉 `0/1` 分量，`apply_corrections` 的行为**一模一样**。
+    这个分量管的是：① 本函数自身的契约（外部直接调用时也拿得到正确次序）
+    ② `apply_corrections` 输出 `applied` 的排序基准 `rank`（决定 changes.tsv 行序，
+    可对拍）。真正守「fix 整体先于 suspect」的是 `apply_corrections` 里的分组 + 两段循环。
     """
     def key(c: Correction) -> tuple:
         return (0 if c.kind == "fix" else 1, -len(c.pattern), c.pattern)
@@ -168,26 +180,61 @@ def has_markers(text: str) -> bool:
 
 
 def apply_corrections(text: str, corrections: list[Correction]) -> tuple[str, list[Applied]]:
-    """按「长优先」顺序对**一段**文本执行 fix 与 suspect。
+    """对**一段**文本先跑到 fix 不动点，再打 suspect 标记。
 
-    对已带标记的文本调用会抛异常：重复执行会把标记套成两层，
-    而输出看起来仍然"正常" —— 这类静默叠加必须挡住。
+    为什么 fix 要循环到不动点，而不是「长优先跑一遍」
+    --------------------------------------------------
+    一条 fix 的**替换串**可能正好造出另一条 fix 的 pattern，而组内是「长优先」——
+    长的会**先**跑，此时目标还不存在，于是它静默不生效。实测：
+    `布可 → Book` 与 `Book厅的这一 → Book这一个`，后者更长、先跑、找不到目标。
+    只跑一遍时唯一的兜底是「零命中就报错」，但报错信息只会说「这行没命中」，
+    **不会告诉你是排序问题**，作者很可能去改 pattern 的写法而把真因盖住。
+
+    跑成不动点后，表达同一件事的两种写法（对着原始文本写 / 对着中间态写）都对，
+    规则表不再依赖作者的排序直觉。循环有上界：真出现 `A→B` 且 `B→A` 这种
+    互相咬合的表会**报错**而不是无声地转圈。
+
+    suspect 仍在 fix 全部结束之后跑（理由见 `order_for_apply`），且只跑一遍：
+    它只负责加标记，加完不会产生新的 suspect 目标。
     """
     if has_markers(text):
         raise ValueError("输入文本已含 【?】 标记：应只对原始草稿执行一次预校对")
     cur = text
-    applied: list[Applied] = []
-    for c in order_for_apply(corrections):
-        if c.pattern not in cur:
-            continue
-        if c.kind == "fix":
+    ordered = order_for_apply(corrections)
+    fixes = [c for c in ordered if c.kind == "fix"]
+    suspects = [c for c in ordered if c.kind == "suspect"]
+    applied: dict[str, Applied] = {}
+
+    limit = len(fixes) + 8
+    for _pass in range(limit):
+        changed = False
+        for c in fixes:
+            if c.pattern not in cur:
+                continue
             n = cur.count(c.pattern)
             cur = cur.replace(c.pattern, c.replacement)
-        else:
-            n = cur.count(c.pattern)
-            cur = cur.replace(c.pattern, f"{SUSPECT_OPEN}{c.pattern}{SUSPECT_CLOSE}")
-        applied.append(Applied(correction=c, count=n))
-    return cur, applied
+            rec = applied.setdefault(c.pattern, Applied(correction=c))
+            rec.count += n
+            changed = True
+        if not changed:
+            break
+    else:
+        raise ValueError(
+            f"fix 阶段跑了 {limit} 轮仍未收敛 —— 规则表里存在互相咬合的替换"
+            f"（例如 A→B 且 B→A），会无声地转圈，请先拆掉")
+
+    for c in suspects:
+        if c.pattern not in cur:
+            continue
+        n = cur.count(c.pattern)
+        cur = cur.replace(c.pattern, f"{SUSPECT_OPEN}{c.pattern}{SUSPECT_CLOSE}")
+        rec = applied.setdefault(c.pattern, Applied(correction=c))
+        rec.count += n
+
+    # 顺序按规则表的稳定次序输出（dict 插入序 = 首次命中序，会随段落漂移）；
+    # 这里改成按 order_for_apply 的次序，保证 changes.tsv 可对拍。
+    rank = {c.pattern: i for i, c in enumerate(ordered)}
+    return cur, sorted(applied.values(), key=lambda a: rank[a.correction.pattern])
 
 
 def extract_suspects(text: str) -> list[str]:

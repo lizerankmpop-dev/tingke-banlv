@@ -169,6 +169,37 @@ def test_suspect_needs_fix_to_run_first(pp):
     assert out == "我们看到【?Book厅?】的这一打开了"
 
 
+def test_fix_group_reaches_fixpoint_across_ordering(pp):
+    """一条 fix 的替换串造出另一条 fix 的 pattern 时，必须仍然生效。
+
+    实测来历：规则表里同时有 `布可 → Book` 与 `Book厅的这一 → Book这一个`。
+    后者更长 → 组内「长优先」让它**先**跑，此刻 `Book厅的这一` 还不存在 →
+    静默不生效。唯一兜底是零命中守卫，但它只会说「这行没命中」，
+    **不会告诉你是排序问题** —— 作者很可能去改 pattern 的写法，把真因盖住。
+
+    修法是跑到不动点，于是「对着原始文本写」与「对着中间态写」两种写法都对。
+    """
+    cs = pp.parse_corrections("fix\t布可\tBook\t\nfix\tBook厅的这一\tBook这一个\t\n")
+    out, applied = pp.apply_corrections("我们看到布可厅的这一打开了", cs)
+    assert out == "我们看到Book这一个打开了", out
+    assert {a.correction.pattern: a.count for a in applied} == {"布可": 1, "Book厅的这一": 1}
+
+
+def test_fix_group_is_idempotent_across_passes(pp):
+    """反向断言：多跑几轮不能重复计数，也不能改动已收敛的文本。"""
+    cs = pp.parse_corrections("fix\t会图\t绘图\t\nfix\t会治\t绘制\t\n")
+    out, applied = pp.apply_corrections("我们会图也会治图线", cs)
+    assert out == "我们绘图也绘制图线"
+    assert [a.count for a in applied] == [1, 1], [a.count for a in applied]
+
+
+def test_mutually_recursive_fixes_raise_instead_of_spinning(pp):
+    """反向断言：`A→B` 与 `B→A` 这种互相咬合的表必须**报错**，不能无声转圈。"""
+    cs = pp.parse_corrections("fix\t甲\t乙\t\nfix\t乙\t甲\t\n")
+    with pytest.raises(ValueError, match="仍未收敛"):
+        pp.apply_corrections("甲", cs)
+
+
 def test_apply_corrections_refuses_already_marked_text(pp):
     """重复执行会把标记套成两层，而输出看着仍然「正常」—— 必须挡住。
 

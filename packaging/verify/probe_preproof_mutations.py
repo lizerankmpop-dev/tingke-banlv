@@ -57,11 +57,18 @@ MUTATIONS = [
         T.test_parse_corrections_strips_leading_bom,
     ),
     (
-        "C. 排序丢掉「先全部 fix 再全部 suspect」",
+        # ⚠️ 这条曾经挂在 `test_suspect_needs_fix_to_run_first` 上，重构（把 fix/suspect
+        #    拆成两组、fix 跑到不动点）之后它就**改不动任何行为了** —— 因为它改的是
+        #    `order_for_apply` 的 `0/1` 分量，而 `apply_corrections` 现在是
+        #    `fixes = [c for c in ordered if ...]` 结构性分组，压根不看这个分量。
+        #    于是探针报「漏掉」。**探针只验证「变异会不会让某用例变红」，它不会提醒你
+        #    「这条变异已经成了装饰」** —— 报「漏掉」时先问一句：这个变异现在还改得动
+        #    被测行为吗？把配对准到真正守该契约的用例上（这里就是下面这条）。
+        "C. 排序丢掉「先全部 fix 再全部 suspect」（suspect 更长时会排到 fix 前）",
         "preproof_transcript.py",
         ORDER_KEY,
         "        return (-len(c.pattern), c.pattern)",
-        T.test_suspect_needs_fix_to_run_first,
+        T.test_order_for_apply_puts_all_fix_before_all_suspect,
     ),
     (
         "D. 排序丢掉「组内长 pattern 优先」",
@@ -84,15 +91,42 @@ MUTATIONS = [
         "const KEY = 'tingke-transcript-' + DRAFT.info.durationMinutes;",
         T.test_review_page_localstorage_key_follows_info_audio,
     ),
+    (
+        "G. fix 组只跑一轮、不跑到不动点（长的先跑、目标还没被造出来）",
+        "preproof_transcript.py",
+        "        if not changed:\n            break",
+        "        break",
+        T.test_fix_group_reaches_fixpoint_across_ordering,
+    ),
+    (
+        "H. 互相咬合的 fix 不再报错（改成无声转圈 / 无声收敛不了）",
+        "preproof_transcript.py",
+        '        raise ValueError(\n'
+        '            f"fix 阶段跑了 {limit} 轮仍未收敛 —— 规则表里存在互相咬合的替换"',
+        '        _dead = (\n'
+        '            f"fix 阶段跑了 {limit} 轮仍未收敛 —— 规则表里存在互相咬合的替换"',
+        T.test_mutually_recursive_fixes_raise_instead_of_spinning,
+    ),
+    (
+        "I. 丢掉 fix/suspect 分组（suspect 被当成「替换成空串」会直接删字）",
+        "preproof_transcript.py",
+        '    fixes = [c for c in ordered if c.kind == "fix"]',
+        "    fixes = list(ordered)",
+        T.test_suspect_needs_fix_to_run_first,
+    ),
 ]
 
 CHECKED = [
     T.test_suspects_field_matches_actual_markers,
     T.test_parse_corrections_strips_leading_bom,
     T.test_suspect_needs_fix_to_run_first,
+    T.test_order_for_apply_puts_all_fix_before_all_suspect,
     T.test_order_for_apply_longest_pattern_first_within_group,
     T.test_write_suspects_md_declares_real_total_and_marks_multiplicity,
     T.test_review_page_localstorage_key_follows_info_audio,
+    T.test_fix_group_reaches_fixpoint_across_ordering,
+    T.test_fix_group_is_idempotent_across_passes,
+    T.test_mutually_recursive_fixes_raise_instead_of_spinning,
 ]
 
 # 吃哪个被测对象的用例。变异 review_page 时，吃 preproof 的用例必须仍喂**真身** ——
@@ -117,15 +151,23 @@ def _make_arg(fn, pp_mod, rp_mod):
 
 
 def _is_red(fn, pp_mod, rp_mod) -> tuple[bool, str]:
-    """断言失败（AssertionError）与被测代码抛异常（ValueError 等）**都算红**。
+    """断言失败与被测代码抛异常**都算红**。
 
-    按 pytest 的语义后者算 error，同样是失败。只捕 AssertionError 会让探针自己
-    崩在变异 B（去掉 BOM 剥离 → parse_corrections 抛 ValueError）上，把
-    「探针没跑完」伪装成「源码有问题」。
+    三层「探针自己骗自己」，都实测踩过，所以这里刻意写成这样：
+
+    * 只捕 `AssertionError` → 探针崩在变异 B（去掉 BOM 剥离 → `parse_corrections`
+      抛 `ValueError`）上，把「探针没跑完」伪装成「源码有问题」。
+    * 于是改捕 `Exception` —— **还是不够**：`pytest.raises` 失败时抛的是
+      `_pytest.outcomes.Failed`，它继承 **`BaseException`** 而不是 `Exception`，
+      会直接穿过 `except Exception` 把探针打崩（变异 G 就是被这个拦下的）。
+    * 结论：**这里必须捕 `BaseException`**；只把 `KeyboardInterrupt` 放行
+      （那是人按了 Ctrl-C，不该被记成「变异被抓住」）。
     """
     try:
         fn(_make_arg(fn, pp_mod, rp_mod))
-    except Exception as exc:  # noqa: BLE001
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:  # noqa: BLE001  —— 见上：pytest 的 Failed 不是 Exception
         msg = str(exc).splitlines()[0][:88] if str(exc) else "(无消息)"
         return True, f"{type(exc).__name__}: {msg}"
     return False, ""
