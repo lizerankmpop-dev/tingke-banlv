@@ -25,15 +25,28 @@
 **问题**：Whisper 对专业词识别很差 —— `convolution` 被听成 `convalution`，
 `eigenvalue` 被切成 `eigen value`，学生看到的字幕本身就是错的。
 
-**方案**：三层术语热词注入
+**方案**：四层术语热词注入（按优先级从高到低）
 
 | 层级 | 来源 | 说明 |
 |---|---|---|
 | 1. 自定义术语 | 用户手填 | 课程核心词，识别优先级最高 |
 | 2. 课程已识别术语 | 运行中自动累积 | 本课实际出现的词，动态加入 |
 | 3. 领域术语表 | 内置 15 个领域 / 320+ 术语 | 覆盖计算机、医学、物理、经济等 |
+| 4. 词表短语层 | 内置多词短语 | **按语种自动开关**：`zh`/`yue`/`wuu`/`cmn` 关闭 |
 
 热词通过 Whisper 的 `initial_prompt` 注入，并随识别进程动态更新（无需重启监听）。
+Whisper 只保留 `initial_prompt` 的**末尾 223 token**，因此各层按 **token 预算**分配
+（默认 220，降级 70），拼接顺序**低优先级在前**，超额时先丢低优先级层。
+
+> 第 4 层只按「含空格」挑词，**只能命中英文** —— 对中文课是纯干扰，故按语种反选关闭。
+
+> 📊 **实测收益（真实中文专业课，人工定稿基准）**
+> * 术语层在**词表与课程匹配**时降 CER（24 个课程原生中文术语：召回 36.4% → **71.2%**，CER −4.9%）；
+> * 词表**与课程无关**时伤害很大（+42.9%）；
+> * 第 4 层（英文短语层）**单独**的代价实测为 **+0.0800 绝对 CER（+38.2%）**，
+>   是运行噪声的 **7.41×** —— 该通道已由语种分流修掉。
+>
+> 详见 [`ASR_Pipeline_Validation_Report.md`](ASR_Pipeline_Validation_Report.md) §9.0 / §9.8。
 
 **配套能力**：
 
@@ -233,6 +246,11 @@ PYTHONPATH=backend python scripts/eval_asr_quality.py --audio-dir tests/audio/lo
 #    也可用 TINGKEBANLV_TERM_PROMPT_MAX 做提示词长度的剂量-反应
 PYTHONPATH=backend TINGKEBANLV_TERM_PROMPT_MAX=200 \
   python scripts/eval_asr_quality.py --audio-dir tests/audio/short --terms on
+
+# 4) 只操纵「术语层语种」—— 不动 ASR 的 --language，从而单变量隔离「短语层」：
+#    --term-language zh 关掉短语层 / auto 保留（复现修复前行为）
+PYTHONPATH=backend python scripts/eval_asr_quality.py \
+  --audio-dir tests/audio/short --language zh --terms on --term-language zh
 ```
 
 > 长短用例**必须分目录**：同目录下一次扫描会把 12 分钟文件也按「尽快喂完」灌进去，
