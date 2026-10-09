@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -93,6 +94,27 @@ BENIGN_TRACEBACK_TERMINALS = (
     # 解释器收尾竞态（Windows proactor），只发生在进程退出路径上
     "RuntimeError: Event loop is closed",
 )
+
+# ---- 同一个 traceback 有两种落盘形态，块解析必须两种都认 ----
+# 后端 stdout 是**原始形态**（头行顶格、正文缩进）；
+# 主进程 `logLine()` 会把每一行再包一层 `[ISO时间Z] [LEVEL] [backend] `
+# （frontend/electron/main.cjs 的 onBackendData）—— 包完之后前缀在头行前面、
+# 缩进被吃掉。2026-10-09 实装验证上就是这里翻的车：块解析拿到 count=0，
+# 报告里出现「有 Traceback 字样但解析不出 traceback 块」的保守判坏。
+_LOG_LINE_PREFIX = re.compile(
+    r"^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]*Z?\]\s*"
+    r"\[(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\]\s*"
+    r"(?:\[[^\]]*\]\s*)?"
+)
+_RAW_LINE_PREFIX = re.compile(r"^\[(?:Backend|Main|Renderer|Overlay)\]\s*")
+
+# 终端异常行 = **第一个词就是异常类型**：`ConnectionResetError: ...` /
+# `RuntimeError: Event loop is closed` / `SystemExit` / `StopIteration` …
+# 不认 `raise ValueError(...)`、`except ValueError:` 这类源码回显（首词不是异常类型）。
+_TRACEBACK_TERMINAL_RE = re.compile(
+    r"^(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*(?:Error|Exception|Warning|Exit|Interrupt|Iteration)\b"
+)
+_TRACEBACK_CARET_RE = re.compile(r"^[~^]+\s*$")
 
 
 # ---- S 层断言用的日志锚点 ----
@@ -319,55 +341,109 @@ def read_onboarding_json(home: Path) -> dict | None:
         return None
 
 
+def _strip_log_prefix(line: str) -> str:
+    """去掉主进程 `logLine()` 包的外层前缀，让落盘日志退回后端原始形态"""
+    return _RAW_LINE_PREFIX.sub("", _LOG_LINE_PREFIX.sub("", line))
+
+
+def _looks_like_traceback_terminal(line: str) -> bool:
+    """终端异常行判据（**不依赖缩进** —— 落盘形态里缩进已被前缀吃掉）"""
+    if line.startswith('File "'):
+        return False
+    if _TRACEBACK_CARET_RE.match(line):
+        return False
+    return bool(_TRACEBACK_TERMINAL_RE.match(line))
+
+
+def _traceback_blocks(text: str) -> list[dict]:
+    """
+    把日志切成 traceback「块」，每块给出行号（**归一化后**的下标，与原文行号一一对应）
+
+    块的边界是「下一个头行」或文件末尾；终端异常取块内**第一条像异常类型的行**。
+    取不到时该块 `terminal` 为空串、`terminalLine` 为 None，由调用方保守判坏。
+    """
+    norm = [_strip_log_prefix(ln).strip() for ln in text.splitlines()]
+    starts = [i for i, ln in enumerate(norm) if ln == "Traceback (most recent call last):"]
+    blocks: list[dict] = []
+    for k, idx in enumerate(starts):
+        end = starts[k + 1] if k + 1 < len(starts) else len(norm)
+        terminal, terminal_idx = "", None
+        for j in range(idx + 1, end):
+            if _looks_like_traceback_terminal(norm[j]):
+                terminal, terminal_idx = norm[j], j
+                break
+        if terminal_idx is None:
+            # 兜底：正规 traceback 里终端异常总是紧跟 File/源码行之后。
+            # 这里退化成「头行之后第一条非空、且不像 File 行或 caret art 的行」。
+            for j in range(idx + 1, end):
+                ln = norm[j]
+                if ln and not ln.startswith('File "') and not _TRACEBACK_CARET_RE.match(ln):
+                    terminal, terminal_idx = ln, j
+                    break
+        blocks.append({"headerLine": idx, "terminalLine": terminal_idx, "terminal": terminal})
+    return blocks
+
+
 def _traceback_terminals(text: str) -> tuple[int, list[str]]:
-    """
-    数 traceback 块，并取每块的**终端异常行**
+    """数块并取终端异常行（`_traceback_blocks` 的兼容包装）"""
+    blocks = _traceback_blocks(text)
+    return len(blocks), [b["terminal"] for b in blocks]
 
-    判据来自 traceback 的固定体型：头行 `Traceback (most recent call last):`，
-    正文全部缩进，最后一行顶格的 `XxxError: ...`。
-    于是「头行之后的第一条顶格非空行」就是该块的终端异常。
-    取不到（日志被截断）时该块记为空串，由调用方保守判坏。
+
+def _benign_block_lines(blocks: list[dict]) -> set[int]:
     """
-    lines = text.splitlines()
-    count = 0
-    terminals: list[str] = []
-    for idx, line in enumerate(lines):
-        if line.strip() != "Traceback (most recent call last):":
+    良性 traceback 块覆盖的**行号**（头行 → 终端行），marker 扫描时豁免
+
+    为什么必须豁免：良性块的终端行本身就是
+    `ConnectionResetError: [WinError 10054] ...`，它**含 `"Error: "` 字样**。
+    不豁免的话 `应用 stdout/stderr 无致命字样` 会被它永久污染 ——
+    2026-10-09 实装验证报告里 `命中 ['Traceback', 'Error: ']` 就是这么来的。
+    """
+    out: set[int] = set()
+    for b in blocks:
+        if b["terminalLine"] is None:
             continue
-        count += 1
-        terminal = ""
-        for nxt in lines[idx + 1:]:
-            if not nxt.strip() or nxt[:1].isspace():
-                continue
-            terminal = nxt.strip()
-            break
-        terminals.append(terminal)
-    return count, terminals
+        if any(x in b["terminal"] for x in BENIGN_TRACEBACK_TERMINALS):
+            out.update(range(b["headerLine"], b["terminalLine"] + 1))
+    return out
 
 
-def scan_log_errors(text: str) -> dict:
+def scan_log_errors(text: str, extra_markers: tuple[str, ...] = ()) -> dict:
     """
     日志体检（纯函数，便于单测）
 
     返回 hitMarkers / tracebacks / terminals / benignTerminals / badTerminals。
 
     `Traceback` 这个 marker 的判定权**移交**给 terminals —— 否则良性 traceback
-    永远过不去；其余 marker 仍是全文子串匹配。
+    永远过不去。其余 marker 按行匹配，但**落在良性块内的行豁免**
+    （见 `_benign_block_lines`：良性终端行自己就含 `"Error: "`）。
+    `extra_markers` 供调用方按文件补 marker（如 stdout 镜像件要额外搜 `"Error: "`）。
     解析不到 terminal 时保守判坏：宁可让人来核对，也不要把一次真实崩溃判成通过。
     """
-    hit = [m for m in LOG_ERROR_MARKERS if m != "Traceback" and m in text]
-    count, terminals = _traceback_terminals(text)
+    blocks = _traceback_blocks(text)
+    terminals = [b["terminal"] for b in blocks]
     benign = [
         t for t in terminals
         if t and any(b in t for b in BENIGN_TRACEBACK_TERMINALS)
     ]
     bad = [t for t in terminals if t not in benign]
-    if "Traceback" in text and count == 0:
+
+    markers = tuple(m for m in LOG_ERROR_MARKERS if m != "Traceback") + tuple(extra_markers)
+    exempt = _benign_block_lines(blocks)
+    hit: list[str] = []
+    for idx, line in enumerate(text.splitlines()):
+        if idx in exempt:
+            continue
+        for m in markers:
+            if m in line and m not in hit:
+                hit.append(m)
+
+    if "Traceback" in text and not blocks:
         # 字样在、头行不在（日志被截断或换了形态）→ 保守判坏
         bad.append("<有 Traceback 字样但解析不出 traceback 块>")
     return {
         "hitMarkers": hit,
-        "tracebacks": count,
+        "tracebacks": len(blocks),
         "terminals": terminals,
         "benignTerminals": benign,
         "badTerminals": bad,
@@ -1155,20 +1231,31 @@ def main() -> int:
             stdio_peek = app_stdio.read_text(encoding="utf-8", errors="replace")
         except OSError:
             stdio_peek = ""
+        # 判定交给同一个 scan_log_errors：这份文件里同一个 traceback 会出现**两遍**
+        # （后端原始行 + 主进程镜像行），而良性终端行 `ConnectionResetError: ...`
+        # 本身含 `"Error: "` 字样 —— 只能靠「按块判 + 块内豁免」解决。
+        # BENIGN_STDIO_MARKERS（Electron 对已销毁渲染帧的告警）仍按「行」豁免：
+        # 只有某个 marker 命中的**每一行**都在白名单里，才算它被豁免。
+        stdio_scan = scan_log_errors(stdio_peek, extra_markers=("Error: ",))
+        stdio_lines = stdio_peek.splitlines()
         stdio_bad = [
             m
-            for m in ("Traceback", "Error: ", "FATAL")
-            if any(
-                m in ln and not any(b in ln for b in BENIGN_STDIO_MARKERS)
-                for ln in stdio_peek.splitlines()
+            for m in stdio_scan["hitMarkers"]
+            if not all(
+                any(b in ln for b in BENIGN_STDIO_MARKERS)
+                for ln in stdio_lines
+                if m in ln
             )
         ]
+        if stdio_scan["badTerminals"]:
+            stdio_bad.append(f"traceback 终端异常: {stdio_scan['badTerminals']}")
         report.step(
             "应用 stdout/stderr 无致命字样",
             not stdio_bad,
-            f"{len(stdio_peek.splitlines())} 行（日志镜像，正常）"
+            f"{len(stdio_lines)} 行（日志镜像，正常）"
             if not stdio_bad
             else f"命中 {stdio_bad}，见 {app_stdio}",
+            data=stdio_scan,
         )
 
         # ---------- 4c. M3 首启向导：自动化证据采集（不参与 pass/fail） ----------

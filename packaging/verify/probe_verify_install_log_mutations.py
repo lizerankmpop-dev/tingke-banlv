@@ -25,6 +25,14 @@
 这是一次性验证证据，不参与常规测试；常规回归跑 `backend/tests/test_verify_install_log_scan.py`。
 
 检查函数语义（改动前先读）：`_is_red(fn) -> True` 表示**该用例变红**（即性质被断言守住）。
+
+第二轮（2026-10-09）：被测代码重写成「前缀剥离 + 异常类型正则 + 块内行豁免」，
+变异 A~D 仍成立，原 E 的锚点随重写消失 → 换成 E/F/G，覆盖新增的三条容错路径。
+
+已知未覆盖（诚实记账）：`_traceback_blocks` 里「终端行取不到时退化成第一条非 File/非 caret 行」
+的兜底分支，目前**没有任何变异指向它** —— 现有夹具的终端行都能被主判据
+（`_TRACEBACK_TERMINAL_RE`）认出，所以那个兜底在测试里跑不到。要覆盖它需要先造一份
+「块内有内容、但终端行不像异常类型」的样本（如 `pytest.fail(...)` / 自定义非 *Error 结尾的异常）。
 """
 from __future__ import annotations
 
@@ -61,9 +69,22 @@ EVIDENCE_LINE = '            data={**scan, "logTail": text.splitlines()[-30:]},\
 OK_EXPR_OLD = '            bool(text) and not scan["hitMarkers"] and not scan["badTerminals"],'
 OK_EXPR_WEAK = "            bool(text),"
 
-BREAK_OLD = """            terminal = nxt.strip()
-            break"""
-BREAK_REMOVED = "            terminal = nxt.strip()"
+# --- 第二轮（2026-10-09）新增：落盘形态容错 ---
+# 旧的变异 E 锚在 `terminal = nxt.strip()\n            break` 上 —— 那套「靠缩进找终端行」
+# 的写法在第二轮重写时被整段删掉了（前缀会把缩进吃掉），锚点已不存在，
+# 所以这里换成「把前缀剥离关掉」：它正是那轮真正翻车的地方。
+STRIP_PREFIX_OLD = '''def _strip_log_prefix(line: str) -> str:
+    """去掉主进程 `logLine()` 包的外层前缀，让落盘日志退回后端原始形态"""
+    return _RAW_LINE_PREFIX.sub("", _LOG_LINE_PREFIX.sub("", line))'''
+STRIP_PREFIX_OFF = '''def _strip_log_prefix(line: str) -> str:
+    """去掉主进程 `logLine()` 包的外层前缀，让落盘日志退回后端原始形态"""
+    return line'''
+
+EXEMPT_OLD = "    exempt = _benign_block_lines(blocks)"
+EXEMPT_OFF = "    exempt = set()  # 变异：不做任何块内豁免"
+
+BENIGN_RANGE_OLD = '            out.update(range(b["headerLine"], b["terminalLine"] + 1))'
+BENIGN_RANGE_OFF = "            out.update(range(10 ** 5))  # 变异：豁免退化成文件级"
 
 # (变异名, 原文锚点, 替换成, 必须变红的用例)
 MUTATIONS: list[tuple[str, str, str, str]] = [
@@ -92,10 +113,22 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         "test_log_step_uses_block_aware_scan",
     ),
     (
-        "E. 终端行取「最后一条顶格行」而不是第一条（含空格日志会被误当异常）",
-        BREAK_OLD,
-        BREAK_REMOVED,
-        "test_chained_exception_is_not_laundered_by_the_benign_one",
+        "E. 不剥离主进程前缀（镜像形态的头行认不出 → 块数归零、保守判坏）",
+        STRIP_PREFIX_OLD,
+        STRIP_PREFIX_OFF,
+        "test_prefixed_traceback_block_is_parsed",
+    ),
+    (
+        "F. 去掉块内豁免（良性终端行自带的 `Error: ` 又被当命中）",
+        EXEMPT_OLD,
+        EXEMPT_OFF,
+        "test_real_capture_is_clean",
+    ),
+    (
+        "G. 豁免退化成文件级（良性块之外的行也被放过 → 从误报变成漏报）",
+        BENIGN_RANGE_OLD,
+        BENIGN_RANGE_OFF,
+        "test_benign_block_exemption_is_bounded",
     ),
 ]
 

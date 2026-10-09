@@ -25,8 +25,21 @@
   · 解析不出终端异常时**保守判坏**（宁可报，不可漏）；
   · 其余 marker（`FATAL` 等）行为不变。
 
-不测的是：真实生产日志长什么样 —— 那段原文已经丢了（见上「缺陷 2」）。
-所以修法的另一半是**把扫描结果整体写进报告 data**，让下次出现自带证据；
+**2026-10-09 补记：原文已拿到，「只能靠猜」的结论作废**
+
+实装验证（对**新打的安装包**跑 `verify_install.py`）把那一段复现出来了，
+留存于 `packaging/verify/app-stdio.log` —— 就是 asyncio proactor 的
+`ConnectionResetError [WinError 10054]`，功能无损（同期 `/api/ping` 67/67 可用）。
+
+更重要的是它暴露了上一轮修法的两个**只在落盘形态上才发作**的假设：
+主进程 `logLine()` 会给**每一行**加 `[ISO时间Z] [LEVEL] [backend] ` 前缀、
+并把缩进一并吃掉 —— 于是块解析 `count == 0`，报告出现
+`<有 Traceback 字样但解析不出 traceback 块>` 的保守判坏；
+同时「按缩进找终端异常」在前缀形态下会把 `File "..."` 当成终端异常。
+
+所以本模块现在**两种形态都覆盖**：后端原始行（缩进在）与主进程镜像行（前缀在）。
+
+另一半修法不变：**把扫描结果整体写进报告 data**，让下次出现自带证据；
 「报告里确实带了证据」由本模块末尾的 AST 结构守卫负责，否则这段改动
 下次被人顺手删掉时，上面的语义测试全都还是绿的。
 """
@@ -186,6 +199,93 @@ def test_describe_detail_distinguishes_benign_from_clean():
     benign_detail = VI._describe_log_scan(VI.scan_log_errors(BENIGN_LOG), BENIGN_LOG)
     assert "豁免 1 个良性 traceback" in benign_detail, benign_detail
     assert VI._describe_log_scan(VI.scan_log_errors(""), "") == "日志为空，无从判断"
+
+
+# ---------------- 落盘形态：主进程镜像行（前缀在、缩进被吃） ----------------
+
+_PREFIX = "[2026-10-09T13:54:58.020Z] [INFO] [backend] "
+PREFIXED_BENIGN_BLOCK = "\n".join([
+    _PREFIX + "Traceback (most recent call last):",
+    _PREFIX + 'File "asyncio\\events.py", line 89, in _run',
+    _PREFIX + 'File "asyncio\\proactor_events.py", line 165, in _call_connection_lost',
+    _PREFIX + BENIGN_TERMINAL,
+])
+
+# 2026-10-09 实装验证真的抓到的原文（`packaging/verify/app-stdio.log` 第 167~178 行）。
+# 同一个 traceback 在文件里出现**两遍**：后端原始行 + 主进程镜像行。
+REAL_CAPTURED_STDIO = "\n".join([
+    "[Backend] 2026-10-09 21:54:58,019 [ERROR] asyncio: "
+    "Exception in callback _ProactorBasePipeTransport._call_connection_lost()",
+    "handle: <Handle _ProactorBasePipeTransport._call_connection_lost()>",
+    "Traceback (most recent call last):",
+    '  File "asyncio\\events.py", line 89, in _run',
+    '  File "asyncio\\proactor_events.py", line 165, in _call_connection_lost',
+    BENIGN_TERMINAL,
+    "[2026-10-09T13:54:58.020Z] [INFO] [backend] 2026-10-09 21:54:58,019 [ERROR] asyncio: "
+    "Exception in callback _ProactorBasePipeTransport._call_connection_lost()",
+    "[2026-10-09T13:54:58.020Z] [INFO] [backend] handle: "
+    "<Handle _ProactorBasePipeTransport._call_connection_lost()>",
+    "[2026-10-09T13:54:58.020Z] [INFO] [backend] Traceback (most recent call last):",
+    '[2026-10-09T13:54:58.021Z] [INFO] [backend] File "asyncio\\events.py", line 89, in _run',
+    '[2026-10-09T13:54:58.021Z] [INFO] [backend] File "asyncio\\proactor_events.py", '
+    "line 165, in _call_connection_lost",
+    "[2026-10-09T13:54:58.022Z] [INFO] [backend] " + BENIGN_TERMINAL,
+    '[Backend] INFO:     127.0.0.1:61522 - "GET /api/ping HTTP/1.1" 200 OK',
+])
+
+
+def test_prefixed_traceback_block_is_parsed():
+    """
+    前缀形态下块解析必须仍然成立
+
+    旧实现 `line.strip() != "Traceback (most recent call last):"` 在带前缀的行上
+    恒不成立 → `count == 0` → 保守判坏。这条就是那个缺陷的回归护栏。
+    """
+    scan = VI.scan_log_errors(PREFIXED_BENIGN_BLOCK)
+    assert scan["tracebacks"] == 1, "前缀形态下必须仍能解析出块"
+    assert scan["terminals"] == [BENIGN_TERMINAL], "缩进没了也要认出终端异常行"
+    assert scan["badTerminals"] == []
+
+
+def test_prefixed_genuine_traceback_still_fails():
+    """反向：前缀形态下真实异常不得被「前缀容错」顺手放过"""
+    prefixed = "\n".join(
+        "[2026-10-09T13:54:58.021Z] [INFO] [backend] " + ln for ln in GENUINE_BLOCK
+    )
+    scan = VI.scan_log_errors(prefixed)
+    assert scan["tracebacks"] == 1
+    assert scan["terminals"] == [GENUINE_TERMINAL]
+    assert scan["badTerminals"] == [GENUINE_TERMINAL]
+
+
+def test_real_capture_is_clean():
+    """
+    回归：2026-10-09 实装验证抓到的原文。
+
+    当时 `应用 stdout/stderr 无致命字样` 判 FAIL 并报 `命中 ['Traceback', 'Error: ']`
+    —— `'Error: '` 来自良性终端行 `ConnectionResetError: [WinError 10054]`。
+    现在必须只剩「豁免」没有「命中」。
+    """
+    scan = VI.scan_log_errors(REAL_CAPTURED_STDIO, extra_markers=("Error: ",))
+    assert scan["tracebacks"] == 2, "原文里同一个 traceback 出现两遍（原始 + 镜像）"
+    assert scan["terminals"] == [BENIGN_TERMINAL, BENIGN_TERMINAL]
+    assert scan["badTerminals"] == []
+    assert scan["hitMarkers"] == [], "良性终端行里的 `Error: ` 必须被块内豁免"
+
+
+def test_benign_block_exemption_is_bounded():
+    """
+    块内豁免**不得**退化成文件级豁免：紧跟良性块之后的 FATAL 仍须命中。
+
+    否则等于把 marker 扫描整段废掉 —— 比原缺陷更危险（从「误报」变成「漏报」）。
+    """
+    text = (
+        PREFIXED_BENIGN_BLOCK
+        + "\n[2026-10-09T13:54:59.000Z] [ERROR] [main] FATAL: 端口被占用，放弃启动"
+    )
+    scan = VI.scan_log_errors(text)
+    assert scan["benignTerminals"] == [BENIGN_TERMINAL], "良性块本身仍应被认出"
+    assert scan["hitMarkers"] == ["FATAL"], "良性块之外的行不得被豁免"
 
 
 # ---------------- 结构守卫：证据必须随报告落盘 ----------------
