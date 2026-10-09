@@ -76,6 +76,25 @@ LOG_ERROR_MARKERS = (
 )
 LOG_OK_MARKERS = ("界面加载完成",)
 
+# ---- 日志体检：把 traceback 当「块」看，而不是当关键词看 ----
+# 原实现 `[m for m in LOG_ERROR_MARKERS if m in text]` 是全文子串匹配，两条后果
+# 都在 2026-10-07 18:43 那轮真的发生了（`report-icon-rehearsal-v4-full.json`：
+# `ok=false, critical=true, 命中: ['Traceback']`）：
+#   1. **没有区分度** —— `Traceback` 一出现就判 FAIL，良性（客户端断开、解释器收尾）
+#      与真实崩溃同罪；
+#   2. **没有证据** —— 报告只留了「命中 Traceback」四个字，既没留是哪一段、
+#      也没留终端异常行。事后完全无法追溯（修它时原日志已被下一轮覆盖，只能靠猜）。
+# 现在按块取「终端异常行」，只有白名单里的终端异常才豁免；并把整个扫描结果写进
+# 报告 data，下次再出现时自带证据。
+BENIGN_TRACEBACK_TERMINALS = (
+    # 对端在响应写回前断开（浏览器 / 渲染进程 / 探针提前关连接）—— 与应用逻辑无关
+    "ConnectionResetError",
+    "ConnectionAbortedError",
+    # 解释器收尾竞态（Windows proactor），只发生在进程退出路径上
+    "RuntimeError: Event loop is closed",
+)
+
+
 # ---- S 层断言用的日志锚点 ----
 # 全部与 frontend/electron/main.cjs 里的字面量一一对应，改那边必须同步改这里。
 # 刻意用「精确字面量」而不是宽松正则：宁可脚本报「标记缺失」让人来核对，
@@ -298,6 +317,77 @@ def read_onboarding_json(home: Path) -> dict | None:
         return json.loads((home / "onboarding.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def _traceback_terminals(text: str) -> tuple[int, list[str]]:
+    """
+    数 traceback 块，并取每块的**终端异常行**
+
+    判据来自 traceback 的固定体型：头行 `Traceback (most recent call last):`，
+    正文全部缩进，最后一行顶格的 `XxxError: ...`。
+    于是「头行之后的第一条顶格非空行」就是该块的终端异常。
+    取不到（日志被截断）时该块记为空串，由调用方保守判坏。
+    """
+    lines = text.splitlines()
+    count = 0
+    terminals: list[str] = []
+    for idx, line in enumerate(lines):
+        if line.strip() != "Traceback (most recent call last):":
+            continue
+        count += 1
+        terminal = ""
+        for nxt in lines[idx + 1:]:
+            if not nxt.strip() or nxt[:1].isspace():
+                continue
+            terminal = nxt.strip()
+            break
+        terminals.append(terminal)
+    return count, terminals
+
+
+def scan_log_errors(text: str) -> dict:
+    """
+    日志体检（纯函数，便于单测）
+
+    返回 hitMarkers / tracebacks / terminals / benignTerminals / badTerminals。
+
+    `Traceback` 这个 marker 的判定权**移交**给 terminals —— 否则良性 traceback
+    永远过不去；其余 marker 仍是全文子串匹配。
+    解析不到 terminal 时保守判坏：宁可让人来核对，也不要把一次真实崩溃判成通过。
+    """
+    hit = [m for m in LOG_ERROR_MARKERS if m != "Traceback" and m in text]
+    count, terminals = _traceback_terminals(text)
+    benign = [
+        t for t in terminals
+        if t and any(b in t for b in BENIGN_TRACEBACK_TERMINALS)
+    ]
+    bad = [t for t in terminals if t not in benign]
+    if "Traceback" in text and count == 0:
+        # 字样在、头行不在（日志被截断或换了形态）→ 保守判坏
+        bad.append("<有 Traceback 字样但解析不出 traceback 块>")
+    return {
+        "hitMarkers": hit,
+        "tracebacks": count,
+        "terminals": terminals,
+        "benignTerminals": benign,
+        "badTerminals": bad,
+    }
+
+
+def _describe_log_scan(scan: dict, text: str) -> str:
+    """把 scan_log_errors 的结果压成一行 detail（detail 是要给人看的）"""
+    if not text:
+        return "日志为空，无从判断"
+    if scan["hitMarkers"]:
+        return f"命中: {scan['hitMarkers']}"
+    if scan["badTerminals"]:
+        return f"traceback 终端异常: {scan['badTerminals']}"
+    if scan["benignTerminals"]:
+        return (
+            f"干净（豁免 {len(scan['benignTerminals'])} 个良性 traceback: "
+            f"{scan['benignTerminals'][:2]}）"
+        )
+    return "干净"
 
 
 def overlay_residue(home: Path) -> list[str]:
@@ -888,11 +978,14 @@ def main() -> int:
 
         # 日志体检
         text = read_log()
-        bad = [marker for marker in LOG_ERROR_MARKERS if marker in text]
+        scan = scan_log_errors(text)
         report.step(
             "启动日志无错误字样",
-            not bad and bool(text),
-            "干净" if not bad and text else (f"命中: {bad}" if bad else "日志为空，无从判断"),
+            bool(text) and not scan["hitMarkers"] and not scan["badTerminals"],
+            _describe_log_scan(scan, text),
+            # 证据必须随报告落盘：命中时把「扫描结果 + 日志尾部」一并留下，
+            # 否则下次出现仍然只能靠猜（这正是本次修它的起因）
+            data={**scan, "logTail": text.splitlines()[-30:]},
         )
         relaunched = text.count("兼容模式") > 0
         report.step(
