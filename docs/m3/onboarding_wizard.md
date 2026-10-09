@@ -861,11 +861,37 @@ ok ⑥b 重试后模型就绪仍能自动跳到第 4 步 — 当前步=4
 
 ### 12.9 遗留与注意
 
-- 「正在复制模型种子」在**本机**几乎不可见（0.1~0.4s）；只有慢盘/冷缓存/杀软扫描的
-  用户机上才会停留几秒。文案本身已由 `step3` 模式钉住，不需要真机慢盘复现。
+- 「正在复制模型种子」在**本机**几乎不可见（实测端到端中位 **0.317s**；6 次后端时间线里
+  有 2/3 次连 1s 轮询都没探到 `seeding`）；只有慢盘/冷缓存/杀软扫描的用户机上才会停留几秒。
+  文案本身已由 `step3` 模式钉住，不需要真机慢盘复现。
 - 播种超时上限 `SEED_TIMEOUT_ATTEMPTS = 90`（≈90s）：超过就落到 `failed` 分支给
-  「重试 / 跳过」，兜底「播种卡死」这类没法自愈的情况。**这个值是拍的，尚未有真实
-  慢盘数据支撑**，等用户反馈再调。
+  「重试 / 跳过」，兜底「播种卡死」这类没法自愈的情况。**该值现已由实测数据支撑**（#149）：
+
+  | 量 | 实测值 |
+  |---|---|
+  | 种子净载荷 | 147,882,941 B = **141.0 MiB** |
+  | 每次播种 I/O | **423.1 MiB**（读源 141 + 写目标 141 + deep 校验重读 141 → **3 倍放大**）|
+  | `seed_model()` 端到端（本机 NVMe，含 deep sha256）| 0.315~0.329 s（中位 **0.317 s**，5 次）|
+  | 后端 exe 冷启 → 模型就绪 | 1.09~1.24 s（6 次；进程首次冷启另见 2.9 s）|
+
+  → 90s 对应**有效吞吐门槛 4.70 MiB/s**（423.1 MiB ÷ 90s）。≥5 MiB/s 的介质安全；
+  低于该门槛（USB2.0 劣质 U 盘 / 老 SD 卡 / SMB over VPN 量级）会误判失败。
+  ⚠️ 门槛与慢盘曲线是由**实测字节数解析推演**，**不是慢盘实测** —— 测量机只有一块 NVMe，
+  **无物理慢盘可测**。详见 `packaging/verify/seed_timeout_slowdisk_measure.md`。
+- 🔴 **90 秒的起算点早于播种开始**：`OnboardingWizard.tsx:66` 在第 3 步挂载即清零
+  `attemptsRef`，`:73` 每个 tick **无条件 +1**（不分阶段）→ 90s 里含 `backend-starting` 与
+  `preparing`。**播种净预算 = 90 − 后端启动耗时**。本机启动 1.05~2.9s 无影响；
+  但慢机（杀软全量扫打包 exe + 机械盘冷启）启动 20~30s 时净预算只剩 60~70s，
+  而这类机器**恰好也是慢盘** —— 两个不利因素同源叠加。
+- 🟡 `TINGKEBANLV_SKIP_BACKGROUND_SEED` **只对 lifespan 生效**（`main.py:146`）；
+  `/api/asr/model-status` 的幂等触发（`routes.py:875`）与 `start_background_seed()`
+  都不检查它。实测：显式设了该开关，仍在 1.05~1.13s 探到 `seeding:true`。
+  故 `conftest.py` 里「靠这个开关避免拷 141MB」的说法覆盖不全；真正兜底的是同时设的
+  `TINGKEBANLV_HOME`=临时目录（不会污染用户真实目录）。
+- 🟡 直接跑 `packaging/out/backend-server/tingkebanlv-server.exe`（不经 Electron 主进程）时
+  `seed_root()` 落空（`packaging/out/whisper_models` 不存在）→ `seed_exists=false`
+  → 前端按 `onboarding.ts:262` **立刻**落 `failed`。线上无碍（`main.cjs:1185` 显式传
+  `TINGKEBANLV_SEED_MODEL_DIR`），但单独测后端时须自行带上这个环境变量。
 - `electron:build` **不重建后端**（§11.4 缺陷 A 的配套提醒仍然有效）：只要动了
   `backend/`，发布前必须先用 venv PyInstaller 单独重建 `packaging/out/backend-server`。
 - P3 唯一缺口不变：**中文真实网课音频 ≥10min + 逐字稿**仍未拿到。

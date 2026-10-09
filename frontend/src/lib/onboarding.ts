@@ -221,10 +221,20 @@ export function isLastStep(step: number): boolean {
 export type ModelPhase = 'backend-starting' | 'preparing' | 'seeding' | 'ready' | 'failed'
 
 /**
- * 播种的最长等待探测次数（1 次 ≈ 1 秒，与轮询间隔一致）
+ * 播种的最长等待探测次数（1 次 = 1 秒，与 `OnboardingWizard` 的 1000ms 轮询一致）
  *
  * 超过就判失败、给出「重试 / 跳过」—— 兜底「播种卡死」这类没法自愈的情况。
- * 141MB 本机实测几秒，所以 90 秒是极宽松的上限。
+ *
+ * 实测（#149，本机 NVMe）：种子净载荷 141.0MiB，但每次播种实际 I/O 是 **423.1MiB**
+ * —— 读源 141 + 写目标 141 + deep sha256 校验重读 141，**3 倍放大**。
+ * `seed_model()` 端到端中位 0.317s、后端冷启到就绪 1.1~1.2s，所以 90s 余量 >98%。
+ * 反推门槛：要在 90s 内完成需有效吞吐 ≥ **4.70MiB/s**；低于该量级（USB2.0 劣质 U 盘 /
+ * 老 SD 卡 / SMB over VPN）才会误判失败 —— 代价只是给「重试 / 跳过」，不是白屏，可接受。
+ *
+ * ⚠️ `attemptsRef` 从**第 3 步挂载**起清零、每 tick **无条件 +1**（含 `backend-starting`
+ * 与 `preparing` 阶段），所以这 90 秒**含后端启动耗时** —— 播种净预算 = 90 − 启动耗时。
+ * ⚠️ 门槛与慢盘曲线是由实测字节数解析推演，**不是慢盘实测**（本机只有一块 NVMe）。
+ * 证据：`packaging/verify/seed_timeout_slowdisk_measure.md`
  */
 export const SEED_TIMEOUT_ATTEMPTS = 90
 
