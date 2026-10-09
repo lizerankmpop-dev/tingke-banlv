@@ -43,11 +43,24 @@ v3.4.0 起新增 **S 层（稳定性加固）断言**。为什么非要在「实
         [--hold 150] [--report packaging/verify/report.json]
 
 退出码：0 全部通过；1 有阻断项失败。报告同时落盘 JSON 与文末摘要。
+
+交付物指纹（2026-10-09 起）
+-------------------------
+报告顶层新增 `artifact` 字段，记录被验证安装包的 `bytes / sha256 / md5`。这是
+「报告 ↔ 交付物」**唯一机器可读的绑定** —— 没有它，报告只记文件名与体积，
+换一个同名同体积的包就能继承上一轮的结论。
+
+`--expect-sha256 <hex>` 把它升级成门禁：不符即判阻断并**提前退出**（省掉后面
+3 分 40 秒的安装与长测）。
+
+⚠️ 哈希**只在开头算一次**（302MB 读 1 遍）。`Report.step()` 每步都会落盘，
+把哈希写进 `dump()` 就是 73 遍 ≈ 22GB 的读取 —— 有结构守卫盯着这条。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -185,6 +198,34 @@ class Report:
         self.steps: list[dict] = []
         self.passed = True
         self.path = path
+        self.artifact: dict | None = None
+
+    def set_artifact(self, installer: Path) -> dict:
+        """
+        记录被验证安装包的指纹 —— **只在开头调用一次**（理由见 `sha256_file`）
+
+        这是「报告 ↔ 交付物」唯一机器可读的绑定。没有它，报告只记文件名与体积，
+        换一个同名同体积的包就能继承上一轮的结论。
+
+        读不到文件时**不抛异常**：失败路径上仍要能把已收集的步骤落盘。
+        """
+        art: dict = {"path": str(installer), "name": installer.name}
+        try:
+            size = installer.stat().st_size
+            sha256, md5 = sha256_file(installer)
+        except OSError as exc:
+            art.update(
+                {
+                    "bytes": None,
+                    "sha256": None,
+                    "md5": None,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+        else:
+            art.update({"bytes": size, "sha256": sha256, "md5": md5, "error": None})
+        self.artifact = art
+        return art
 
     def step(self, name: str, ok: bool, detail: str = "", data=None, critical: bool = True) -> bool:
         entry = {
@@ -216,6 +257,7 @@ class Report:
             "startedAt": self.started,
             "finishedAt": now_iso(),
             "passed": self.passed,
+            "artifact": self.artifact,
             "steps": self.steps,
         }
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -293,6 +335,23 @@ def dir_size(path: Path) -> int:
 
 def mb(value: int) -> str:
     return f"{value / 1048576:.1f}MB"
+
+def sha256_file(path: Path, chunk: int = 1024 * 1024) -> tuple[str, str]:
+    """
+    分块读**一遍**，同时算出 (sha256, md5)
+
+    为什么要双哈希：sha256 是这个工具自己的指纹；md5 是交付链路上一直在用的对账
+    口径（R1/R2 的「包内 server exe 与重建产物一致」就是按 md5 比的）。分两次读
+    会多扫一遍 302MB，所以放在同一个循环里。
+
+    分块读法沿用仓库既有写法（`prepare_seed_model.py:67`、`model_bootstrap.py:108`）。
+    """
+    h256, hmd5 = hashlib.sha256(), hashlib.md5()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h256.update(block)
+            hmd5.update(block)
+    return h256.hexdigest(), hmd5.hexdigest()
 
 
 def wait_for(predicate, timeout: float, interval: float = 0.5, desc: str = ""):
@@ -640,6 +699,12 @@ def main() -> int:
     parser.add_argument("--installer", required=True, help="NSIS 安装包路径")
     parser.add_argument("--hold", type=int, default=150, help="启动后稳定性观察秒数")
     parser.add_argument("--report", default="packaging/verify/report.json")
+    parser.add_argument(
+        "--expect-sha256",
+        default="",
+        help="期望的安装包 sha256；非空时比对不符即判阻断并提前退出"
+        "（把「报告↔交付物」从记录升级为门禁）",
+    )
     parser.add_argument("--keep-installed", action="store_true", help="跳过后半段卸载，便于人工点检")
     args = parser.parse_args()
 
@@ -657,7 +722,30 @@ def main() -> int:
         report.step("定位安装包", False, f"不存在: {installer}")
         report.dump(Path(args.report))
         return 1
-    report.step("定位安装包", True, f"{installer.name}（{mb(installer.stat().st_size)}）")
+    # 指纹只在这里算一次：`Report.step()` 每走一步都会落盘，把哈希写进 `dump()`
+    # 就是 73 遍 × 302MB ≈ 22GB 的读取。
+    artifact = report.set_artifact(installer)
+    short = (artifact["sha256"] or "?")[:16]
+    print(f"  安装包指纹: sha256 {short}…   md5 {artifact['md5'] or '?'}")
+    report.step(
+        "定位安装包",
+        True,
+        f"{installer.name}（{mb(artifact['bytes'] or 0)}，sha256 {short}…）",
+        data=artifact,
+    )
+
+    if args.expect_sha256:
+        expected = args.expect_sha256.strip().lower()
+        actual = (artifact["sha256"] or "").lower()
+        # 门禁：包不对就别花 3 分 40 秒去装一台错的东西。报告已落盘（含指纹）。
+        if not report.step(
+            "安装包指纹与期望值一致",
+            actual == expected,
+            f"期望 {expected[:16]}… / 实际 {actual[:16] or '取不到'}…",
+            data={"expected": expected, "actual": actual},
+        ):
+            report.dump(Path(args.report))
+            return 1
 
     local_appdata = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     expected_dir = local_appdata / "Programs" / APP_NAME

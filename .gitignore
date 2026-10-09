@@ -36,6 +36,7 @@ packaging/verify/*
 !packaging/verify/probe_phrases_and_truncate_mutations.py
 !packaging/verify/probe_language_plumbing_mutations.py
 !packaging/verify/probe_verify_install_log_mutations.py
+!packaging/verify/probe_verify_install_artifact_mutations.py
 
 # 内置模型种子（约 141MB 二进制，由 scripts/prepare_seed_model.py 生成，
 # 不入库；构建前需先执行该脚本）

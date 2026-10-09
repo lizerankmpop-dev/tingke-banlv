@@ -5,12 +5,13 @@
 **体积**：安装包 288.6 MB（302,569,267 字节）；装完约 698.4 MB
 **校验值**：`sha256 8b87b0089792467287007963b24381d593fccb7ff83ec105eede330982af086d`
 （`md5 c1d88685c9367eb983db9f5344502a20`）
-**状态**：**定稿** —— 实装验证 `scripts/verify_install.py` 全绿：73 步，71 OK / 2 观察项（非阻断） / **0 阻断**
+**状态**：**定稿** —— 实装验证 `scripts/verify_install.py` 全绿：59 步，57 OK / 2 观察项（非阻断） / **0 阻断**
 
-> ⚠️ **上面这串哈希就是「被验证过的那一个文件」**。`verify_install.py` 生成的报告里
-> 只记了文件名 / 体积 / 时间戳，**没有记哈希** —— 所以在补上之前，「报告 ↔ 交付物」的
-> 绑定靠的是这行文字。**任何重新打包都会让 73 步的结论作废**（内容变了，哈希就变），
-> 必须重跑 L4 才能重新声称「全绿」。
+> ✅ **上面这串哈希就是「被验证过的那一个文件」，而且是机器可读的**：
+> 报告顶层 `artifact` 字段记录了 `bytes / sha256 / md5`（2026-10-09 起），
+> 本次验证还带了 `--expect-sha256` 门禁（不符即判阻断并**提前退出**）。
+> **任何重新打包都会让 59 步的结论作废**（内容变了哈希就变），必须重跑 L4
+> 才能重新声称「全绿」。
 
 > **尺寸口径**：MB 按 Windows 资源管理器惯例（1 MB = 1024² 字节）。想换算成十进制
 > 兆字节请 ×1.0486（288.6 MB = 302.6 MB）。
@@ -185,14 +186,17 @@
 | 层 | 命令 | 结果 |
 |---|---|---|
 | L1 纯逻辑单测 | `cd frontend && npm test` | **150 通过 / 0 失败** |
-| L2 接口测试 | `cd backend && <venv>/python.exe -m pytest tests/ -q` | **297 通过 / 1 跳过** |
+| L2 接口测试 | `cd backend && <venv>/python.exe -m pytest tests/ -q` | **306 通过 / 1 跳过** |
 | L3 端到端冒烟（CDP） | `cd frontend && npm run test:smoke` | **12/12 通过** |
-| L4 实装验证 | `<venv>/python.exe scripts/verify_install.py --installer frontend/release/tingkebanlv-3.4.0-setup.exe --hold 150` | **全部通过 ✓**（73 步 / 71 OK / 2 观察项 / 0 阻断） |
+| L4 实装验证 | `<venv>/python.exe scripts/verify_install.py --installer frontend/release/tingkebanlv-3.4.0-setup.exe --hold 150 --expect-sha256 8b87b008…af086d` | **全部通过 ✓**（59 步 / 57 OK / 2 观察项 / 0 阻断） |
+
+> 步数按报告顶层 `steps` 数组数（**不是**把每步 `data` 里的子条目也数进去 —— 那样会得到 74）。
 
 L4 覆盖的实际链路：静默安装（22.7s）→ 后端自检 15 项 → 稳定运行 150s
 （`/api/ping` 68/68 = 100%）→ 重启持久化 → 向导自动弹出 → 卸载清理 →
-还原用户数据。报告与证据：`packaging/verify/report-v340-m3-p3-verified.json`、
-`packaging/verify/electron.log`、`packaging/verify/onboarding-manual-checklist.md`。
+还原用户数据。报告与证据：`packaging/verify/report-v340-fingerprinted.json`
+（**自带安装包指纹**，顶层 `artifact`）、`packaging/verify/electron.log`、
+`packaging/verify/onboarding-manual-checklist.md`。
 
 **两条观察项（非阻断，如实列出）**：
 
