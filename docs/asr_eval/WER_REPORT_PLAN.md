@@ -1,8 +1,9 @@
 # P2：ASR 质量评估补全（分场景 CER/WER 报告）—— 方案与用例准备清单
 
-> 状态：**决策已定，进入执行**（D1~D4 见 §8；执行顺序见 §8 末）。
+> 状态：**P2 主体已完成**（`#169`~`#173`，2026-10-10）。决策 D1~D4 见 §8，执行记录见 §10~§14，实测结果见 §7。
 > 前提：本任务只改 `<repo>/scripts/`、`<repo>/testset/`、`<repo>/docs/`、`packaging/eval/`，
 > **不动安装包**（边界逐条核实见同目录 `write-boundary.md`）。
+> 另有一个执行期间发现、**已立案但本版未修**的产品级缺陷：见同目录 [`known_defects.md`](./known_defects.md) D1。
 
 ---
 
@@ -11,11 +12,12 @@
 | 问题 | 结论 |
 |---|---|
 | 分场景评估的**能力**有没有？ | **有，且早已实现**。`eval_asr_quality.py` 已按文件名前缀分场景汇总，`make_asr_testset.py` 已有 noise/lowvol/fast/multi 四个劣化算子 |
-| 中文 5 场景（多人/噪音/低音量/口音/连读）**有素材吗**？ | **一个都没有**。中文只有 1 条干净 TTS（626s）+ 1 条真人干净（630s），`scenario` 分别是 `long` 和 `other` |
-| 英文合成集的既有数字能当基准吗？ | **不能**。见 §3.1（clean 比 noise 差 18 倍、第一轮 0 字幕、每格 n=1、且跑在防循环修复之前） |
-| 口音（accent）能合成吗？ | **项目已明确决定不合成**（`make_asr_testset.py` 注释：变调近似口音没有依据）。只能换素材来源 |
-| 补齐中文 4 个可合成场景的成本？ | **低**：现有算子直接作用在中文 TTS 讲稿上即可，零新增依赖、零版权风险 |
-| 真正的缺口 | **口音 + 真实远场录音**，这两个必须靠真人素材 |
+| 中文 5 场景**有素材吗**？ | ~~**一个都没有**~~ → **✅ 已补齐**：5 格合成（§13）+ 既有的 `long` / 真人 `other`，**§7 表 7 行全部有实测值**；只剩 `accent` 未覆盖 |
+| 英文合成集的既有数字能当基准吗？ | **不能**。见 §3.1（clean 比 noise 差 18 倍、每格 n=1、跑在防循环修复之前）。#171 又查出其中 `short.json` 是**结构不可用**的一轮（8 段 → **0 字幕**），正是 H4 要堵的那种假结论 |
+| 口音（accent）能合成吗？ | **项目已明确决定不合成**（`make_asr_testset.py` 注释：变调近似口音没有依据）。只能换素材来源（§6.4 已定：留空登记） |
+| 补齐中文可合成场景的成本？ | **低**：现有算子直接作用在中文 TTS 讲稿上，零新增依赖、零版权风险。实测从切分到 7 格基线落表**在一天内完成** |
+| 真正的缺口 | **口音 + 真实远场录音**（须真人素材）；**延迟指标**（字幕数 ≠ 片段数 ⇒ 配对缺口，§14.6 仍未解） |
+| 一句话基线（`--language zh --term-language zh`，`--realtime`） | 合成 5 格 CER **0.1662 ~ 0.6834**（`multi` 最差）；长时 626.4s **零丢片**、尾延迟 1.765s；真人课 **0.1985**。⚠️ `n = 1`／格 ⇒ **是观测值，不是统计量** |
 
 ---
 
@@ -253,57 +255,91 @@ scripts/make_asr_testset.py \
 两者同源，**配对精确性由构造保证**，不靠人工对齐。
 （顺带：`_PUNCT` 里含空格，`normalize()` 对中文会把空格一并删掉 → 短样本文本要不要带空格**对 CER 无影响**。）
 
-- [ ] 先写切分工具（建议 `<repo>/scripts/clip_tts_paragraphs.py`，只读长素材、写短样本 + 精确文本）
-- [ ] **切完必须自证配对正确**：对切出的短样本跑一次 `eval_asr_quality.py`，CER 应与整篇同一量级
-      （配对错了 CER 会爆掉 —— 这是「先证被操纵的变量真变了」的可操作形式）；
-      同时断言「切出音频里 ≥1.1s 静音段数 == k − 1」
-- [ ] 目标时长 60~90s（按前 3 段约 291 字、语速 ~4.4 字/秒推算，3~4 段约 66~90s）
+- [x] 先写切分工具（`<repo>/scripts/clip_tts_paragraphs.py`）—— ✅ 见 §10
+- [x] **切完必须自证配对正确** —— ✅ 三项内置自证全过（静音边界数、文本同源、CER 量级），见 §10.3
+- [x] 目标时长 60~90s —— ✅ 实际 80.52s（前 4 段 / 414 字）
 
 #### 劣化（方案 A 主线）
 
-- [ ] 确认目标目录（建议 `testset/chinese_lecture/scenarios/`；`testset/**/*.wav` 已被 gitignore 屏蔽，音频不入库 ✅）
-- [ ] 跑 `make_asr_testset.py --source <短样本>.wav --out …`（算子语言无关，中文可直接用）
-- [ ] 核对产物：`synth_{clean,noise,lowvol,fast,multi}_<短样本名>.wav` **+ 同名 `.txt`**（参考文本随劣化复制，必须逐字节等于源 txt）
-- [ ] 跑 `check_transcript.py --audio <每个 wav>` 确认逐字稿仍合规。⚠️ 变速会改语速：源 ~4.4 字/秒，`fast` 格 1.35× ⇒ ~5.9 字/秒，仍在 `CPS_RANGE (1.2~8.0)` 内；但 `check_transcript.py` 算的是**字数/音频时长**，fast 格音频变短、字数不变 ⇒ **必须真跑一遍确认，不得推断**
-- [ ] 记录每个 wav 的 `sha256 + 时长 + RMS/峰值` 写进 `metadata.json`（可复用 `make_chinese_testset.py` 的统计口径）
+- [x] 确认目标目录 —— ✅ `testset/chinese_lecture/scenarios/`（产物落其 `short/` 子目录，脚本强制）
+- [x] 跑 `make_asr_testset.py --source <短样本>.wav --out …` —— ✅ 见 §13.1
+- [x] 核对产物（**5 格 `.txt` 逐字节等于源** —— ✅ 1183 B / crlf=0 / 单一 md5，见 §13.4）
+- [x] 跑 `check_transcript.py --audio <每个 wav>` —— ✅ 5 格全「可用 ✓」；**`fast` 实测 6.94 字/秒**（414 字 / 0.99 min），在 `CPS_RANGE (1.2~8.0)` 内（**真跑过，非推断**）
+- [x] 记录每个 wav 的 `sha256 + 时长 + RMS/峰值` 写进 `metadata.json` —— ✅ 且由 `--metadata-out` **从落盘产物重读**生成（§13.3）
 
 ### 6.2 基线跑（每格必须**一次调用一份报告**）
 
-- [ ] 逐格跑 `eval_asr_quality.py --audio <wav> --language zh --terms on --realtime --report packaging/eval/p2_<场景>.json`
-       ⚠️ 一格一份报告，不要把多格塞进一次调用（休眠/挂起会摧毁实时喂入 → 教训见 `LESSONS.md`）
-- [ ] 每格同时跑一次 `--terms off` 作为 A/B 基线（术语收益必须落在具体词上，用 `ab_terms_compare.py` 更省事）
-- [ ] 汇总：把每格报告的 `meanCer / meanWer / maxTailSeconds / totalDropped / totalMerged / filesWithMoreSubtitlesThanSegments` 抄进 §7 的表
-- [ ] **抄录纪律**：只能抄**产物字段值**，不得按输入侧推断（`LESSONS.md` §10）
+- [x] 逐格跑 `eval_asr_quality.py --audio <wav> --language zh --term-language zh --realtime --report packaging/eval/p2_173_rt_<场景>.json`
+       ✅ 7 格各一次调用（5 短 + `long` + `real`）。⚠️ `--term-language` 取 `zh` 是 2026-10-10 用户裁决的口径（`auto` 会输出繁体，见 `known_defects.md` D1）
+- [x] 每格同时跑一次 `--terms off` 作为 A/B 基线 —— ⚠️ **本口径下退化为恒等**：`--term-language zh` 已滤掉整层短语层，实测 `termPromptChars = 0` ⇒ on/off 提示词都是空串，A/B 无信息量（判据是产物字段，不是推断；见 §13.6 / §14.2）
+- [x] 汇总：每格产物字段抄进 §7 表（**用脚本从报告现读后打印成表**，不经人手转抄）
+- [x] **抄录纪律**：只抄**产物字段值**，不得按输入侧推断 —— ✅ §7 表下附「读表须知」，逐列标注对应字段名
 
 ### 6.3 真人锚点（方案 C，可选）
 
-- [ ] 由用户挑 BV 号（匿名搜索不可用）
-- [ ] `fetch_bili_audio.py` 取切片 → `asr_draft_transcript.py` 出草稿
-- [ ] 人工校对 → `preproof_transcript.py` 出定稿 → `check_transcript.py` 全 OK
-- [ ] 只在**校对完成后**才纳入报告（拿草稿当参考文本 = 测自己的输出，`check_transcript.py` 第 7 条就是防这个）
+- [x] 由用户挑 BV 号 —— ✅ `BV1BA411i7PT`（《Origin科研绘图超快速上手指南》，见 `real/metadata.json`）
+- [x] `fetch_bili_audio.py` 取切片 → `asr_draft_transcript.py` 出草稿 —— ✅ 00:40~11:10 共 630s，见 `real/README.md`
+- [x] 人工校对 → `preproof_transcript.py` 出定稿 → `check_transcript.py` 全 OK —— ✅ 定稿 35 段 / 2791 字 / 81 fix / 0 suspect / 11 note
+- [x] 只在**校对完成后**才纳入报告 —— ✅ `referenceSource = real_zhlecture_origin_plot.preproof.txt`（产物字段已记），**草稿从未被当参考**
 
 ### 6.4 口音格（**已定：留空**）
 
 - [x] **决策 D2 = 显式留空并登记为已知缺口**（不用任何近似手段冒充）
-- [ ] 在报告里写明「`accent` 未覆盖」及其理由（`make_asr_testset.py:24` 已论证「变调近似口音没有依据」）
+- [x] 在报告里写明「`accent` 未覆盖」及其理由 —— ✅ §7 表末行；`make_asr_testset.py:24` 已论证「变调近似口音没有依据」
 - [ ] 若日后恰好拿到合适真人素材（普通话不标准 + 远场），顺带补进 6.3 的锚点段（届时才需要改 `--source-kind real`）
 
 ---
 
-## 7. 报告表样（跑完填）
+## 7. 报告表（2026-10-10 实测，已填）
 
-| 来源（sourceKind） | 场景 | n | CER | WER | 丢片 | 合并 | 字幕>片段 | 尾延迟 s | RTF |
-|---|---|---|---|---|---|---|---|---|---|
-| tts-degraded | clean | | | | | | | | |
-| tts-degraded | noise(8dB) | | | | | | | | |
-| tts-degraded | lowvol(−30dBFS) | | | | | | | | |
-| tts-degraded | fast(1.35×) | | | | | | | | |
-| tts-degraded | multi(0.35s/0.75) | | | | | | | | |
-| tts | long（整篇 626s，长时稳定性） | | | | | | | | |
-| real | other（真人课 630s） | | | | | | | | |
-| real | accent | **未覆盖（已登记缺口）** | — | — | — | — | — | — | — |
+**跑法**（口径见 §6.2）：
 
-> 空单元格 = 尚未测得。**不得填 0、不得填推断值。**
+```bash
+VP="/c/Users/Administrator/Desktop/听课伴侣/安装空间/venv/Scripts/python.exe"
+# 逐格、一格一份报告、带 --realtime（否则「尾延迟」列没有意义）
+$VP scripts/eval_asr_quality.py --audio <该格 wav> \
+    --language zh --term-language zh --realtime \
+    --report packaging/eval/p2_173_rt_<场景>.json
+```
+
+⚠️ `--language` 与 `--term-language` **都取 `zh`** —— 2026-10-10 用户裁决的基线口径
+（原因为何不能取默认的 `auto`，见 [`known_defects.md`](./known_defects.md) D1）。
+⚠️ 来源列的**实际取值是 `tts-synth`**，不是早期草案里的 `tts-degraded`（#170 决策：
+劣化已由 `scenario` 表达，无需再造一个来源类别）。
+
+| 来源（`sourceKind`） | 场景 | n | CER | WER | ref 单位 | 片段→字幕 | 丢片 | 合并 | 字幕>片段 | 尾延迟 s | RTF（非实时） |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `tts-synth` | clean | 1 | **0.1662** | 0.1662 | 379 | 6 → 10 | 0 | 0 | 是 | 2.120 | 0.292 |
+| `tts-synth` | noise(8dB) | 1 | **0.1821** | 0.1821 | 379 | 6 → 9 | 0 | 0 | 是 | 2.372 | 0.134 |
+| `tts-synth` | lowvol(−30dBFS) | 1 | **0.1715** | 0.1715 | 379 | 6 → 6 | 0 | 0 | 否 | 2.272 | 0.153 |
+| `tts-synth` | fast(1.35×) | 1 | **0.2586** | 0.2586 | 379 | 6 → 8 | 0 | 0 | 是 | 9.738 | 0.386 |
+| `tts-synth` | multi(0.35s/0.75) | 1 | **0.6834** | 0.6834 | 379 | 6 → 10 | 0 | 0 | 是 | 2.574 | 0.971 |
+| `tts-synth` | long（整篇 626.4s，长时稳定性） | 1 | **0.2589** | 0.2589 | 2889 | 56 → 82 | 0 | **6** | 是 | 1.765 | — |
+| `human-recording` | other（真人课 630.0s） | 1 | **0.1985** | 0.1985 | 2499 | 63 → 86 | 0 | 1 | 是 | 2.020 | — |
+| `human-recording` | accent | **未覆盖（已登记缺口）** | — | — | — | — | — | — | — | — | — |
+
+**读表须知**（每一列都能从产物字段查回来）：
+
+| 列 | 产物字段 | 说明 |
+|---|---|---|
+| CER / WER | `accuracy.cer` / `accuracy.wer` | 中文按**字**统计 ⇒ 两者**恒等**（设计，不是 bug） |
+| ref 单位 | `accuracy.refUnits` | 归一化后的参考单位数；各行**不可直接比大小**（短样本 379 vs 整篇 2889） |
+| 丢片 / 合并 | `droppedSegments` / `mergedCalls` | 实时模式下**丢片全 0**；`long` 合并 6 次属设计内降级 |
+| 尾延迟 s | `tailSeconds` | 结束时的积压量，大 = 没排空 |
+| 延迟 p95 | `latency.p95` | ⚠️ **只有 `lowvol` 可算**（`1.528s`）：其余各格「字幕数 > 片段数」⇒ `paired=False` ⇒ 延迟**缺失是如实标记，不是 0** |
+| RTF | `rtf` | ⚠️ **实时模式下恒无值**（脚本明说不计算：恒 ≈1 无信息量）；本列取自**非实时合跑** `p2_173_zh_scenarios.json`，只作管道吞吐参考 |
+
+**三条要点**（展开见 §14）：
+
+1. **实时 vs 非实时差很多** —— `multi` 格 CER **0.9420（非实时）→ 0.6834（实时）**，差 0.26 ≫ run-to-run 波动 0.03~0.05；
+   非实时还额外触发 `mergedCalls 1`、`tailSeconds 77.498`（实时仅 2.574）。
+   ⇒ 「尽快喂完」会**人为加剧劣化**，短样本基线**必须**用 `--realtime`。
+2. **长时稳定性成立** —— `long` 626.4s / 56 片段：**丢片 0**、尾延迟 **1.765s**，10 分钟连续喂入无累积落后。
+3. **真人锚点与合成 clean 同量级** —— `human-recording` other **0.1985** vs `tts-synth` clean **0.1662**（差 0.032）。
+   ⚠️ 但**不要**据此说「合成集不乐观」：这段真人素材是**软件实操课**（Origin 绘图，语速稳、停顿多），
+   对 ASR 天然友好；结论**只对这段素材成立**。
+
+> **空单元格 = 尚未测得。不得填 0、不得填推断值。**（除 `accent` 一行外，本表无空行，全部实测。）
 
 ---
 
@@ -617,3 +653,195 @@ gitignore 的产物不在本机就跳过，**不假装通过**）。
 * 轮 A/B 的子报告**仍然落盘**（`p2_171_guard_abort.off.json`）。中止发生在
   「子报告写完之后、汇总之前」—— 这是有意的：坏轮次的原始证据要留着便于排查，
   被拦住的只是它**进对照表**这条路。
+
+---
+
+## 13. #172 执行记录：中文 5 格合成集 + 指纹登记（2026-10-10）
+
+### 13.1 生成命令与产物
+
+```bash
+VP="/c/Users/Administrator/Desktop/听课伴侣/安装空间/venv/Scripts/python.exe"
+$VP scripts/make_asr_testset.py \
+    --source testset/chinese_lecture/short/short_zhlecture_cnn.wav \
+    --out    testset/chinese_lecture/scenarios \
+    --only   clean noise lowvol fast multi \
+    --metadata-out testset/chinese_lecture/scenarios/metadata.json
+```
+
+产物落 `testset/chinese_lecture/scenarios/short/` —— **`short/` 子目录是脚本强制的**：
+短/长用例要用两种完全不同的跑法（尽快喂完 vs `--realtime`），混在一个目录里会被一次
+`--audio-dir` 扫描一起灌进去，人为触发背压丢弃。音频走 `testset/**/*.wav` 的 gitignore；
+同名 `.txt` 与 `metadata.json` 入库。
+
+| 格 | 时长 | RMS dBFS | 峰值 dBFS | wav sha256（前 16） |
+|---|---|---|---|---|
+| clean | 80.52s | −28.10 | −3.00 | `64cb93c8c4c7c2bc` |
+| noise | 80.52s | −27.35 | −3.00 | `c6c4e8c7fe6550c5` |
+| lowvol | 80.52s | −55.14 | **−30.00** | `a6fa96ea6d3f738f` |
+| fast | **59.64s** | −27.82 | −3.00 | `e79847fbae73a487` |
+| multi | **80.87s** | −26.16 | −3.00 | `dca9c69c3df5a86a` |
+
+（`fast` 59.64s = 80.52 / 1.35；`multi` 80.87s = 80.52 + 0.35 —— 与算子定义吻合。）
+
+### 13.2 顺带修掉的缺陷：`write_text` 漏了 `newline="\n"`
+
+**这不是顺手改的**，是 §6.1 的验收标准逼出来的：
+
+`make_asr_testset.py:284` 原本是
+`path.with_suffix(".txt").write_text(text + "\n", encoding="utf-8")` ——
+Windows 上 `Path.write_text` 默认把 `\n` 翻成 CRLF，产物参考文本会凭空多一个 `\r`
+（**1183 → 1184 字节**），而 §6.1 要求「参考文本随劣化复制，必须**逐字节**等于源 txt」。
+
+⇒ 补 `newline="\n"`。这正是**教训 43 的同源缺陷**，且 `clip_tts_paragraphs.py:226`
+**早就有完全相同的注释**（「不写这个参数，`metadata.json` 会变成 29 个 CRLF」）——
+而这个**更早**的脚本漏了 ⇒ 教训 1 的形态（同一件事存两份必漂移）。
+
+**判据要说清**：`_PUNCT` 里含 `\r`，所以行尾**不影响 CER**。守的不是准确率，是**可验证性**：
+「5 格参考文本与源同源」这个论断只能靠逐字节相等来立，退化成「除行尾外相同」就等于放弃了证明力。
+
+### 13.3 为什么给脚本加 `--metadata-out`（而不是手写一份 metadata）
+
+指纹只有**从落盘产物现读**才不会抄错；手写一份本质上是一次性的人工复制。
+
+* `sha256` / `rmsDbfs` / `peakDbfs` 由 `wav_stats()` **重读文件**算，不用内存里的数组 ——
+  `write_wav()` 会 `np.clip(-1,1)` 再量化成 int16，**内存值 ≠ 写进文件的字节**；
+  记内存值等于把账记在草稿上。
+* `argv` 经 `display_argv()` 归一成**仓库相对路径**（`/` 分隔）——
+  metadata 里出现 `C:\Users\<某台机器>\...`，「照着这条命令复现」就无从谈起。
+* **自证**：任一格的 `.txt` 与源 `.txt` 不是逐字节相等 ⇒ 打印 `❌` 并 **`exit=1`**，不留假证据。
+* **默认不写**：不传 `--metadata-out` 时脚本行为与改动前**逐字节一致**（已用「重跑到临时目录、
+  比 5 格 sha256」证明，且确认 `metadata.json` 没被创建）。
+
+### 13.4 实测四项
+
+| 验证项 | 结果 |
+|---|---|
+| 5 格 `.txt` 与源逐字节相等 | ✅ 5/5 `True`（1183 B / crlf=0；**5 格 md5 集合只有 1 个元素** `405228448e0a172c9f3b6caa7616b617`） |
+| `check_transcript.py --audio <每格>` | ✅ 5 格全「结论：可用 ✓」、exit=0；**fast 实测 6.94 字/秒**（414 字 / 0.99 min），在 `CPS_RANGE (1.2~8.0)` 内 —— **实测值，不是推断** |
+| 可复现性 | ✅ 同 seed 重跑到临时目录，**三方逐字节一致**（metadata ↔ 正式 ↔ 重跑），5/5 |
+| 安装包指纹 | ✅ `302,570,573 B` / sha256 `4a92fee2…af9060a` / md5 `bf0af680…` / mtime `2026-10-10 13:16:45` 全未变；副本对拍 **170/170 diff=0 miss=0** |
+
+### 13.5 `sourceKind` 就近生效（一个值得记的细节）
+
+生成前，`scenarios/short/*.wav` 的 `sourceKindBasis` 是 **`metadata.json kind=PROXY`** ——
+它按 `_METADATA_SEARCH_LEVELS = 2` 上溯，撞到了 `chinese_lecture/metadata.json`
+（那是 edge-tts 代理集的登记）。**结论碰巧是对的**（`PROXY` 与 `SYNTH` 都映射 `tts-synth`），
+但**依据是错的**。
+
+写入 `scenarios/metadata.json`（`kind: "SYNTH"`）后判据变成就近的 `metadata.json kind=SYNTH` ✅。
+
+⚠️ 这是一个**「静默正确」**陷阱：只要上游那层的 `kind` 恰好也映射到同一个 `sourceKind`，
+「谁才是真正的来源」就永远不会有人发现。⇒ 多层目录共享同一个 `metadata.json` 时，
+**每个产出目录都要有自己的一份**，不能靠上溯碰运气。
+
+### 13.6 已知局限（诚实记账）
+
+* `synth_clean_*` **≠ 源短样本**：`peak_norm(source, -3.0)` 把峰值从 −2.27 抬到 −3.00 dBFS（−0.73 dB）。
+  CER 不受影响（Whisper 内部会归一化），但两者不是同一个文件，不可互相代填。
+* 5 格 `.txt` 内容完全相同（都是源那 414 字），入库会多 5 份重复文本（共 +5,915 B）。
+  这是刻意的：`.gitignore` 已把参考文本列为**核心资产**，且 `eval_asr_quality.py`
+  靠**同名 `.txt`** 找参考，缺了就算不出 CER。
+* `accent` 格仍未覆盖（§6.4 已定：留空登记缺口）。
+* §6.2 要求的「每格再跑一次 `--terms off` 作 A/B 基线」在**本口径下退化为恒等**：
+  `--term-language zh` 已把短语层整层滤掉，实测 `termPromptChars = 0`、`phrases = 0`
+  ⇒ `--terms on/off` 传给引擎的提示词都是空串，A/B 无信息量。（判据是产物字段，不是推断。）
+  §14 的 7 格全部复核为 `termPromptChars = 0`，与该判断一致。
+
+---
+
+## 14. #173 执行记录：逐格中文场景基线（2026-10-10）
+
+### 14.1 跑法与口径
+
+按 §6.2 的硬要求：**逐格、一格一份报告、带 `--realtime`**。这不是形式主义 ——
+`--realtime` 与非实时的差距**实测很大**（见 14.3），而「一次调用跑完多格」在实时喂入下
+会因休眠/挂起污染（教训 16），所以只能一格一次调用。
+
+**基线口径由用户裁决**：`--language zh --term-language zh`（**不是**默认的 `auto`）。
+原因见 [`known_defects.md`](./known_defects.md) D1：`auto` 会让中文输出**繁体**，
+CER 被字形差异虚高 0.35+，**不能当基线**。
+
+耗时：短样本 5 格合 7m11s；`long` / `real` 各约 10.5min（音频本身 626.4s / 630.0s）
+⇒ 合计约 28min。全部 `exit=0`。
+
+### 14.2 七格结果
+
+见 §7 表。7 格全部：`drained = true`、`droppedSegments = 0`、`realtime = true`、
+`termPromptChars = 0`、`repetitionEvents = 0`。
+
+### 14.3 🔴 关键发现①：非实时的「尽快喂完」会**人为加剧劣化**
+
+同一份 `synth_multi_short_zhlecture_cnn.wav`、同参数，只差喂入方式：
+
+| 喂入方式 | CER | mergedCalls | tailSeconds |
+|---|---|---|---|
+| 非实时（尽快喂完） | **0.9420** | 1 | **77.498** |
+| `--realtime` | **0.6834** | 0 | 2.574 |
+
+差 **0.2586**，远超 run-to-run 波动（≈0.03~0.05）；且非实时的收尾积压 **77.498s**
+（几乎与音频等长），实时只有 2.574s。
+
+⇒ **「尽快喂完」本身就会触发背压与合并降级**，把「管道鲁棒性」测成了
+「管道被灌爆时的表现」。**短样本基线必须用 `--realtime`** —— §6.2 的要求是对的。
+
+⚠️ 反面一例：`fast` 格反而非实时更好（0.1900 vs 0.2586，差 0.0686，略超波动上限）。
+这一格**不能**用同一机制解释 ⇒ 如实记为**未解释的差异**，不下「哪种喂入方式一定更好」的结论。
+
+### 14.4 关键发现②：长时稳定性成立
+
+`long_zhlecture_cnn.wav` 626.4s / 56 片段 / 82 条字幕：
+
+* **`droppedSegments = 0`** —— 零丢片；
+* **`tailSeconds = 1.765`** —— 结束时几乎没有积压；
+* `mergedCalls = 6` —— 6 次合并（设计内降级，字幕更粗）；
+* `repetitionEvents = 0` —— 未触发重复循环兜底。
+
+⇒ 10 分钟连续喂入**没有累积落后**。「越拖越晚、丢片段」这个担心在本机不成立。
+
+### 14.5 关键发现③：真人锚点与合成 clean 同量级（**不要外推**）
+
+| 来源 | 素材 | CER |
+|---|---|---|
+| `tts-synth` | 合成 clean（80.52s，前 4 段） | **0.1662** |
+| `human-recording` | 真人软件实操课（630.0s） | **0.1985** |
+
+差 **0.0323**。这与「合成集 CER 绝对值显著偏乐观」的预期**不符**。
+
+⚠️ **不能**据此推翻那条警告：
+
+* 这段真人素材是 **Origin 绘图软件实操课** —— 语速稳、停顿多、术语重复，对 ASR 天然友好；
+  它**不代表**「真实课堂」的普遍难度。
+* `real` 的参考是 `*.preproof.txt`（**人工预校对稿**），仍带 11 处 `note` 标注的存疑点；
+  它接近真值但**不是**完美真值。
+* `n = 1`／格 ⇒ 两个数字都**没有统计意义**。
+
+⇒ 正确的说法是：**「本合成集对这段真人素材没有表现出乐观偏差」**，
+而不是「合成集不乐观」。
+
+### 14.6 延迟指标：仍然不可得（如实记账）
+
+7 格里只有 `lowvol` 一格算出了延迟（`latency.p95 = 1.528`、`meanLatency = 1.048`），
+因为它是唯一「片段数 == 字幕数」的格（6 → 6）。
+
+其余 6 格「字幕数 > 片段数」⇒ 脚本**拒绝配对**（`paired = False`），`latency.p95` 落 `0.0` 占位。
+脚本自己的措辞是：
+
+> 以下文件片段数与字幕数不等，未做延迟配对（**延迟数字缺失是如实标记，不是算错**）
+
+⇒ 这是 **P3 遗留的同一个缺口**（`on_partial = router` 让字幕 ≠ 片段）。
+本轮**没有**解决它，也没有假装解决 —— 想从报告里读延迟，得先解决配对问题。
+
+### 14.7 已知局限（诚实记账）
+
+* `n = 1`／格、无重复 ⇒ 所有 CER 都**不是统计量**，是单次观测。
+  格间差 < 0.05 的三格（clean 0.1662 / lowvol 0.1715 / noise 0.1821）**不可据此排序**。
+* `RTF` 列取自**非实时**合跑，与同表其余列**不同源**；实时模式不产 RTF。
+* 「字幕数 > 片段数」在 7 格中 6 格触发 —— 属 #169 已记录的**误报**
+  （`lastRepeat` 显示最长重复 0 字符，即根本没检测到重复），但它同时**阻塞了延迟配对**。
+* `accent` 未覆盖（§6.4 决策：留空登记）。
+* `long` 的 CER（0.2589）比 `clean`（0.1662）高 **0.093** —— 两者**同源**（同一个 TTS 讲稿），
+  差别只在「整篇 30 段」vs「前 4 段」。本轮观察**不足以解释**它（可能是后段内容更难，
+  也可能是长跑累积效应）⇒ 如实记为**待查**，不下结论。
+* `long` 的 `sourceKindBasis` 是 `metadata.json kind=PROXY`（`chinese_lecture/metadata.json`），
+  与 5 格的 `kind=SYNTH` 不同 —— 两者都映射 `tts-synth`，归属正确，但**依据层级不同**。
