@@ -362,6 +362,35 @@ def kvline(label: str, values, better="lower") -> str:
     return f"{label:<34}{cells}"
 
 
+def invalid_round_reason(summary: dict) -> str | None:
+    """这一轮在**结构上**是否可用？不可用则返回原因，可用返回 None。
+
+    只判「有没有真的测到识别」这两条：
+
+      · `totalSegments == 0` —— VAD 没工作，或音频全静音；
+      · `totalSubtitles == 0` —— 切出了片段但一条字幕都没有（片段没接到引擎上）。
+
+    两种情况下 WER/CER 都**恒等于 1.0**（参考全文被整块 delete），表里看着像
+    「识别很差」，其实什么都没测到。放进对照表，就会以
+    「术语注入把 WER 从 1.0 降到 0.8」这种形态产出**完全虚假**的结论。
+
+    🔴 判据刻意**不含** `verdict.passed == False`，这是实测定的（不是偷懒）：
+    盘了 42 份历史子报告，10 份 `passed=False` —— 8 份是背压丢弃（另有专门守卫），
+    另 2 份里 `short-terms.json` 是**平均 RTF ≥ 1** 才判 False，那是「跑得慢」的
+    如实记录，准确率数据本身完全有效。拿 `passed` 当中止条件会把有效证据一起拦掉
+    （方案文档 H4 原建议就是 `totalSubtitles==0 或 passed==false`，此处按数据修正）。
+
+    旧报告可能整个 `summary` 缺键 → 一律按 0 处理（保守：宁可拦下去人工看一眼）。
+    """
+    segs = summary.get("totalSegments") or 0
+    subs = summary.get("totalSubtitles") or 0
+    if segs == 0:
+        return f"切出 {segs} 个片段（VAD 未工作或音频全静音）"
+    if subs == 0:
+        return f"{segs} 个片段 → 0 条字幕（片段未送入识别引擎）"
+    return None
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="术语热词 A/B 对照")
     p.add_argument("--audio-dir", required=True)
@@ -387,6 +416,13 @@ def main() -> int:
         "--allow-drops",
         action="store_true",
         help="即使有片段被背压丢弃也继续出对照表（默认直接中止 —— 见下方说明）",
+    )
+    p.add_argument(
+        "--allow-invalid",
+        action="store_true",
+        help="即使某轮**结构不可用**（0 片段 / 0 字幕 → WER 恒 1.0）也继续出对照表"
+        "（默认直接中止 —— 那类数字看着像「识别很差」，其实什么都没测到；"
+        "见 invalid_round_reason() 的说明）",
     )
     p.add_argument("--out", default="packaging/eval/ab_terms.json")
     args = p.parse_args()
@@ -439,6 +475,40 @@ def main() -> int:
                 f"  长音频请加 --realtime（非实时喂入会把音频瞬间灌满队列，"
                 f"引擎来不及消费就丢；这跟真实使用不是一回事）。\n"
                 f"  确实想观察丢弃行为本身时，加 --allow-drops 继续。"
+            )
+
+        # ---- 无效轮次守卫（H4）：结构上不可用的报告不许进对照表 ----
+        # 实测来历：英文测试集 `short.json` 那轮 8 段 → **0 条字幕**、
+        # 每格 WER 恒 1.0，却照样被写进了历史对照表（见 WER_REPORT_PLAN §3.1）。
+        # 判据与「为什么不用 verdict.passed」见 `invalid_round_reason()`。
+        why = invalid_round_reason(runs[cond].get("summary", {}))
+        if why and not args.allow_invalid:
+            raise SystemExit(
+                f"条件 [{cond}] 这一轮**结构不可用**：{why} —— 已中止。\n"
+                f"  · 此时参考全文会被整块 delete，WER/CER 恒等于 1.0，"
+                f"表里看着像「识别很差」，其实什么都没测到。\n"
+                f"  · 它一旦进对照表，就会以「术语注入把 WER 从 1.0 降到 0.8」这种形态"
+                f"产出**完全虚假**的结论。\n"
+                f"  · 先查为什么没出字幕（模型没加载？音频格式？引擎异常？），再重跑。\n"
+                f"  确实要观察这种轮次本身时，加 --allow-invalid 继续。"
+            )
+
+        # 下面两条**只警告不中止**：它们不影响「这一轮算过没有」，
+        # 只影响「这一轮能不能用来比准确率」。静默吞掉它们同样危险 ——
+        # 无参考文本时 WER 列会全是 `-`，而 passed=False 的原因可能藏在四格交错输出里。
+        v = runs[cond].get("verdict") or {}
+        if v.get("passed") is False:
+            failed = [n for n in (v.get("notes") or []) if str(n).startswith("✗")]
+            print(
+                f"  ⚠ 条件 [{cond}] verdict.passed=False（**不中止**，RTF≥1 等如实记录也会判 False）："
+                + ("；".join(failed[:3]) if failed else "（无 ✗ 条目）"),
+                flush=True,
+            )
+        if (runs[cond].get("summary", {}).get("withReference") or 0) == 0:
+            print(
+                f"  ⚠ 条件 [{cond}] 没有任何参考文本 —— WER/CER 未评估，"
+                f"本格只有实时性/稳定性数据，**不可与其它格的准确率并列比较**",
+                flush=True,
             )
 
     def summary(cond):

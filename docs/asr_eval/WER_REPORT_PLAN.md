@@ -225,7 +225,7 @@ scripts/make_asr_testset.py \
 | H1 | ✅ **已完成（#170 `924c1be`）**：来源维度缺失 → 结果加 `sourceKind`，汇总按 `(sourceKind, scenario)` 二维分组 | 实现取 **`tts-synth` / `human-recording` / `unknown`**（**偏离原建议**：弃 `tts-degraded`——劣化与否已由 `scenario` 表达，两维不该互相编码；弃 `synth-en`——语言由 `--language` 表达，且实测里「语言」不改变「是合成还是真人」这个事实） | 低（additive：`byScenario` 逐字未动 ⇒ `analyze_zh_ab.py` 无需同步） |
 | H2 | ✅ **已完成（#170 `924c1be`）**：加 `--max-cer` | 逐样本标记 `rejected`，**不中断批量评估**（与 `--max-wer` 的「整轮均值门禁」分工不同，两者并存） | 低 |
 | H3 | 长素材做场景矩阵太慢（4 场景 × 10min，`--realtime` 下约 40min/轮） | **已定实现路径（见 §6.1 的实测）**：不做「模糊的 `--clip-seconds`」，改为**按段落静音边界切分**——切出来的音频与文本都来自同一份内置讲稿，配对天然精确 | 低（但必须先证边界数对得上，已证：29 = 30−1） |
-| **H4** | **无效轮次防护不均匀**（已核实）：`ab_terms_compare.py:435` **有**「背压丢弃 → 默认中止」的守卫（`--allow-drops` 才继续）；但**没有**「`totalSubtitles == 0` → 中止」的守卫（全文不引用 `verdict`/`passed`） | 加一条同构守卫：子报告 `summary.totalSubtitles == 0` 或 `verdict.passed == false` → 中止（除非显式 `--allow-invalid`） | 中（这正是 `short.json` 那种「整轮一个字幕没出、每格 WER 恒 1.0」还能进对照表的通道） |
+| **H4** | ✅ **已完成（#171，见 §12）**：无效轮次防护不均匀（已核实）：`ab_terms_compare.py:435` **有**「背压丢弃 → 默认中止」的守卫（`--allow-drops` 才继续）；但**没有**「`totalSubtitles == 0` → 中止」的守卫（全文不引用 `verdict`/`passed`） | 加同构守卫 `invalid_round_reason()`：`totalSegments==0 或 totalSubtitles==0` → 中止（`--allow-invalid` 放行）。**按数据修正原建议**：`verdict.passed==false` **不**作为中止条件（42 份历史子报告里 10 份 passed=False，其中非背压的 2 份都是「RTF≥1」这类如实记录，准确率数据有效） | 中（这正是 `short.json` 那种「整轮一个字幕没出、每格 WER 恒 1.0」还能进对照表的通道） |
 | H5 | ✅ **已核实无缺口**：报告的 `recognition` = 全部字幕文本 `" ".join(...)`（`eval_asr_quality.py:553/583`），**无截断**；`--detail-limit 200` 只作用于 `segmentDetail` | 无需改动（错误归因可直接用 `recognition` vs `reference`） | — |
 | H6 | 素材指纹未进入报告 | 把**音频 sha256 + 参考文本 sha256** 写进报告（教训 29：对照实验先证「被操纵的变量真变了」；P1 的 `artifact` 字段就是这个思路） | 低～中 |
 
@@ -543,3 +543,77 @@ gitignore 的产物不在本机就跳过，**不假装通过**）。
   「少遍历但仍自洽」的变异并不自然，故诚实记账而不硬凑。
 - 下一步：**#171**（`ab_terms_compare.py` 补「0 字幕 → 提前中止」守卫，堵 H4）→
   **#172**（中文 5 格场景集 + 指纹登记）→ **#173**（逐格基线填 §7 表）。
+
+---
+
+## 12. #171 执行记录：堵住「无效轮次进对照表」的通道（H4，2026-10-10）
+
+提交见 `#171`（紧随 `924c1be`）。改动只在 `scripts/` + `backend/tests/` +
+`packaging/verify/` + `.gitignore`，**不进包**。
+
+### 12.1 判据：拦什么、不拦什么（**偏离 H4 原建议，按数据修正**）
+
+§5 的 H4 原建议是「`totalSubtitles == 0` **或** `verdict.passed == false` → 中止」。
+盘了全仓 **42 份历史子报告**后发现后半条**过拦**：
+
+| `passed=False` 的子报告 | 份数 | 实际原因 | 该不该拦 |
+|---|---|---|---|
+| 背压丢弃（`totalDropped > 0`） | 8 | 背压溢出、字幕缺内容 | 已有 **专门守卫**（`--allow-drops`） |
+| `short-terms.json` | 1 | **平均 RTF ≥ 1**（lowvol 单文件 RTF 2.6） | ❌ **不该拦** —— 准确率数据完全有效 |
+| `p2_170_maxcer018.json` | 1 | `--max-cer 0.18` 触发的**逐样本**门禁 | ❌ 不该拦（那是使用者显式设的阈值） |
+
+结论：**`verdict.passed` 不能当中止条件** —— 它把「跑得慢」这类如实记录也算了进去。
+最终判据（纯函数 `invalid_round_reason()`，可单测）只判「有没有真的测到识别」：
+
+* `totalSegments == 0` → VAD 未工作 / 音频全静音；
+* `totalSubtitles == 0` → 片段未送入识别引擎。
+
+两种情形 WER/CER **恒等于 1.0**（参考全文被整块 delete），一旦进表就会以
+「术语注入把 WER 从 1.0 降到 0.8」这种形态产出**完全虚假**的结论 ——
+`packaging/eval/short.json` 那轮（8 段 → **0 条字幕**、每格 WER 恒 1.0）
+就是这么写进历史对照表的。
+
+另外两条**只警告不中止**（同样不能静默）：
+`verdict.passed=False`（列出 ✗ 条目）、`withReference == 0`（WER 列会全 `-`）。
+理由：没有逐字稿的真实录音是常态，中止会把「只测实时性」的合法用法一起禁掉。
+
+新出口：`--allow-invalid`（与兄弟守卫的 `--allow-drops` 并列）。
+
+### 12.2 真机验证（三条，全部本机真跑）
+
+| 轮 | 素材 | 命令要点 | 结果 |
+|---|---|---|---|
+| **A** | 自造 6.00s **纯静音** wav（`安装空间/_ab_guard_probe/`，不入库） | `--conditions off` | **exit=1**，打印「切出 0 个片段（VAD 未工作或音频全静音）—— 已中止」+ 三行后果说明 |
+| **B** | 同上 | `+ --allow-invalid` | **exit=0**，放行；并打印 `⚠ 条件 [off] verdict.passed=False（**不中止**…）：✗ 一个语音片段都没切出来…` |
+| **C** | `tests/audio/short`（正常英文旧集） | `--conditions off` | **exit=0**，**未误拦**（子报告 8 段 → 8 字幕、`passed=True`、`withReference=5`） |
+
+轮 A 的输出正是 H4 描述的那个形态，一字不差：
+
+```
+汇总：1 个文件（1 个有参考文本）｜片段 0 → 字幕 0｜平均 WER 1.0｜CER 1.0
+```
+
+轮 A/B 的子报告 `段=0 字幕=0 passed=False` 完全一致 —— 差别只在**有没有 `--allow-invalid`**，
+这正是单变量：证明「拦住 / 放行」由开关决定，不由别的因素决定。
+
+### 12.3 测试、探针与产物校验
+
+| 项 | 实测 |
+|---|---|
+| 新增用例 | `backend/tests/test_ab_invalid_round.py` **21 条** |
+| 关键反向断言 | `verdict.passed == False` 但管道正常 → **必须放行**（`test_passed_false_with_valid_pipeline_is_usable`）；`totalDropped > 0` 与 `withReference == 0` **不属本判据职责** |
+| 真实报告回灌 | `short.json` **必须被拦**；`short-terms.json` / `long-realtime.json` / `p2_probe_short_clean.json` / `real_zhlecture_ab4_phrases.phrases-on.json` **必须放行**（带 `skipif`） |
+| 结构守卫 | 判据从 `summary` 里 `get` 的键**恰好** = {`totalSegments`,`totalSubtitles`}；非 docstring 常量里不得出现 `passed`/`verdict`；守卫调用必须是条件循环的**后代节点**（不是比行号） |
+| 变异探针 | `packaging/verify/probe_ab_invalid_round_mutations.py` **12/12 全部被抓住**（`.gitignore` 反选例外 6 → 7） |
+| 行尾 | `ab_terms_compare.py` 本就是 LF（crlf=0），改后仍 LF；新增两文件 LF |
+
+### 12.4 已知局限（诚实记账）
+
+* 「警告层」只挡了「读不读得到 `verdict` / `withReference`」与「有没有打出来」，
+  没挡「打出来的时机」—— 那需要跑 `main()` 才能观测，成本高于收益。
+* 探针里 C1 那条变异是**删掉循环内的调用**，而不是把它「搬到循环外」；
+  两者对 `test_guard_runs_inside_the_condition_loop` 是同一种失败，
+  但严格说只有前者被真跑过。
+* 轮 A/B 的子报告**仍然落盘**（`p2_171_guard_abort.off.json`）。中止发生在
+  「子报告写完之后、汇总之前」—— 这是有意的：坏轮次的原始证据要留着便于排查，
+  被拦住的只是它**进对照表**这条路。
