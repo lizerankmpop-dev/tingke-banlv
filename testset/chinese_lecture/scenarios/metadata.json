@@ -1,0 +1,115 @@
+{
+  "kind": "SYNTH",
+  "warning": "信号处理合成的劣化集：由**同一个** TTS 源音频经算子（加噪 / 压峰 / 变速 / 自身叠加）得到。它测的是**管道鲁棒性**，不是真实课堂的识别准确率 —— 无口音、无口误、无混响，背景噪声也是合成的低频 babble 而非真人嘈杂。**绝不能把这里的 WER/CER 当成真实中文场景的结论**；accent（口音）场景刻意不合成，留空等真人录音。",
+  "generatedBy": "scripts/make_asr_testset.py",
+  "argv": [
+    "scripts/make_asr_testset.py",
+    "--source",
+    "testset/chinese_lecture/short/short_zhlecture_cnn.wav",
+    "--out",
+    "testset/chinese_lecture/scenarios",
+    "--only",
+    "clean",
+    "noise",
+    "lowvol",
+    "fast",
+    "multi",
+    "--metadata-out",
+    "testset/chinese_lecture/scenarios/metadata.json"
+  ],
+  "seed": 20261006,
+  "longMinutes": 12.0,
+  "source": {
+    "audio": "testset/chinese_lecture/short/short_zhlecture_cnn.wav",
+    "audioSha256": "c8b672e46eddbed966aa99efda4d01fe1f3a94f6ee151821f99a93366931c3b4",
+    "reference": "testset/chinese_lecture/short/short_zhlecture_cnn.txt",
+    "referenceSha256": "53f4623b85f6e784fd00a4bd8445e984c37dd3d99f81579ee3a71e710ecfa88b",
+    "referenceChars": 414,
+    "durationSeconds": 80.52
+  },
+  "operators": {
+    "SNR_DB": 8.0,
+    "LOWVOL_PEAK_DBFS": -30.0,
+    "FAST_FACTOR": 1.35,
+    "OVERLAP_DELAY_S": 0.35,
+    "OVERLAP_GAIN": 0.75,
+    "note": "全部是**语言无关**的信号处理常量，写在源码里；改这些数字就是改「考得多难」，都摆在明面上便于复现。"
+  },
+  "referenceIdentity": {
+    "allIdenticalToSource": true,
+    "sourceReferenceSha256": "53f4623b85f6e784fd00a4bd8445e984c37dd3d99f81579ee3a71e710ecfa88b",
+    "note": "各格 .txt 与源 .txt **逐字节相同**（行尾同为 LF，由 newline='\\n' 保证）。参考文本随劣化原样复制 → 配对精确，这是合成集里唯一真正干净的一环。"
+  },
+  "entries": [
+    {
+      "scenario": "clean",
+      "audio": "short/synth_clean_short_zhlecture_cnn.wav",
+      "reference": "short/synth_clean_short_zhlecture_cnn.txt",
+      "repeatCount": 1,
+      "audioSha256": "64cb93c8c4c7c2bce3f51c19167ca43d80f71ba0c542d6dc58e1739588b15798",
+      "referenceSha256": "53f4623b85f6e784fd00a4bd8445e984c37dd3d99f81579ee3a71e710ecfa88b",
+      "durationSeconds": 80.52,
+      "sampleRate": 16000,
+      "channels": 1,
+      "format": "wav/16-bit PCM",
+      "rmsDbfs": -28.1,
+      "peakDbfs": -3.0
+    },
+    {
+      "scenario": "noise",
+      "audio": "short/synth_noise_short_zhlecture_cnn.wav",
+      "reference": "short/synth_noise_short_zhlecture_cnn.txt",
+      "repeatCount": 1,
+      "audioSha256": "c6c4e8c7fe6550c5741cc94f37582c6446a142c3bfd061ebe5857e244c349a67",
+      "referenceSha256": "53f4623b85f6e784fd00a4bd8445e984c37dd3d99f81579ee3a71e710ecfa88b",
+      "durationSeconds": 80.52,
+      "sampleRate": 16000,
+      "channels": 1,
+      "format": "wav/16-bit PCM",
+      "rmsDbfs": -27.35,
+      "peakDbfs": -3.0
+    },
+    {
+      "scenario": "lowvol",
+      "audio": "short/synth_lowvol_short_zhlecture_cnn.wav",
+      "reference": "short/synth_lowvol_short_zhlecture_cnn.txt",
+      "repeatCount": 1,
+      "audioSha256": "a6fa96ea6d3f738fbf6eca74b69ba7ce5c0ca0065ed6780ccdd9251268460953",
+      "referenceSha256": "53f4623b85f6e784fd00a4bd8445e984c37dd3d99f81579ee3a71e710ecfa88b",
+      "durationSeconds": 80.52,
+      "sampleRate": 16000,
+      "channels": 1,
+      "format": "wav/16-bit PCM",
+      "rmsDbfs": -55.14,
+      "peakDbfs": -30.0
+    },
+    {
+      "scenario": "fast",
+      "audio": "short/synth_fast_short_zhlecture_cnn.wav",
+      "reference": "short/synth_fast_short_zhlecture_cnn.txt",
+      "repeatCount": 1,
+      "audioSha256": "e79847fbae73a487f5f6d6fa7ab13ca8cda5c2737138224fddcb8b2707a7e89d",
+      "referenceSha256": "53f4623b85f6e784fd00a4bd8445e984c37dd3d99f81579ee3a71e710ecfa88b",
+      "durationSeconds": 59.64,
+      "sampleRate": 16000,
+      "channels": 1,
+      "format": "wav/16-bit PCM",
+      "rmsDbfs": -27.82,
+      "peakDbfs": -3.0
+    },
+    {
+      "scenario": "multi",
+      "audio": "short/synth_multi_short_zhlecture_cnn.wav",
+      "reference": "short/synth_multi_short_zhlecture_cnn.txt",
+      "repeatCount": 1,
+      "audioSha256": "dca9c69c3df5a86a95c5e90a51cb0834b68096dfbd605b630c9b1f9223bd10ed",
+      "referenceSha256": "53f4623b85f6e784fd00a4bd8445e984c37dd3d99f81579ee3a71e710ecfa88b",
+      "durationSeconds": 80.87,
+      "sampleRate": 16000,
+      "channels": 1,
+      "format": "wav/16-bit PCM",
+      "rmsDbfs": -26.16,
+      "peakDbfs": -3.0
+    }
+  ]
+}

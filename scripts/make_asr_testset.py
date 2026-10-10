@@ -39,6 +39,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import random
 import sys
 import wave
@@ -109,6 +111,71 @@ def write_wav(path: Path, audio: np.ndarray) -> None:
         w.setsampwidth(2)
         w.setframerate(SAMPLE_RATE)
         w.writeframes((clipped * 32767.0).astype(np.int16).tobytes())
+
+
+def sha256_file(path: Path) -> str:
+    """分块读一遍算 sha256（大文件也不吃内存）。"""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def wav_stats(path: Path) -> dict:
+    """**从落盘产物重读**统计量，而不是用内存里的数组。
+
+    两者并不相同：`write_wav` 会 `np.clip(-1, 1)` 再量化成 int16，
+    内存值的峰值/有效值与真正写进文件里的字节有量化差。
+    要与交付物对账，就必须以后者为准 —— 记内存值等于记账记在了草稿上。
+    """
+    with wave.open(str(path), "rb") as w:
+        frames, rate = w.getnframes(), w.getframerate()
+        channels, sampwidth = w.getnchannels(), w.getsampwidth()
+        raw = w.readframes(frames)
+    data = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    peak = float(np.max(np.abs(data))) if data.size else 0.0
+    return {
+        "durationSeconds": round(frames / rate, 2),
+        "sampleRate": rate,
+        "channels": channels,
+        "format": f"wav/{sampwidth * 8}-bit PCM",
+        "rmsDbfs": round(20 * float(np.log10(rms(data) + 1e-12)), 2),
+        "peakDbfs": round(20 * float(np.log10(peak + 1e-12)), 2),
+    }
+
+
+def repo_rel(path: Path, root: Path) -> str:
+    """仓库内路径 → 仓库相对路径（`/` 分隔）；仓库外原样返回绝对路径。"""
+    try:
+        return path.resolve().relative_to(root).as_posix()
+    except (OSError, ValueError):
+        return str(path)
+
+
+def display_argv(root: Path) -> list[str]:
+    """把 `sys.argv` 里落在仓库内的路径还原成仓库相对路径（用 `/` 分隔）。
+
+    metadata 里不该出现 `C:\\Users\\<某台机器>\\...` —— 那样的命令换台机器就没法用了，
+    而「这条命令能不能照着复现」正是把它写进去的唯一理由。
+
+    只对「绝对路径、或当前目录下确实存在」的参数做换算：选项名（`--only`）与
+    枚举值（`clean`）不该被当成路径，否则 `--only clean` 会被写成 `--only ./clean`。
+    """
+    out: list[str] = []
+    for arg in sys.argv:
+        if not arg.startswith("-"):
+            try:
+                p = Path(arg)
+                if p.is_absolute() or p.exists():
+                    rp = p.resolve()
+                    if rp.is_relative_to(root):
+                        out.append(rp.relative_to(root).as_posix())
+                        continue
+            except (OSError, ValueError):
+                pass
+        out.append(arg)
+    return out
 
 
 def _resample(data: np.ndarray, ratio: float) -> np.ndarray:
@@ -233,6 +300,12 @@ def main() -> int:
     parser.add_argument("--only", nargs="*", choices=SCENARIOS, default=None)
     parser.add_argument("--long-minutes", type=float, default=12.0)
     parser.add_argument("--seed", type=int, default=20261006)
+    parser.add_argument(
+        "--metadata-out",
+        default=None,
+        help="把本次生成的源指纹 / 算子常量 / 逐格 sha256 与统计写成 metadata.json。"
+        "不传则**不写** —— 既有跑法（tests/audio）的产物逐字节不变。",
+    )
     args = parser.parse_args()
 
     src = Path(args.source)
@@ -266,6 +339,7 @@ def main() -> int:
     wanted = sorted(wanted, key=lambda s: (s == "long", SCENARIOS.index(s) if s in SCENARIOS else 0))
 
     made: list[tuple[str, float, str]] = []
+    entries: list[dict] = []
     for scenario in wanted:
         audio, repeats = synth_one(
             source, scenario, args.seed + SCENARIOS.index(scenario), args.long_minutes
@@ -281,17 +355,100 @@ def main() -> int:
         # 参考文本：非长文件就是原文；长文件按**实际重复次数**展开。
         # 不要用 len(audio)//len(source) 推算 —— 那会把停顿算进去，虚报重复次数。
         text = "\n".join([ref_text] * repeats)
-        path.with_suffix(".txt").write_text(text + "\n", encoding="utf-8")
-        made.append((f"{sub}/synth_{scenario}_{src.stem}.wav", len(audio) / SAMPLE_RATE, scenario))
+        # `newline="\n"` 不能省 —— 这是教训 43 的同源缺陷：Windows 下 `Path.write_text`
+        # 默认把 `\n` 翻成 CRLF，参考文本会凭空多出 `\r` 字节（1183 → 1184）。
+        # 判据不是「CER 会不会变」（`_PUNCT` 含 `\r`，确实不会变），而是**可验证性**：
+        # 「5 格参考文本与源同源」这个论断要靠逐字节相等来立，退化成「除行尾外相同」
+        # 就等于放弃了这一步的全部证明力。
+        path.with_suffix(".txt").write_text(text + "\n", encoding="utf-8", newline="\n")
+        rel_wav = f"{sub}/{path.name}"
+        made.append((rel_wav, len(audio) / SAMPLE_RATE, scenario))
+        # 指纹与统计一律**从落盘产物重读**，不记内存值 —— 见 wav_stats 的说明。
+        entries.append({
+            "scenario": scenario,
+            "audio": rel_wav,
+            "reference": f"{sub}/{path.with_suffix('.txt').name}",
+            "repeatCount": repeats,
+            "audioSha256": sha256_file(path),
+            "referenceSha256": sha256_file(path.with_suffix(".txt")),
+            **wav_stats(path),
+        })
         print(f"  ✓ {sub + '/synth_' + scenario + '_' + src.stem + '.wav':<40}"
               f"{len(audio) / SAMPLE_RATE:>7.1f}s  场景={scenario}"
               + (f"  语音重复 {repeats} 次" if scenario == "long" else ""))
 
+    out_rel = repo_rel(out_dir, root)
     print(f"\n共生成 {len(made)} 个文件到 {out_dir}")
-    print("  · 短用例 → tests/audio/short  （配合 eval_asr_quality.py --audio-dir，尽快喂完）")
-    print("  · 长用例 → tests/audio/long   （配合 eval_asr_quality.py --audio-dir --realtime）")
+    if any(m[0].startswith("short/") for m in made):
+        print(f"  · 短用例 → {out_rel}/short  （配合 eval_asr_quality.py --audio-dir，尽快喂完）")
+    if any(m[0].startswith("long/") for m in made):
+        print(f"  · 长用例 → {out_rel}/long   （配合 eval_asr_quality.py --audio-dir --realtime）")
     print("注：这些是**合成**素材（由同一个源音频做信号处理得到），")
     print("    用于验证管道鲁棒性与长时稳定性，**不能替代真实网课录音的准确率结论**。")
+
+    # ---- 可选：写出这一批产物的 metadata（源指纹 / 算子 / 逐格 sha256+统计）----
+    # 全部数值都从**落盘产物**现读，不记内存值 —— 这样重跑一次就能重建，
+    # 不需要任何手抄；`entries` 里的 sha256 因此可以直接拿去和磁盘对账。
+    if args.metadata_out:
+        meta_path = Path(args.metadata_out)
+        if not meta_path.is_absolute():
+            meta_path = root / meta_path
+
+        # 自证：每一格的参考文本都必须**逐字节**等于源参考文本。
+        # 这是「配对精确」唯一的机器可判证明；只要有一格不等，就说明复制环节被改过，
+        # 与其把假的同源性写进 metadata，不如当场失败、不留下这份证据。
+        src_ref_sha = sha256_file(ref_path)
+        identical = all(e["referenceSha256"] == src_ref_sha for e in entries)
+
+        meta = {
+            "kind": "SYNTH",
+            "warning": (
+                "信号处理合成的劣化集：由**同一个** TTS 源音频经算子（加噪 / 压峰 / 变速 / "
+                "自身叠加）得到。它测的是**管道鲁棒性**，不是真实课堂的识别准确率 —— "
+                "无口音、无口误、无混响，背景噪声也是合成的低频 babble 而非真人嘈杂。"
+                "**绝不能把这里的 WER/CER 当成真实中文场景的结论**；"
+                "accent（口音）场景刻意不合成，留空等真人录音。"
+            ),
+            "generatedBy": "scripts/make_asr_testset.py",
+            "argv": display_argv(root),
+            "seed": args.seed,
+            "longMinutes": args.long_minutes,
+            "source": {
+                "audio": repo_rel(src, root),
+                "audioSha256": sha256_file(src),
+                "reference": repo_rel(ref_path, root),
+                "referenceSha256": src_ref_sha,
+                "referenceChars": len(ref_text),
+                "durationSeconds": round(len(source) / SAMPLE_RATE, 2),
+            },
+            "operators": {
+                "SNR_DB": SNR_DB,
+                "LOWVOL_PEAK_DBFS": LOWVOL_PEAK_DBFS,
+                "FAST_FACTOR": FAST_FACTOR,
+                "OVERLAP_DELAY_S": OVERLAP_DELAY_S,
+                "OVERLAP_GAIN": OVERLAP_GAIN,
+                "note": "全部是**语言无关**的信号处理常量，写在源码里；"
+                        "改这些数字就是改「考得多难」，都摆在明面上便于复现。",
+            },
+            "referenceIdentity": {
+                "allIdenticalToSource": identical,
+                "sourceReferenceSha256": src_ref_sha,
+                "note": "各格 .txt 与源 .txt **逐字节相同**（行尾同为 LF，由 newline='\\n' 保证）。"
+                        "参考文本随劣化原样复制 → 配对精确，这是合成集里唯一真正干净的一环。",
+            },
+            "entries": entries,
+        }
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",      # 同上：不写死 LF 就会在 Windows 上变成 CRLF
+        )
+        print(f"\n写出 {meta_path}")
+        print(f"  参考文本逐字节等于源: {'是 ✓' if identical else '否 ❌'}")
+        if not identical:
+            print("  ❌ 有格子的参考文本与源不一致 —— 上面这份 metadata 不足以证明「配对精确」，已按失败退出。")
+            return 1
     return 0
 
 
