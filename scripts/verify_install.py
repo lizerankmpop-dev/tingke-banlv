@@ -39,8 +39,11 @@ v3.4.0 起新增 **S 层（稳定性加固）断言**。为什么非要在「实
 用法
 ----
     <venv>/Scripts/python.exe scripts/verify_install.py \
-        --installer frontend/release/tingkebanlv-3.4.0-setup.exe \
+        --installer frontend/release/tingkebanlv-3.4.1-setup.exe \
         [--hold 150] [--report packaging/verify/report.json]
+
+安装包文件名里的版本号 = frontend/package.json 的 `version`（electron-builder 自动拼），
+升版后这里要跟着改 —— 留一个已不存在的路径示例，等于给出一条跑不通的命令。
 
 退出码：0 全部通过；1 有阻断项失败。报告同时落盘 JSON 与文末摘要。
 

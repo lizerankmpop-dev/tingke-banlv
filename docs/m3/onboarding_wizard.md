@@ -420,17 +420,43 @@
 
 ## 七、可重现入口（跳过后的找回路径）
 
-用户跳过后必须能重新打开。建议放两处：
+用户跳过后必须能重新打开 —— 否则「跳过」这个按钮等于一次性，点了就再也见不到向导。
 
-1. **帮助菜单 / 关于对话框**里：「重新查看新手引导」按钮 → 重置 `completed` 并重新弹出。
-2. **首次创建课程**时，若 `completed === false`，在课程配置页顶部挂一条**非模态**提示条：
+### 7.1 设计稿原方案（两处都未按原样落地）
 
-```
-  第一次用？[ 花 1 分钟看下怎么用 ]   ×
-```
+原设计建议放两处：
+
+1. ~~**帮助菜单 / 关于对话框**里：「重新查看新手引导」按钮 → 重置 `completed` 并重新弹出。~~
+2. ~~**首次创建课程**时，若 `completed === false`，在课程配置页顶部挂一条**非模态**提示条。~~
 
 > 第 2 点在交互上比强制模态更友好：用户此刻正在做「创建课程」这件真实的事，
 > 引导嵌在这个上下文里比悬空的模态窗更容易被接受。
+
+**第 1 点落不了地**，因为本项目**没有「帮助 / 关于」入口**可挂 —— 这不是「懒得加按钮」，
+而是**缺一个落点**（`src/pages/` 下 7 个组件里有 4 个是独立窗口路由，主窗口只有 5 个视图，
+且没有「帮助 / 关于」页面）。所以实现前先做了一次**落点设计**（§13.1）。
+**第 2 点未实现**，按 §九#4 的决策：先只做一处，观察埋点数据再决定。
+
+### 7.2 实际实现（v3.4.1，2026-10-10）
+
+**落点：课程列表页（真首页）标题栏右上角的一个 `?` 图标按钮。**
+
+| 环节 | 位置 | 说明 |
+|---|---|---|
+| 按钮 | `frontend/src/pages/CourseList.tsx` 的 `styles.titleBar` 内 | `HelpCircle` 图标 + `data-testid="onboarding-reopen"`；`aria-label`/`title` 取 `WIZARD_COPY` |
+| 文案 | `frontend/src/lib/onboarding.ts` 的 `WIZARD_COPY.reopen` / `.reopenHint` | 「重新查看新手引导」/「随时回看这 6 步引导」，受文案审计守卫 |
+| 渲染层桥 | `frontend/src/lib/onboardingBridge.ts` 的 `reopen()` | **实现早已存在**，本次只补调用点；带浏览器降级 + try/catch |
+| preload | `frontend/electron/preload.cjs` 的 `onboarding.reopen` | 早已存在 |
+| 主进程 | `frontend/electron/main.cjs` 的 `ipcMain.handle('onboarding:reopen')` | 早已存在；本次加了「窗口已开则不重复上报 `start`」 |
+
+**为什么不在渲染层判断「向导是否已完成」**：渲染进程没有 fs，状态的唯一读写点在主进程
+（`main.cjs:1964` 的注释）；而且 `force` 语义是**刻意**排在最前的（§2.3）—— 在渲染层再判一次
+等于把同一个决策存两份，必然漂移。要状态就用已有的 `onboarding:get-state`。
+
+**⚠️ 踩坑记录（只在打包后暴露）**：`styles.titleBar` 整条是 `WebkitAppRegion: 'drag'`
+（窗口拖拽区）。往里面加按钮**必须**标 `WebkitAppRegion: 'no-drag'`，否则点击事件被拖拽区
+吃掉 —— **在浏览器里调试一切正常，只有打包后的 Electron 里点不动**。因此：
+样式里显式标注 + `tests/onboarding-copy.test.mts` 增加一条静态守卫盯着它 + L4 真机手点。
 
 ---
 
@@ -443,7 +469,7 @@
 | 1 | 全新环境首次启动自动弹出 | 删除 `%APPDATA%/听课伴侣/onboarding.json` 后启动 |
 | 2 | 走完后不再自动弹出 | 重启应用确认 |
 | 3 | 点「跳过」后不再自动弹出 | 重启应用确认 |
-| 4 | 「重新查看引导」能再次打开 | 帮助入口点一次 |
+| 4 | 「重新查看引导」能再次打开 | 课程列表页标题栏的 `?` 按钮点一次（**v3.4.1 落点**，见 §7.2） |
 | 5 | 第 3 步模型不可用时的错误分支可复现 | 临时改名 `$HOME/whisper_models` 与 `resources/whisper_models` |
 | 6 | 兼容模式下**不**自动弹出 | 触发兼容模式启动后观察 |
 | 7 | 向导中所有开关都有 `role="switch"` 与 `aria-checked` | 代码审查 + 无障碍树检查 |
@@ -451,7 +477,7 @@
 | 9 | `onboarding.json` 写入是原子的 | 复用 `overlay-settings.cjs` 的原子写单测模式 |
 | 10 | 向导步骤埋点已写入 `onboarding.json` | 走完后读文件 |
 
-补充到现有冒烟脚本（`frontend/scripts/smoke-overlay.cjs`，当前 9 项）的建议用例：
+补充到现有冒烟脚本（`frontend/scripts/smoke-overlay.cjs`，设计时 9 项 → v3.4.1 为 **13** 项）的建议用例：
 
 - `首次启动弹出向导`（预置不存在的 `onboarding.json`）
 - `向导卡片渲染无错误`（检测 `#root` 有子节点 + 无 `连接错误|加载失败|Cannot` 文案）
@@ -466,7 +492,7 @@
 | 1 | 是否做「导入自定义术语表」（§3 第 6 步可选段） | 建议**先不做**，删除该段文案；M3 聚焦在「讲清楚」而非新增后端能力 |
 | 2 | 步骤数 6 步是否过长 | 建议保留 6 步，但第 1、2、3 步可合并为「一屏内滚动」，减少点击次数 |
 | 3 | 是否在兼容模式下完全禁用 | 建议**推迟而非禁用**（§2.3） |
-| 4 | 是否需要「重新查看引导」以外的入口 | 建议先只做一处，观察埋点数据再决定 |
+| 4 | 是否需要「重新查看引导」以外的入口 | **已按「先只做一处」落地**（v3.4.1，课程列表页标题栏，见 §7.2）。原方案第 2 点（课程配置页提示条）仍未做，待埋点数据 |
 
 ---
 
@@ -895,4 +921,85 @@ ok ⑥b 重试后模型就绪仍能自动跳到第 4 步 — 当前步=4
 - `electron:build` **不重建后端**（§11.4 缺陷 A 的配套提醒仍然有效）：只要动了
   `backend/`，发布前必须先用 venv PyInstaller 单独重建 `packaging/out/backend-server`。
 - P3 唯一缺口不变：**中文真实网课音频 ≥10min + 逐字稿**仍未拿到。
+
+---
+
+## 十三、找回入口落地 + 会话计时修正（v3.4.1，2026-10-10）
+
+本轮原本只想做「补一个找回入口」，调研时发现**必须先修一个潜伏缺陷**，否则一加入口就把埋点写坏。
+两件事同一次提交、同一个包。
+
+### 13.1 先定落点，再动手（原设计方案的落点不存在）
+
+| 原方案 | 结论 |
+|---|---|
+| 挂在「帮助菜单 / 关于对话框」 | 🔴 **落点不存在** —— 全仓没有「帮助 / 关于」入口；`src/pages/` 7 个组件里 4 个是独立窗口路由（`OnboardingWizard`/`OverlayWindow`/`SubtitleOverlay`/`DictionaryWindow`），主窗口实际只有 5 个视图（`App.tsx` 的 switch） |
+| 挂在「导出设置弹窗」「高级ASR参数弹窗」等 | 🔴 **容器不存在** —— `src/components/` 只有 4 个组件；grep `ExportDialog|AdvancedAsrDialog|TermDictionaryDialog` 零命中 |
+
+**最终落点**：课程列表页（真首页）标题栏右上角 `?` 图标（理由与实现见 §7.2）。
+
+> 教训：**「加个按钮」类需求，第一步是确认落点真实存在**，而不是直接写 JSX。
+> 设计稿里写下的「帮助菜单」在代码里可能从来没有过。
+
+### 13.2 会话计时修正（比入口本身更值钱）
+
+`startedAt` 语义是「**首开**时间」，而 `markCompleted` 用 `完成 − startedAt` 算 `durationMs`
+（`onboarding-state.cjs`）。向导窗口**每被打开一次就是一次新会话**，于是第二次之后的耗时全部被累加。
+实测（直接跑真身模块，非推断）：
+
+| 场景 | 路径 | 修正前 | 真实会话 | 修正后 | 今天可达 |
+|---|---|---|---|---|---|
+| ① | 已完成 → `onboarding:reopen` → 走完 | 777720000（12962m0s）| 2m | **120000** | 需入口 |
+| ② | 跳过 → 一周后 reopen → 走完 | 604980000（10083m0s）| 3m | **180000** | 需入口 |
+| ③ | 正常首次走完（**对照组**）| 300000 | 5m | 300000 | 一直是好的 |
+| ④ | **点右上角 × → 重启自动弹出 → 走完** | 60000（1m0s）| 40s | **40000** | ✅ **既有线上缺陷** |
+
+- 场景 ④ 不需要任何新入口：`onboarding:close` **刻意不写标记**（§2.3 的语义），所以下次启动仍会弹，
+  而旧实现把会话起点留在了上一次启动 → **这是本轮之前就存在的线上数据污染**。
+- 修法：`markStarted` 由 `s.startedAt || nowIso(at)` 改为 `nowIso(at)` —— 每次 `start` = 开一次新会话。
+  语义单一、无死分支，且 **`main.cjs` 两处调用点一行都不用改**。
+- 连带同步：`src/types/index.ts` 的 `startedAt` 注释（原写「用户第一次看到向导的时间」）、
+  `markStarted` 的 docstring、`tests/onboarding-state.test.cjs` 里「只写一次」那条断言（**有意改语义**）。
+- 另加一行保护：`onboarding:reopen` 在窗口**已经开着**时不重复上报 `start` —— 否则用户在向导开着时
+  误点会重置会话起点，并多打一行 `[onboarding] 向导已打开`，而 `drive-onboarding.cjs` 正在**计数**这行。
+
+### 13.3 版本号双源一致性守卫（顺带补上的缺口）
+
+升版时发现版本号有**三个出口**，此前只有它们各自为政：
+
+1. `frontend/package.json` 的 `version` → electron-builder 拼安装包名 + 主进程 `app.getVersion()`；
+2. `backend/main.py` 的 `APP_VERSION` → `/api/ping` 的 `version` 字段（`main.py:211`）；
+3. git tag / Release Note / L4 报告里的文件名。
+
+实测踩到：改了 ①、漏了 ② → 「装的是 3.4.1、`/api/ping` 报 3.4.0」，**没有任何测试会变红**。
+新增 `frontend/tests/version-consistency.test.cjs` 逐字对拍 ①②（套路同 `onboarding-aumid.test.cjs`
+守 AUMID↔`build.appId`），含变异自证（正则若恒真/恒假会红）。
+
+### 13.4 本轮踩的三个坑（都已堵上）
+
+1. **`WebkitAppRegion` 拖拽区吃掉点击**（§7.2）：标题栏是 `drag` 区，按钮不加 `no-drag` 就点不动，
+   且**只在打包后的 Electron 里失效**。→ 静态守卫 + L4 真机手点。
+2. **补丁脚本只验了行尾和字符串，没验语法**：给 `backend/main.py` 加多行注释时只给首行加了 `#`，
+   造成 `SyntaxError: invalid character '—'`，5 个 pytest 收集错误一起报错。
+   → 补丁脚本升级为**落盘前必须 `py_compile` 通过**（新增硬门禁），修完再跑一次全量。
+3. **`npm run package:win` 里的 `python` 不是 venv**：`backend:build` 用裸 `python`，
+   在受管环境里解析到无 PyInstaller 的解释器 → 构建中断。
+   → 重建后端必须显式用 `<venv>/Scripts/python.exe`（`electron:build` 同样有此风险）。
+
+### 13.5 验证基线（v3.4.1）
+
+| 层 | 命令 | 结果 |
+|---|---|---|
+| L1 纯逻辑单测 | `cd frontend && npm test` | **156 通过 / 0 失败**（v3.4.0 为 150）|
+| L2 接口测试 | `cd backend && <venv>/python.exe -m pytest tests/ -q` | **306 通过 / 1 跳过**（与 v3.4.0 一致）|
+| tsc | `npx tsc --noEmit` | **0 错** |
+| L3 端到端冒烟（CDP） | `cd frontend && npm run test:smoke` | **13/13 通过**（v3.4.0 为 12/12）|
+| L4 实装验证 | `scripts/verify_install.py --installer <新包> --hold 150 --expect-sha256 <新哈希>` | 见 §13.6 |
+| 会话计时 | 真身模块四场景 | **7 PASS / 0 FAIL**；变异（改回旧写法）→ ①②④ 全 RED、对照组③ 仍 PASS |
+
+副本对拍：`tracked=154 same=154 diff=0 miss=0`。
+
+### 13.6 L4 实装验证（v3.4.1）
+
+（见本轮 Release Note `RELEASE-NOTE-v3.4.1.md`；报告顶层 `artifact` 自带包指纹。）
 

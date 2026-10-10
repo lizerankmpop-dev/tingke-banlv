@@ -320,7 +320,7 @@ export interface OverlaySubtitlePayload {
  */
 export interface OnboardingState {
   schemaVersion: number
-  /** 用户第一次看到向导的时间（ISO 8601） */
+  /** 本次向导会话的开始时间（每打开一次向导都会刷新；ISO 8601） */
   startedAt: string | null
   /**
    * 走到过的**最深**一步（1..6，0 = 还没开始）

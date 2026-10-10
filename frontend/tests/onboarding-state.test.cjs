@@ -181,11 +181,53 @@ test('shouldShowWizard · 判断顺序：compatMode 报告先于 backendReady（
 
 // ---------------------------------------------------------------- mark* / humanDuration
 
-test('markStarted · startedAt 只写一次，重复调用不覆盖；stepReached 至少到 1', () => {
+test('markStarted · 每次调用都刷新「本次会话」起点；stepReached 至少到 1', () => {
+  // 语义变更（2026-10-10）：`startedAt` 是「本次会话开始时间」，不是「首开时间」。
+  // 向导窗口每被打开一次就是一次新会话（自动弹出 / onboarding:reopen / macOS 激活），
+  // 旧实现「只写一次」会让第二次之后的 durationMs 累加成天文数字（实测 12962m0s）。
   const a = state.markStarted(FRESH, T0);
-  const b = state.markStarted(a, '2026-10-06T23:59:00.000Z');
-  assert.equal(b.startedAt, T0, '二次打开向导不应覆盖首开时间（耗时统计依赖它）');
+  assert.equal(a.startedAt, T0);
+
+  const T1 = '2026-10-06T23:59:00.000Z';
+  const b = state.markStarted(a, T1);
+  assert.equal(b.startedAt, T1, '再次打开向导＝新会话，起点必须刷新 —— 否则耗时记成跨会话总时长');
   assert.equal(b.stepReached, 1);
+
+  // 不变量：刷新起点不得抹掉「走到过的最深一步」
+  assert.equal(state.markStarted(state.markStep(a, 4), T1).stepReached, 4, 'stepReached 只增不减');
+});
+
+test('会话耗时 · 四个场景的 durationMs 都等于「本次会话」时长（旧实现全部污染）', () => {
+  // 把真实缺陷固化成回归：把 markStarted 改回 `s.startedAt || nowIso(at)` 会全部变红。
+  const T = (s) => new Date(`2026-10-01T${s}Z`).toISOString();
+  const day = (d, s) => new Date(`2026-10-${d}T${s}Z`).toISOString();
+  const start = (st, at) => state.describeEvent(st, 'start', { at }).state;
+  const complete = (st, at) => state.describeEvent(st, 'complete', { at }).state;
+  const dismiss = (st, at) => state.describeEvent(st, 'dismiss', { at }).state;
+
+  // ③ 正常首次走完（对照组，任何修法都不能改坏它）
+  const first = complete(start(FRESH, T('00:00:00')), T('00:05:00'));
+  assert.equal(first.durationMs, 300000);
+
+  // ① completed → 重新查看向导 → 走完（会话 2 分钟）。旧实现记成 12962m0s
+  const reopened = complete(start(first, day('10', '00:00:00')), day('10', '00:02:00'));
+  assert.equal(reopened.durationMs, 120000, '重开走完必须只算本次会话');
+
+  // ② 跳过 → 一周后重新查看向导 → 走完（会话 3 分钟）。旧实现记成 10083m0s
+  const afterDismiss = complete(
+    start(dismiss(start(FRESH, T('00:00:00')), T('00:00:30')), day('08', '00:00:00')),
+    day('08', '00:03:00'),
+  );
+  assert.equal(afterDismiss.durationMs, 180000);
+
+  // ④ 点右上角 ×（不写标记）→ 重启自动弹出 → 走完（会话 40 秒）。
+  //    这条**不依赖任何新入口**，是改动前就存在的线上缺陷：close 刻意不写标记，
+  //    所以下次启动仍会弹出，而旧实现把会话起点留在了上一次启动。
+  const closedByX = start(FRESH, T('00:00:00'));
+  assert.equal(state.shouldShowWizard(closedByX, { backendReady: true }).show, true,
+    '点 × 不等于拒绝，下次启动仍应弹出');
+  const secondRun = complete(start(closedByX, T('00:00:20')), T('00:01:00'));
+  assert.equal(secondRun.durationMs, 40000);
 });
 
 test('markStep · 只增不减（它衡量「卡在哪」，不是「当前在哪」）', () => {

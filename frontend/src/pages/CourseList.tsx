@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/useAppStore'
 import { useCourseStore } from '../stores/useCourseStore'
-import { Plus, Trash2, BookOpen, Hash, Clock, ChevronRight, Play, Monitor, School, FileText, Languages } from 'lucide-react'
+import { Plus, Trash2, BookOpen, Hash, Clock, ChevronRight, Play, Monitor, School, FileText, Languages, HelpCircle } from 'lucide-react'
+import { WIZARD_COPY } from '../lib/onboarding'
+import { onboardingBridge } from '../lib/onboardingBridge'
 
 const DOMAINS = ['计算机科学', '医学', '生物学', '物理学', '数学', '化学', '法律', '经济学', '哲学', '历史', '文学', '其他']
 const LANGUAGES = [
@@ -59,6 +61,18 @@ export default function CourseList() {
         <BookOpen size={20} color="var(--accent-light)" />
         <span style={styles.title}>听课伴侣</span>
         <span style={styles.subtitle}>我的课程</span>
+        {/* 找回入口（#154）：向导跳过或被关闭后不再自动弹出，这里留一条回看路径。
+            文案一律取 WIZARD_COPY，受 onboarding-copy.test.mts 的禁词审计。 */}
+        <button
+          type="button"
+          data-testid="onboarding-reopen"
+          onClick={() => void onboardingBridge.reopen()}
+          style={styles.helpBtn}
+          title={WIZARD_COPY.reopenHint}
+          aria-label={WIZARD_COPY.reopen}
+        >
+          <HelpCircle size={16} />
+        </button>
       </div>
 
       {/* 课程列表 */}
@@ -235,6 +249,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   title: { fontSize: 22, fontWeight: 700, color: 'var(--accent-light)' },
   subtitle: { fontSize: 13, color: 'var(--text-muted)', marginLeft: 'auto' },
+  // 找回入口按钮。⚠️ 标题栏整条是 drag 区（WebkitAppRegion:'drag'），
+  // 按钮不标 no-drag 就**点不动** —— 浏览器里调试一切正常，只在打包后失效。
+  helpBtn: {
+    background: 'none', border: 'none', color: 'var(--text-muted)',
+    padding: 4, borderRadius: 4, cursor: 'pointer', display: 'flex',
+    // @ts-ignore
+    WebkitAppRegion: 'no-drag',
+  },
   listArea: { flex: 1, overflow: 'auto', padding: '0 20px' },
   empty: { textAlign: 'center', color: 'var(--text-muted)', marginTop: 60, fontSize: 14 },
   emptyState: { textAlign: 'center', marginTop: 80, display: 'flex', flexDirection: 'column', alignItems: 'center' },

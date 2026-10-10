@@ -2005,7 +2005,12 @@ ipcMain.handle('onboarding:close', () => {
  * 「推迟」判断：推迟针对的是**自动**弹出，不是禁止用户主动打开。
  */
 ipcMain.handle('onboarding:reopen', () => {
-  recordOnboardingEvent('start', {});
+  // 窗口已经开着时**不重复上报 start**：`markStarted` 每次调用都会刷新会话起点，
+  // 多报一次会把耗时截短；同时 `describeEvent('start')` 必打一行
+  // 「[onboarding] 向导已打开」，而 `scripts/drive-onboarding.cjs` 正在**计数**
+  // 这行日志（把它当作「本次启动弹了几次向导」的证据）。
+  // 主窗口没有模态、向导开着时这个入口仍可点，所以必须挡在这里。
+  if (!isOnboardingOpen()) recordOnboardingEvent('start', {});
   createOnboardingWindow();
   return { open: isOnboardingOpen() };
 });

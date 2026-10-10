@@ -172,10 +172,22 @@ function nowIso(at) {
   return new Date().toISOString();
 }
 
-/** 记为已开始（写 startedAt 只写一次，重复调用不覆盖） */
+/**
+ * 记为已开始 —— **每调用一次就开一次新会话**
+ *
+ * `startedAt` 是「本次会话开始时间」，不是「首开时间」。把这两个概念混在一起
+ * 是本项目的一个既有缺陷：`markCompleted` 用「完成 − startedAt」算时长，而向导
+ * 窗口每被打开一次就是一次新会话（自动弹出 / `onboarding:reopen` / macOS 重新
+ * 激活）。旧实现「只写一次」会让第二次之后的耗时累加成天文数字。
+ *
+ * 实测（直接跑本模块，非推断）：
+ *   · 首开走完 2m0s → 重开再走完记成 12962m0s
+ *   · 跳过 → 一周后重开走完 记成 10083m0s（真实会话 3m）
+ *   · 点 × 后重启再走完 记成 1m0s（真实会话 40s；**这条不依赖任何新入口，今天就可达**）
+ */
 function markStarted(state, at) {
   const s = normalizeOnboarding(state);
-  return { ...s, startedAt: s.startedAt || nowIso(at), stepReached: Math.max(s.stepReached, 1) };
+  return { ...s, startedAt: nowIso(at), stepReached: Math.max(s.stepReached, 1) };
 }
 
 /** 记录「走到过的最深一步」—— 只增不减，它衡量的是用户卡在哪，不是当前在哪 */

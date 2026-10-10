@@ -51,6 +51,9 @@ export const WIZARD_COPY = {
   skipAll: '跳过',
   done: '开始使用',
   close: '关闭',
+  // 找回入口（挂在课程列表页标题栏）：跳过后向导不再自动弹出，需留一条回看路径
+  reopen: '重新查看新手引导',
+  reopenHint: '随时回看这 6 步引导',
 
   // ---- 第 1 步 · 欢迎 ----
   step1Title: '欢迎使用听课伴侣',

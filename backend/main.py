@@ -59,7 +59,12 @@ from fastapi.staticfiles import StaticFiles
 from api.routes import router
 from dependencies import db
 
-APP_VERSION = "3.4.0"
+# 后端对外版本（/api/ping 的 version 字段就是它）。
+# 必须与 frontend/package.json 的 version 逐字一致：安装包名、主进程
+# app.getVersion()、后端 /api/ping 是同一个版本号的三个出口，对不上时
+# 排障会看到「装的是 3.4.1、ping 报 3.4.0」。
+# frontend/tests/version-consistency.test.cjs 逐字对拍这两处。
+APP_VERSION = "3.4.1"
 
 # ============ 回环流量必须绕过系统代理 ============
 # 企业/校园网络常预设 HTTP_PROXY / HTTPS_PROXY，而 httpx 与 urllib 默认会信任

@@ -127,6 +127,43 @@ test('第 4 步 · 穿透三态说明齐备（这是用户最反直觉的一步�
   assert.match(String(c.step4State3Title), /重置位置/);
 });
 
+// ---------------------------------------------------------------- 找回入口（#154）
+
+test('找回入口文案 · 存在且不含禁词', () => {
+  // 入口挂在课程列表页标题栏（主窗口第一眼可见处），文案口径必须与向导内一致。
+  const reopen = String(WIZARD_COPY.reopen);
+  const hint = String(WIZARD_COPY.reopenHint);
+  assert.ok(reopen.trim().length > 0, '入口主文案不得为空');
+  assert.ok(hint.trim().length > 0, '入口 hover 提示不得为空');
+  assert.notEqual(reopen, hint, '主文案与 hover 提示应是两句不同的话（各自承担不同信息）');
+  // auditCopy 已遍历整个 WIZARD_COPY，这里显式再点一次，失败时能直接定位到这两条
+  assert.deepEqual(auditCopy({ reopen, hint } as unknown as CopyTree), []);
+});
+
+test('源守卫 · CourseList 的入口必须走 WIZARD_COPY 且标 no-drag', () => {
+  // 组件里写中文字面量 = 同一句话存两份，改一处必漂移（本项目教训 1）。
+  const src = readFileSync(join(HERE, '..', 'src', 'pages', 'CourseList.tsx'), 'utf8');
+
+  assert.match(src, /data-testid="onboarding-reopen"/,
+    '入口按钮必须带稳定选择器 —— 冒烟脚本按它断言（用中文文本会把脚本绑死在文案上）');
+  assert.match(src, /aria-label=\{WIZARD_COPY\.reopen\}/, '可访问名必须指向 WIZARD_COPY.reopen');
+  assert.match(src, /title=\{WIZARD_COPY\.reopenHint\}/, 'hover 提示必须指向 WIZARD_COPY.reopenHint');
+  assert.match(src, /onboardingBridge\.reopen\(\)/, '按钮必须真的调用桥接层，否则只是个装饰');
+
+  // 反向：组件里不得出现自己那份中文
+  assert.ok(!src.includes(String(WIZARD_COPY.reopen)),
+    '组件里出现了主文案字面量 —— 必须走 WIZARD_COPY（否则改文案会漏改）');
+  assert.ok(!src.includes(String(WIZARD_COPY.reopenHint)),
+    '组件里出现了 hover 文案字面量 —— 必须走 WIZARD_COPY');
+
+  // ⚠️ 标题栏整条是 drag 区，按钮不标 no-drag 就**点不动**：
+  // 浏览器里调试一切正常，只在打包后失效 —— 只能靠这条静态守卫 + 真机手点兜住。
+  const helpBtn = /helpBtn:\s*\{[\s\S]*?\}/.exec(src);
+  assert.ok(helpBtn, '必须定义 helpBtn 样式');
+  assert.match(helpBtn[0], /WebkitAppRegion:\s*'no-drag'/,
+    'helpBtn 必须标 no-drag（标题栏是 drag 区，不标就点不动）');
+});
+
 // ---------------------------------------------------------------- 结构
 
 test('步骤数三处一致：TOTAL_STEPS / STEP_TITLES / state 模块', () => {

@@ -250,6 +250,9 @@ const PROBE = `(() => {
     bodyBg: getComputedStyle(document.body).backgroundColor,
     rootChildren: root ? root.childElementCount : -1,
     text: (root && root.innerText ? root.innerText : '').slice(0, 200),
+    // #154 找回入口。用 data-testid 而不是中文文本：本脚本 require 不到 TS 文案，
+    // 匹配中文字面量等于把同一句话存两份（本项目教训 1）。
+    reopenEntry: !!document.querySelector('[data-testid="onboarding-reopen"]'),
   }
 })()`
 
@@ -412,6 +415,21 @@ async function main() {
       )
       check('主窗口不在 /overlay（两个入口未串）', mainInfo.hash !== '#/overlay', `实际 ${mainInfo.hash || '(空)'}`)
       check('主窗口 React 已挂载', mainInfo.rootChildren > 0, `子节点数 ${mainInfo.rootChildren}`)
+
+      // #154 找回入口。单独等一次：如果入口缺失，这里超时即可，
+      // 不会把上面「React 已挂载」那条也一起拖红（两条断言各管一件事）。
+      const entryInfo = await waitForProbe(main, (r) => r.reopenEntry, 30, '找回入口出现').catch(
+        () => evaluate(main, PROBE).catch(() => ({}))
+      )
+      check(
+        '主窗口有「重新查看新手引导」入口（#154）',
+        entryInfo.reopenEntry === true,
+        // detail 无论成败都会打印，所以必须写成「事实 + 只在失败时才有意义的后半句」，
+        // 否则成功日志里会挂着一条读起来像失败的说明。
+        entryInfo.reopenEntry
+          ? '课程列表页标题栏的 data-testid=onboarding-reopen 按钮已渲染'
+          : '课程列表页标题栏未找到 data-testid=onboarding-reopen 的按钮'
+      )
     }
 
     if (wizard) {
