@@ -41,6 +41,17 @@
 文件名前缀会被识别为场景并分类汇总，用于横向对比不同录音条件下的表现：
 `clean_` / `accent_` / `noise_` / `multi_`（多人叠话）/ `lowvol_` / `fast_`（连读快语速）
 
+来源类型
+--------
+与场景（录音条件）**正交**的第二个维度，取值 `tts-synth` / `human-recording` / `unknown`。
+优先从样本就近的 `metadata.json` 读（`kind` 或 `sourceKind` 字段），
+也支持 `--source-kind` 显式覆盖。读不到就是 `unknown`，**不抛异常**（旧素材本来就没有 metadata）。
+
+逐样本 CER 门禁
+---------------
+`--max-cer <x>`：单条样本 CER 超过 x 就把它标成 `rejected` 写进报告，**不中断批量评估**
+（`--max-wer` 是整轮均值门禁，两者分工不同）。
+
 术语热词 A/B
 ------------
 `--terms on|off` 控制是否注入领域术语热词（默认 on）。同一个音频分别跑一次即可
@@ -74,6 +85,108 @@ SAMPLE_RATE = 16000
 CHUNK_SIZE = 512
 
 SCENARIOS = ("clean", "accent", "noise", "multi", "lowvol", "fast", "long")
+
+
+
+# ============ 来源类型（sourceKind）：与 scenario 正交的第二个维度 ============
+#
+# `scenario` 描述**录音条件**（clean / noise / lowvol / fast / multi / long），
+# `sourceKind` 描述**这份素材是什么造出来的**（合成 / 真人）。两者必须分开统计：
+# 合成素材可以被劣化成 noise 格，真人也可能是干净的 —— 一旦混进同一个桶，
+# 「合成劣化的 CER」与「真人录音的 CER」会被平均成一个没有物理意义的数。
+SOURCE_KIND_TTS = "tts-synth"
+SOURCE_KIND_HUMAN = "human-recording"
+SOURCE_KIND_UNKNOWN = "unknown"
+
+# metadata.json 的 `kind` → sourceKind。**只登记已知取值**；没登记的一律落
+# unknown 并在报告里说明 —— 猜出来的来源比没有来源更坏（事后没人能发现它是猜的）。
+_METADATA_KIND_MAP = {
+    "PROXY": SOURCE_KIND_TTS,          # make_chinese_testset.py 合成的代理集
+    "CLIP-FROM-TTS": SOURCE_KIND_TTS,  # clip_tts_paragraphs.py 从 TTS 长素材切出的短样本
+    "SYNTH": SOURCE_KIND_TTS,          # make_asr_testset.py 的信号处理合成集
+    "REAL": SOURCE_KIND_HUMAN,         # real/ 下人工挑选的真实录音
+}
+# 样本目录 → 上一级 → 上两级。为什么要往上找：`long/` 目录自己没有 metadata，
+# 登记在上一级 `chinese_lecture/metadata.json`；`short/` 与 `real/` 则同级各一份。
+_METADATA_SEARCH_LEVELS = 2
+
+
+def find_metadata(path: Path, levels: int = _METADATA_SEARCH_LEVELS) -> dict | None:
+    """向上就近找 `metadata.json`（样本自己的目录优先）；找不到返回 None。
+
+    **找不到是常态，不是错误**：旧素材（如 `tests/audio/**`）本来就没有 metadata，
+    绝不能因此抛异常把整轮评估打断。
+    """
+    base = path.parent
+    seen: set[Path] = set()
+    for _ in range(levels + 1):
+        if base in seen:
+            break
+        seen.add(base)
+        cand = base / "metadata.json"
+        if cand.is_file():
+            try:
+                data = json.loads(cand.read_text(encoding="utf-8"))
+            except Exception:
+                return None      # 坏 metadata 只当「取不到」，不能让整轮评估崩掉
+            return data if isinstance(data, dict) else None
+        base = base.parent
+    return None
+
+
+def resolve_source_kind(path: Path, explicit: str | None = None) -> tuple[str, str]:
+    """返回 `(sourceKind, 判据)`。
+
+    判据必须能写进报告 —— 事后靠回忆「当时是按什么分的」不算证据
+    （与 `referenceSource` 同一个理由）。
+
+    优先级：显式 `--source-kind` > metadata 的 `sourceKind` 字段 >
+            metadata 的 `kind` 映射 > unknown。
+    """
+    if explicit:
+        return explicit, f"命令行 --source-kind {explicit}"
+    meta = find_metadata(path)
+    if meta is None:
+        return SOURCE_KIND_UNKNOWN, "未找到 metadata.json"
+    direct = meta.get("sourceKind")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip(), "metadata.json 的 sourceKind 字段"
+    kind = meta.get("kind")
+    if isinstance(kind, str) and kind.strip():
+        mapped = _METADATA_KIND_MAP.get(kind.strip().upper())
+        if mapped:
+            return mapped, f"metadata.json kind={kind.strip()}"
+        return SOURCE_KIND_UNKNOWN, f"metadata.json kind={kind.strip()}（未登记映射）"
+    return SOURCE_KIND_UNKNOWN, "metadata.json 里既无 sourceKind 也无 kind"
+
+
+def apply_cer_gate(result: dict, max_cer: float | None) -> None:
+    """逐样本 CER 阈值守卫：就地写入 `rejected` / `rejectReason`。
+
+    与 `--max-wer` 的分工**不同，别混用**：
+      · `--max-wer` 是**整轮平均** WER 门禁（在 `verdict()` 里判，超了整轮失败）；
+      · `--max-cer` 是**逐样本**标记（在这里判），只把超标样本标成 `rejected`
+        写进报告，**不中断批量评估** —— 一批 20 个里坏 3 个，剩下 17 个的数据
+        仍然有效，没有理由整轮作废。
+
+    没有参考文本时给 `rejected = None`（未判定），**不是 `False`** —— `False` 会被
+    读成「验过且通过」，而实际根本没判。
+    """
+    if max_cer is None:
+        return
+    acc = result.get("accuracy")
+    if not acc:
+        result["rejected"] = None
+        result["rejectReason"] = "无参考文本，未参与判定"
+        return
+    cer_value = acc.get("cer")
+    if cer_value is None:
+        result["rejected"] = None
+        result["rejectReason"] = "CER 缺失，未参与判定"
+        return
+    rejected = cer_value > max_cer
+    result["rejected"] = bool(rejected)
+    result["rejectReason"] = f"CER {cer_value} > 阈值 {max_cer}" if rejected else None
 
 
 # ============ 音频读取 ============
@@ -614,8 +727,18 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
         },
     }
 
+    # ---- 来源类型：与 scenario 解耦（见文件头「来源类型」说明）----
+    # 判据一起落盘：事后要能回答「这份样本为什么被归到 tts-synth」，
+    # 而不是靠回忆当时有没有 metadata。
+    result["sourceKind"], result["sourceKindBasis"] = resolve_source_kind(
+        path, getattr(args, "source_kind", None)
+    )
+
     if ref_text:
         result["accuracy"] = wer(ref_text, recognized, args.language)
+    # 逐样本 CER 门禁（--max-cer）。放在这里而不是 summarize 里：它标的是
+    # **单条样本**，必须与这条样本的 accuracy 一起落进 results。
+    apply_cer_gate(result, getattr(args, "max_cer", None))
     if paired:
         result["segmentDetail"] = paired[:args.detail_limit]
     return result
@@ -649,8 +772,40 @@ def summarize(results: list[dict]) -> dict:
             bucket["wer"].append(r["accuracy"]["wer"])
             bucket["cer"].append(r["accuracy"]["cer"])
 
+    # 来源 × 场景 二维聚合。**独立于 byScenario**：byScenario 原样保留，
+    # 保证历史对照表可以逐格对账；这里回答的是另一个问题 ——
+    # 「同一种录音条件下，合成素材与真人素材差多少」。
+    by_source_scenario: dict[str, dict[str, dict]] = {}
+    for r in ok:
+        kind = r.get("sourceKind") or SOURCE_KIND_UNKNOWN
+        bucket = by_source_scenario.setdefault(kind, {}).setdefault(
+            r["scenario"], {"files": 0, "wer": [], "cer": [], "rtf": []}
+        )
+        bucket["files"] += 1
+        if r.get("rtf") is not None:
+            bucket["rtf"].append(r["rtf"])
+        if r.get("accuracy"):
+            bucket["wer"].append(r["accuracy"]["wer"])
+            bucket["cer"].append(r["accuracy"]["cer"])
+
     def mean(values: list[float]):
         return round(statistics.fmean(values), 4) if values else None
+
+    def spread(values: list[float]) -> dict:
+        """均值 + 极差（含端点）。
+
+        只报均值会把「n=1 的偶然」与「稳定的窄分布」混为一谈 —— P2 要横向比
+        多个条件，必须先能看出**离散度**。n=1 时 `min == max`、`range == 0`，
+        一眼就能识别出这一格没有重复。
+        """
+        if not values:
+            return {"mean": None, "min": None, "max": None, "range": None}
+        return {
+            "mean": round(statistics.fmean(values), 4),
+            "min": round(min(values), 4),
+            "max": round(max(values), 4),
+            "range": round(max(values) - min(values), 4),
+        }
 
     return {
         "files": len(ok),
@@ -689,6 +844,29 @@ def summarize(results: list[dict]) -> dict:
             }
             for k, v in sorted(by_scenario.items())
         },
+        # ---- 新增（additive）：来源 × 场景 ----
+        # 键结构 {sourceKind: {scenario: {files, wer{mean,min,max,range}, cer{...}, meanRtf}}}
+        "bySourceScenario": {
+            kind: {
+                scen: {
+                    "files": v["files"],
+                    "wer": spread(v["wer"]),
+                    "cer": spread(v["cer"]),
+                    "meanRtf": mean(v["rtf"]),
+                }
+                for scen, v in sorted(by_kind.items())
+            }
+            for kind, by_kind in sorted(by_source_scenario.items())
+        },
+        "sourceKindCounts": {
+            kind: sum(v["files"] for v in by_kind.values())
+            for kind, by_kind in sorted(by_source_scenario.items())
+        },
+        # 逐样本 CER 门禁的结果。用 `is True` 而不是真值判断：`rejected` 可能是
+        # None（未判定），真值判断会把「没判」和「判过」混起来。
+        "rejectedCount": sum(1 for r in ok if r.get("rejected") is True),
+        "rejectedFiles": [r["file"] for r in ok if r.get("rejected") is True],
+        "cerUndecidedFiles": [r["file"] for r in ok if "rejected" in r and r["rejected"] is None],
     }
 
 
@@ -772,28 +950,83 @@ def verdict(summary: dict, results: list[dict], args) -> tuple[bool, list[str]]:
                     f"⚠ {r['file']}: 后半段延迟明显高于前半段"
                     f"（{r['latency']['firstHalfMean']}s → {r['latency']['secondHalfMean']}s），疑似累积滞后"
                 )
+    # 逐样本 CER 阈值（--max-cer）：只标记、不中断批量评估。这里把它汇总成一句
+    # 可判读的结论 —— 否则「样本被标了 rejected」会散落在 results 里没人看见。
+    max_cer = getattr(args, "max_cer", None)
+    if max_cer is not None:
+        rejected = [r["file"] for r in results if r.get("rejected") is True]
+        undecided = [r["file"] for r in results if "rejected" in r and r["rejected"] is None]
+        if rejected:
+            passed = False
+            notes.append(
+                f"✗ {len(rejected)} 个样本 CER > 阈值 {max_cer}（已在报告里标 rejected）："
+                + "，".join(rejected[:3]) + ("…" if len(rejected) > 3 else "")
+            )
+        else:
+            notes.append(f"✓ 全部有参考文本的样本 CER ≤ 阈值 {max_cer}")
+        if undecided:
+            notes.append(
+                f"— {len(undecided)} 个样本没有参考文本/CER，未参与 --max-cer 判定"
+                f"（标记为 rejected=null，**不等于通过**）"
+            )
+
+    # 来源类型：unknown 必须显式说出来。它意味着「按未知归组」而不是「没有来源这回事」——
+    # 静默归组会让 bySourceScenario 凭空多出一个桶，事后没人知道它是怎么来的。
+    kinds: dict[str, int] = {}
+    for r in results:
+        if "error" in r:
+            continue
+        k = r.get("sourceKind") or SOURCE_KIND_UNKNOWN
+        kinds[k] = kinds.get(k, 0) + 1
+    if SOURCE_KIND_UNKNOWN in kinds:
+        notes.append(
+            f"⚠ {kinds[SOURCE_KIND_UNKNOWN]} 个文件未识别出来源类型（sourceKind=unknown）——"
+            f"已单独归组，与已知来源分开统计；这不是错误（旧素材没有 metadata 是常态）"
+        )
+
     return passed, notes
 
 
 def print_report(results: list[dict], summary: dict, notes: list[str]) -> None:
-    print("\n" + "=" * 104)
-    print(f"{'文件':<32}{'场景':<9}{'秒':>7}{'片段':>5}{'字幕':>5}{'RTF':>7}{'WER':>7}{'收尾s':>8}{'延迟p95':>9}")
-    print("-" * 104)
+    print("\n" + "=" * 113)
+    print(
+        f"{'文件':<30}{'来源':<16}{'场景':<9}{'秒':>7}{'片段':>5}{'字幕':>5}"
+        f"{'RTF':>7}{'WER':>7}{'CER':>7}{'收尾s':>8}{'拒':>3}{'延迟p95':>9}"
+    )
+    print("-" * 113)
     for r in results:
         if "error" in r:
-            print(f"{r['file'][:31]:<32}{'-':<9}{'-':>7}{'-':>5}{'-':>5}{'-':>7}{'-':>7}{'-':>8}{r['error'][:9]:>9}")
+            print(
+                f"{r['file'][:29]:<30}{'-':<16}{'-':<9}{'-':>7}{'-':>5}{'-':>5}"
+                f"{'-':>7}{'-':>7}{'-':>7}{'-':>8}{'-':>3}{r['error'][:9]:>9}"
+            )
             continue
         acc = r.get("accuracy") or {}
         wer_v = acc.get("wer")
+        cer_v = acc.get("cer")
+        # 「拒」列：只有真的判过才有意义 —— `?` = 给了 --max-cer 但没参考文本（未判定），
+        # `-` = 本轮没给 --max-cer（压根没判）。把这两者混成一个符号就失去了区分力。
+        if "rejected" not in r:
+            rej = "-"
+        elif r["rejected"] is True:
+            rej = "拒"
+        elif r["rejected"] is None:
+            rej = "?"
+        else:
+            rej = "·"
         print(
-            f"{r['file'][:31]:<32}{r['scenario']:<9}{r['audioSeconds']:>7.1f}"
+            f"{r['file'][:29]:<30}"
+            f"{(r.get('sourceKind') or SOURCE_KIND_UNKNOWN)[:15]:<16}"
+            f"{r['scenario']:<9}{r['audioSeconds']:>7.1f}"
             f"{r['segments']:>5}{r['subtitles']:>5}"
             f"{(r['rtf'] if r['rtf'] is not None else '-'):>7}"
             f"{(wer_v if wer_v is not None else '-'):>7}"
+            f"{(cer_v if cer_v is not None else '-'):>7}"
             f"{r['tailSeconds']:>8}"
+            f"{rej:>3}"
             f"{(str(r['latency']['p95']) if r['paired'] else '-'):>9}"
         )
-    print("-" * 104)
+    print("-" * 113)
     print(
         f"汇总：{summary['files']} 个文件（{summary['withReference']} 个有参考文本）｜"
         f"片段 {summary['totalSegments']} → 字幕 {summary['totalSubtitles']}｜"
@@ -822,7 +1055,19 @@ def print_report(results: list[dict], summary: dict, notes: list[str]) -> None:
             f"  · {name:<8} {stat['files']} 个文件｜WER {stat['meanWer']}｜"
             f"CER {stat['meanCer']}｜RTF {stat['meanRtf']}"
         )
-    print("=" * 104)
+    # 来源 × 场景。与上面的 byScenario 是**两块独立统计**：上面那块为了历史可比
+    # 原样保留，这块回答「同一录音条件下，合成 vs 真人差多少」。
+    for kind, by_scen in summary.get("bySourceScenario", {}).items():
+        for scen, stat in by_scen.items():
+            print(
+                f"  ◆ {kind:<15}{scen:<8} {stat['files']} 个文件｜"
+                f"WER {stat['wer']['mean']}（{stat['wer']['min']}~{stat['wer']['max']}，极差 {stat['wer']['range']}）｜"
+                f"CER {stat['cer']['mean']}（{stat['cer']['min']}~{stat['cer']['max']}，极差 {stat['cer']['range']}）｜"
+                f"RTF {stat['meanRtf']}"
+            )
+    if summary.get("rejectedCount"):
+        print("      ⚠ CER 超阈值的样本: " + ", ".join(summary["rejectedFiles"]))
+    print("=" * 113)
     for note in notes:
         print(" ", note)
 
@@ -861,7 +1106,21 @@ def main() -> int:
         help="术语提示词防循环兜底开关；不传则沿用引擎默认（开）。"
         "关掉它可以观察「完全不干预时重复循环能持续多久」——只在评估里用。",
     )
-    parser.add_argument("--max-wer", type=float, default=None, help="WER 阈值，超过则失败")
+    parser.add_argument("--max-wer", type=float, default=None, help="WER 阈值，超过则失败（整轮均值门禁）")
+    parser.add_argument(
+        "--max-cer",
+        type=float,
+        default=None,
+        help="逐样本 CER 阈值：单条超过即标 rejected 写进报告，**不中断批量评估**"
+        "（与 --max-wer 不同：那个是整轮均值门禁、超了整轮失败）。"
+        "没有参考文本的样本标 rejected=null（未判定），不等于通过。",
+    )
+    parser.add_argument(
+        "--source-kind",
+        default=None,
+        help="强制指定样本来源类型（tts-synth / human-recording / …）。"
+        "不传则从样本就近的 metadata.json 读（kind 或 sourceKind 字段），读不到记 unknown。",
+    )
     parser.add_argument("--report", default="packaging/eval/report.json")
     parser.add_argument("--drain-timeout", type=float, default=600.0)
     parser.add_argument("--detail-limit", type=int, default=200)
@@ -972,6 +1231,8 @@ def main() -> int:
             "domain": args.domain,
             "realtime": args.realtime,
             "maxWer": args.max_wer,
+            "maxCer": args.max_cer,
+            "sourceKindOverride": args.source_kind,
             # 「本次下发的术语提示词长什么样」的取证字段。跨条件/跨锚点对账时
             # **先比 md5**：相同就说明唯一变量没有引起任何变化，这组对照无效。
             "termPromptMd5": prompt_md5,
