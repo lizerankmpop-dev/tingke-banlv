@@ -384,6 +384,30 @@ def wer(ref_text: str, hyp_text: str, language: str) -> dict:
 
 # ============ 采集器：把 VAD 分段与识别结果按时间对齐 ============
 
+
+def word_end_seconds(words) -> float | None:
+    """一组词级时间戳里最靠后的 `end`（音频内秒）；一个都取不到 → None。
+
+    引擎给的是 `WordTimestamp` 数据类，这里同时容忍 dict 形态 ——
+    单测要能不依赖 backend 就造出「有词 / 无词 / 时间戳乱序」三种输入。
+
+    取不到时**返回 None 而不是 0**：0 会被下游读成「延迟极小」，
+    把「拿不到锚点」伪装成「性能极好」（同教训 14 的静默形态）。
+    """
+    if not words:
+        return None
+    ends = []
+    for w in words:
+        raw = w.get("end") if isinstance(w, dict) else getattr(w, "end", None)
+        if raw is None:
+            continue
+        try:
+            ends.append(float(raw))
+        except (TypeError, ValueError):
+            continue
+    return max(ends) if ends else None
+
+
 class Recorder:
     """
     记录「音频被喂入的时刻」与「字幕被推出来的时刻」，二者之差就是推送延迟。
@@ -419,6 +443,14 @@ class Recorder:
         if not text or not text.strip():
             return
         now = time.perf_counter()
+        # 词级时间戳：引擎其实**每次都给了**（`whisper_engine.py` 的
+        # `on_partial(segment_data.text, words)`，words 是 `WordTimestamp{word,start,end}`
+        # 列表），旧版在这里把它丢掉了。丢掉之后延迟只能退回去靠
+        # 「VAD 块数 == 字幕条数」配对 —— 而这两者**结构性 1:N**（一个 VAD 块里
+        # 可以含好几个 whisper 段：实测 6→10、56→82、63→86），条数在原理上
+        # 就不相等，配对因此永远不可靠。词级时间戳自带「这句话在音频里的位置」，
+        # 不需要任何配对。
+        audio_words_end = word_end_seconds(words)
         with self._lock:
             self.subtitles.append(
                 {
@@ -426,6 +458,10 @@ class Recorder:
                     "text": text,
                     "pushWall": round(now, 6),
                     "latency": round(now - self.feed_t0, 3) if self.feed_t0 else None,
+                    # 这条字幕最后一个词的音频位置。取不到 → None（据此把新口径
+                    # 记为「不可得」，绝不用 0 冒充）。
+                    "audioWordsEnd": audio_words_end,
+                    "wordCount": len(words) if words else 0,
                 }
             )
 
@@ -451,6 +487,44 @@ class Recorder:
                     "duration": seg["duration"],
                     "latency": round(sub["pushWall"] - seg["readyWall"], 3),
                     "text": sub["text"],
+                }
+            )
+        return out
+
+    def words_latency(self) -> list[dict]:
+        """**不依赖配对**的延迟口径：逐条字幕按自己的词级时间戳锚定。
+
+        公式：`latency = pushWall - (feed_t0 + 该字幕最后一个词的音频位置)`。
+
+        与 `pair()` 的差别**只在锚点**：
+          旧 —— 锚在这条字幕所属 **VAD 块**的结束时刻（`seg.audioEnd`），且要求条数 1:1；
+          新 —— 锚在这条字幕**自身最后一个词**的结束时刻（`audioWordsEnd`）。
+
+        VAD 块尾巴通常还挂着一段静音，因此恒有 `audioWordsEnd <= seg.audioEnd`，
+        于是**同一格上新口径恒 >= 旧口径**，差值恰好是该块的静音尾巴长度：
+
+            latency_新 - latency_旧 == seg.audioEnd - audioWordsEnd >= 0
+
+        这个恒等式不是巧合，而是两套口径唯一的定义性差别 —— 它就是校验实现
+        正确性的抓手（§14 的 lowvol 锚定 + 单测都基于它）。
+
+        ⚠️ 因此「新口径 p95 == 旧口径 p95」**不是**应有的通过标准：
+        两者锚点不同，数值本来就不该相等。把相等当目标会逼着人去凑数（教训 9）。
+        """
+        if not self.feed_t0:
+            return []
+        with self._lock:
+            subs = list(self.subtitles)
+        out = []
+        for sub in subs:
+            anchor = sub.get("audioWordsEnd")
+            if anchor is None:
+                continue
+            out.append(
+                {
+                    "index": sub["index"],
+                    "audioWordsEnd": anchor,
+                    "latency": round(sub["pushWall"] - (self.feed_t0 + anchor), 3),
                 }
             )
         return out
@@ -657,6 +731,12 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
     paired = recorder.pair() if args.realtime else []
     latencies = [p["latency"] for p in paired]
 
+    # 新口径（#175）：词级时间戳锚定，**不要求任何配对**，所以每一格都算得出来。
+    # 非实时下与旧口径同理无意义（readyWall 会落到墙钟未来，得到一堆负数）。
+    word_lat = recorder.words_latency() if args.realtime else []
+    word_lat_values = [p["latency"] for p in word_lat]
+    words_missing = len(recorder.subtitles) - len(word_lat)
+
     # 累积滞后判定：把已配对片段按时间切成前后两半比均值。
     # 后半段明显更慢 = 背压没起作用/跟不上，这才是「越听越迟」的真实信号。
     half = len(latencies) // 2
@@ -724,6 +804,23 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
             "max": round(max(latencies), 3) if latencies else None,
             "firstHalfMean": first_half,
             "secondHalfMean": second_half,
+        },
+        # 新口径（#175）：词级时间戳锚定。与旧 `latency` **并存** ——
+        # 旧字段一字不动，历史报告仍可逐格对账（约束红线②③）。
+        # 字段名沿用任务给定的 `latency_word_based`（本文件其余字段是 camelCase）。
+        "latency_word_based": {
+            "n": len(word_lat_values),
+            "mean": round(statistics.fmean(word_lat_values), 3) if word_lat_values else None,
+            # ⚠️ 与旧口径不同：无数据时给 None，**不用 0.0 占位**。
+            # 0.0 会被读成「延迟极小」，把「算不出来」伪装成「性能极好」。
+            "p50": percentile(word_lat_values, 0.5) if word_lat_values else None,
+            "p95": percentile(word_lat_values, 0.95) if word_lat_values else None,
+            "p99": percentile(word_lat_values, 0.99) if word_lat_values else None,
+            "max": round(max(word_lat_values), 3) if word_lat_values else None,
+            # 拿不到词级锚点的字幕条数（引擎没给 words / words 为空）。
+            # >0 说明新口径只覆盖了部分字幕，必须能从报告里看出来，不能静默。
+            "missingWords": words_missing,
+            "detail": word_lat[:args.detail_limit],
         },
     }
 
@@ -835,6 +932,20 @@ def summarize(results: list[dict]) -> dict:
         ),
         "peakLatency": round(max([l["max"] for l in lat if l["max"] is not None]), 3) if lat else None,
         "meanLatency": round(statistics.fmean([l["mean"] for l in lat]), 3) if lat else None,
+        # 新口径（#175）汇总：不依赖配对，各格都能算出，所以这里覆盖的文件数
+        # 应该等于本轮文件数（旧口径只有 lowvol 一格进得来）。
+        "wordLatencyFiles": sum(1 for r in ok if r.get("latency_word_based", {}).get("n")),
+        "wordLatencyP95Max": max(
+            [
+                r["latency_word_based"]["p95"]
+                for r in ok
+                if r.get("latency_word_based", {}).get("p95") is not None
+            ],
+            default=None,
+        ),
+        "wordLatencyMissingWords": sum(
+            r.get("latency_word_based", {}).get("missingWords", 0) for r in ok
+        ),
         "byScenario": {
             k: {
                 "files": v["files"],
@@ -988,17 +1099,17 @@ def verdict(summary: dict, results: list[dict], args) -> tuple[bool, list[str]]:
 
 
 def print_report(results: list[dict], summary: dict, notes: list[str]) -> None:
-    print("\n" + "=" * 113)
+    print("\n" + "=" * 122)
     print(
         f"{'文件':<30}{'来源':<16}{'场景':<9}{'秒':>7}{'片段':>5}{'字幕':>5}"
-        f"{'RTF':>7}{'WER':>7}{'CER':>7}{'收尾s':>8}{'拒':>3}{'延迟p95':>9}"
+        f"{'RTF':>7}{'WER':>7}{'CER':>7}{'收尾s':>8}{'拒':>3}{'延迟p95':>9}{'延迟w':>9}"
     )
-    print("-" * 113)
+    print("-" * 122)
     for r in results:
         if "error" in r:
             print(
                 f"{r['file'][:29]:<30}{'-':<16}{'-':<9}{'-':>7}{'-':>5}{'-':>5}"
-                f"{'-':>7}{'-':>7}{'-':>7}{'-':>8}{'-':>3}{r['error'][:9]:>9}"
+                f"{'-':>7}{'-':>7}{'-':>7}{'-':>8}{'-':>3}{'-':>9}{r['error'][:9]:>9}"
             )
             continue
         acc = r.get("accuracy") or {}
@@ -1025,8 +1136,9 @@ def print_report(results: list[dict], summary: dict, notes: list[str]) -> None:
             f"{r['tailSeconds']:>8}"
             f"{rej:>3}"
             f"{(str(r['latency']['p95']) if r['paired'] else '-'):>9}"
+            f"{(str(r['latency_word_based']['p95']) if r.get('latency_word_based', {}).get('p95') is not None else '-'):>9}"
         )
-    print("-" * 113)
+    print("-" * 122)
     print(
         f"汇总：{summary['files']} 个文件（{summary['withReference']} 个有参考文本）｜"
         f"片段 {summary['totalSegments']} → 字幕 {summary['totalSubtitles']}｜"
@@ -1043,6 +1155,11 @@ def print_report(results: list[dict], summary: dict, notes: list[str]) -> None:
         f"送入 {summary.get('totalInSegments')} 段 → 产出 {summary.get('totalOutSegments')} 条字幕｜"
         f"重复循环判定 {summary.get('totalRepetitionEvents')} 次"
     )
+    print(
+        f"      词级延迟（新口径，不依赖配对）覆盖 {summary.get('wordLatencyFiles')} 个文件｜"
+        f"最差 p95 {summary.get('wordLatencyP95Max')}s｜"
+        f"缺词锚点 {summary.get('wordLatencyMissingWords')} 条"
+    )
     if summary.get("filesWithMoreSubtitlesThanSegments"):
         print(
             "      ⚠ 字幕数 > 片段数的文件: "
@@ -1050,6 +1167,11 @@ def print_report(results: list[dict], summary: dict, notes: list[str]) -> None:
         )
     if summary.get("degradedFiles"):
         print("      ⚠ 已触发自动降级（提示词被截断）的文件: " + ", ".join(summary["degradedFiles"]))
+    if summary.get("wordLatencyMissingWords"):
+        print(
+            f"      ⚠ {summary['wordLatencyMissingWords']} 条字幕拿不到词级时间戳，"
+            f"新口径未覆盖它们（见 latency_word_based.missingWords）"
+        )
     for name, stat in summary["byScenario"].items():
         print(
             f"  · {name:<8} {stat['files']} 个文件｜WER {stat['meanWer']}｜"
