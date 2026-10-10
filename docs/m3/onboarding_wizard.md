@@ -996,10 +996,48 @@ ok ⑥b 重试后模型就绪仍能自动跳到第 4 步 — 当前步=4
 | L3 端到端冒烟（CDP） | `cd frontend && npm run test:smoke` | **13/13 通过**（v3.4.0 为 12/12）|
 | L4 实装验证 | `scripts/verify_install.py --installer <新包> --hold 150 --expect-sha256 <新哈希>` | 见 §13.6 |
 | 会话计时 | 真身模块四场景 | **7 PASS / 0 FAIL**；变异（改回旧写法）→ ①②④ 全 RED、对照组③ 仍 PASS |
+| 真机端到端 | `安装空间/_probe_reopen_e2e.py` | **PASS ✅**（见 §13.7）|
 
-副本对拍：`tracked=154 same=154 diff=0 miss=0`。
+副本对拍：`tracked=155 same=155 diff=0 miss=0`（v3.4.0 为 153/153；本轮 +2 个新文件）。
 
 ### 13.6 L4 实装验证（v3.4.1）
 
 （见本轮 Release Note `RELEASE-NOTE-v3.4.1.md`；报告顶层 `artifact` 自带包指纹。）
+
+### 13.7 真机端到端：拖拽区那个坑只能在真实应用上验（v3.4.1）
+
+`WebkitAppRegion: 'drag'` 会把落在拖拽区里的点击吃掉，而**浏览器调试环境下拖拽区不生效** ——
+所以单测、tsc、CDP 冒烟全都覆盖不到这一层。唯一手段是在**装好的包**上用 OS 级鼠标事件去点。
+
+工具 `安装空间/_probe_reopen_e2e.py`（只读，不入库）。踩过的四个坑，记下来省下一次重踩：
+
+1. **Git Bash 会把裸 `/S` 改写成 Windows 路径** → 安装器收到垃圾参数并卡在等交互
+   （进程挂着、目录为空）。必须 `MSYS_NO_PATHCONV=1`，或者干脆用 Python `subprocess` 传参
+   （`scripts/verify_install.py` 就是这么做的，所以同一句话在那边一直是好的）。
+2. **`ELECTRON_RUN_AS_NODE=1`**（本机 Bash 默认带）会让打包后的 Electron 退化成**纯 Node 模式**：
+   不开窗口、不初始化日志、不起后端、不监听调试端口，进程只是挂着。
+   必须照 `verify_install.py` 的 `clean_env` 把它和 `NODE_OPTIONS` 一起剥掉。
+3. **`ClientToScreen` 给的客户端原点不是页面视口原点**：实测 y 偏高约 **40px**
+   （客户端区比页面视口高一截）。照它换算坐标，点击会落到标题栏**上方**，
+   DOM 收不到 click → 会被误判成「`no-drag` 失效」。
+   正确做法是**用页面回读的 `clientX/Y` 反解仿射映射**，并用第三个点独立验残差。
+4. **CDP 注册要挂在一条长连接上**：`Page.addScriptToEvaluateOnNewDocument` 的注册
+   在最后一个 session 断开时被撤销；而本应用启动时会「占位页 → 后端动态端口地址」**导航一次**，
+   于是观测器蒸发、下一句读 `window.__probe` 抛 undefined。
+   另外向导窗口的调试端点实测**只容许连一次**（重连 HTTP 500）。
+
+结果（PASS）：
+
+| 断言 | 实测 |
+|---|---|
+| 坐标映射 | `1/k=(1.50000, 1.49867)` ≈ dpr 1.5；独立第三点残差 **0.33 CSS px** |
+| 阳性对照（点空白处） | DOM 收到点击 ✓（先证链路通，否则「点不动」无法归因） |
+| 入口按钮 | 物理(1617,233) → DOM click `{x:917, y:40, onBtn:true}` → **向导窗口被创建** ⇒ `no-drag` 有效 |
+| 幂等 | 向导已开时再点：日志「向导已打开」`1→1`、向导窗口 `1→1` |
+| 会话计时 | `startedAt` 刷新为本次会话；`durationMs=2993`（旧写法此处是跨会话的天文数字） |
+| 日志计数 | 「向导已打开」`0→1`（恰好 +1，`drive-onboarding.cjs` 依赖的计数语义未被破坏） |
+
+> 说明：第 4 步的「走完一次」是从**主窗口**调 `electronAPI.onboarding.complete()`，
+> 而不是注进向导窗口。理由是状态写入的唯一入口主进程 handler，向导页的「完成」按钮
+> 最终也走同一条 IPC（经 `onboardingBridge`）—— 语义等价，只少一层 UI（向导窗口 CDP 端点拒连）。
 
