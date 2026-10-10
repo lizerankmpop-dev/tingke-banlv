@@ -222,14 +222,14 @@ scripts/make_asr_testset.py \
 
 | # | 缺口 | 建议改动 | 风险 |
 |---|---|---|---|
-| H1 | **来源维度缺失**：`scenario` 只有 clean/noise/…/long/other，**合成劣化**与**真实录音**会被同名合并进同一个 `byScenario` 桶 | 结果里加 `sourceKind`（`tts` / `tts-degraded` / `real` / `synth-en`），由文件名或 metadata 判定；汇总里按 `(sourceKind, scenario)` 二维分组 | 改汇总结构 → 会动 `summarize()` 的产物 schema；需同步 `analyze_zh_ab.py` |
-| H2 | 中文只有 `--max-wer` 门禁，没有 `--max-cer` | 加 `--max-cer`（与 `--max-wer` 同构） | 低 |
+| H1 | ✅ **已完成（#170 `924c1be`）**：来源维度缺失 → 结果加 `sourceKind`，汇总按 `(sourceKind, scenario)` 二维分组 | 实现取 **`tts-synth` / `human-recording` / `unknown`**（**偏离原建议**：弃 `tts-degraded`——劣化与否已由 `scenario` 表达，两维不该互相编码；弃 `synth-en`——语言由 `--language` 表达，且实测里「语言」不改变「是合成还是真人」这个事实） | 低（additive：`byScenario` 逐字未动 ⇒ `analyze_zh_ab.py` 无需同步） |
+| H2 | ✅ **已完成（#170 `924c1be`）**：加 `--max-cer` | 逐样本标记 `rejected`，**不中断批量评估**（与 `--max-wer` 的「整轮均值门禁」分工不同，两者并存） | 低 |
 | H3 | 长素材做场景矩阵太慢（4 场景 × 10min，`--realtime` 下约 40min/轮） | **已定实现路径（见 §6.1 的实测）**：不做「模糊的 `--clip-seconds`」，改为**按段落静音边界切分**——切出来的音频与文本都来自同一份内置讲稿，配对天然精确 | 低（但必须先证边界数对得上，已证：29 = 30−1） |
 | **H4** | **无效轮次防护不均匀**（已核实）：`ab_terms_compare.py:435` **有**「背压丢弃 → 默认中止」的守卫（`--allow-drops` 才继续）；但**没有**「`totalSubtitles == 0` → 中止」的守卫（全文不引用 `verdict`/`passed`） | 加一条同构守卫：子报告 `summary.totalSubtitles == 0` 或 `verdict.passed == false` → 中止（除非显式 `--allow-invalid`） | 中（这正是 `short.json` 那种「整轮一个字幕没出、每格 WER 恒 1.0」还能进对照表的通道） |
 | H5 | ✅ **已核实无缺口**：报告的 `recognition` = 全部字幕文本 `" ".join(...)`（`eval_asr_quality.py:553/583`），**无截断**；`--detail-limit 200` 只作用于 `segmentDetail` | 无需改动（错误归因可直接用 `recognition` vs `reference`） | — |
 | H6 | 素材指纹未进入报告 | 把**音频 sha256 + 参考文本 sha256** 写进报告（教训 29：对照实验先证「被操纵的变量真变了」；P1 的 `artifact` 字段就是这个思路） | 低～中 |
 
-🔴 **H1 是硬需求**：如果不加来源维度，方案 C 的「合成」与「真人」数字会被平均成一个没有意义的数
+🔴 **H1 是硬需求**（**已于 #170 落地，见 §11**）：如果不加来源维度，方案 C 的「合成」与「真人」数字会被平均成一个没有意义的数
 —— 这正是本仓库反复踩过的「口径混用」（见 `LESSONS.md` §10 / §35）。
 
 ---
@@ -452,3 +452,94 @@ hyp 末: 反复使用, 这就是所谓参数共享, 它让模型的参数量大�
 - ⚠️ 本次是**无术语注入**口径（提示词 0 字符）；术语收益要等 `ab_terms_compare.py` 的 off/on 对照（且它需要 H4 守卫先落地）。
 - ⚠️ 「字幕数 > 片段数」判据在该素材上会**误报**，解读时必须同时看「最长重复子串」——单看计数比会给假警报。
 - 下一步：**#170**（`sourceKind` + `bySourceScenario` + `--max-cer`）→ **#171**（0 字幕守卫）→ **#172**（劣化 5 格）→ **#173**（逐格基线）。
+
+---
+
+## 11. #170 执行记录：sourceKind / bySourceScenario / `--max-cer`（2026-10-10）
+
+提交 `924c1be`（`git describe = v3.4.1-5-g924c1be`）。**改动只在 `scripts/` + `backend/tests/` +
+`packaging/verify/` + `.gitignore`，不进包**；交付物指纹逐位未变（见 §11.5）。
+
+### 11.1 为什么不能直接编辑 `eval_asr_quality.py`
+
+该文件是**纯 CRLF**（改前实测 `bytes=46,234 crlf=995 lone_lf=0`）。
+按仓库纪律走补丁脚本 `安装空间/_patch_eval_source_kind.py`：
+
+1. 归一 CRLF→LF（原始 `lone_lf=0` ⇒ 「全 CRLF → 全 LF → 全 CRLF」是无损往返）；
+2. **逐项断言锚点命中次数**（11 处，任何一处不符即 `exit 1` 且**不写盘**）；
+3. 换回 CRLF 写回 → 复验 `lone_lf=0` → `py_compile`。
+
+改后：`bytes=59,292 crlf=1256 lone_lf=0`。首轮**只读预演**先跑一遍确认 11 处全命中才动手。
+
+### 11.2 三项功能的口径（实现与原建议的差异）
+
+| 项 | 实现 |
+|---|---|
+| `sourceKind` | `tts-synth` / `human-recording` / `unknown`。优先级：`--source-kind` ＞ metadata 的 `sourceKind` 字段 ＞ metadata 的 `kind` 映射（`PROXY`/`CLIP-FROM-TTS`/`SYNTH`→TTS，`REAL`→真人） ＞ `unknown` |
+| metadata 查找 | 从样本目录**向上最多 2 层**找 `metadata.json`（`long/` 自己没有、登记在上一级；再往上是仓库根，串过去就是无声串桶）。坏 JSON / 非对象 → 当「取不到」，**不抛异常** |
+| 未登记的 `kind` | 落 `unknown` **且不猜**，判据里写明「未登记映射」——猜出来的来源比没有来源更坏 |
+| `sourceKindBasis` | 每条样本落盘判据（事后可审计，与 `referenceSource` 同一理由） |
+| `bySourceScenario` | `sourceKind + scenario` 二维；每格 `files` + `{mean,min,max,range}` + `meanRtf`。**additive**：`byScenario` 一字未动 |
+| 附加账目 | `sourceKindCounts`（**文件数**，不是场景格数）/ `rejectedCount` / `rejectedFiles` / `cerUndecidedFiles` |
+| `--max-cer` | 逐样本标记；**恰好等于阈值不算超**（`>` 非 `>=`）；无参考文本 → `rejected = None`（**未判定，≠ `False`**）；**不中断批量评估** |
+| 表格 | 104 → 113 字符宽，加「来源 / CER / 拒」；「拒」四态：`-` 未给参数 ｜ `·` 判过且通过 ｜ `拒` 超阈值 ｜ `?` 无参考文本未判定 |
+
+### 11.3 实跑验证（本机真跑，用户指定四项）
+
+命令口径同 §10（`--language zh --terms on --realtime`）：
+
+1. ✅ **中文短样本**：`来源` 列 = `tts-synth`；`· other`（`byScenario`）与
+   `◆ tts-synth other`（`bySourceScenario`）**两块表并存**。
+2. ✅ **阈值守卫**：`--max-cer 0.18` → 该样本 CER **0.1847** > 0.18 → 表格「拒」列 = `拒`、
+   结论 `✗ 1 个样本 CER > 阈值 0.18`、**exit=1**；
+   `--max-cer 0.19` → 「拒」列 = `·`、结论 `✓ 全部有参考文本的样本 CER ≤ 阈值 0.19`、**exit=0**。
+   两轮 CER **逐位一致 0.1847**，与 #169 基线相同。
+3. ✅ **英文旧测试集**（`tests/audio/short`，5 文件）：脚本正常执行（exit=0），
+   `来源` 列全 `unknown`，并显式提示「5 个文件未识别出来源类型…这不是错误（旧素材没有 metadata 是常态）」。
+4. ✅ **`byScenario` 无回归** —— 用**回灌**取证（见 §11.4），不靠重跑。
+
+### 11.4 回归证据：为什么用「历史产物回灌」而不是重跑（→ 教训 44）
+
+重跑会同时改动「代码」与「模型 run-to-run 波动（实测 ≈0.03~0.05 CER）」——
+数字对不上时**无法区分是改坏了还是模型抖了**（违反教训 29：先证被操纵的变量真变了）。
+
+做法：把历史报告的 `results` 数组**原样**喂给改后的 `summarize()`，与历史
+`summary.byScenario` **逐字比较**。变量只有代码一个。
+
+| 历史报告 | 文件数 | `byScenario` 回灌结果 |
+|---|---|---|
+| `short.json` | 5 | ✅ 逐字相同（`clean` 1.0 / `fast` 1.0 / … 那轮整轮无效但结构一致） |
+| `short-terms.json` | 5 | ✅ 逐字相同（`clean` 0.8182 / `noise` 0.0455 …） |
+| `long-realtime.json` | 1 | ✅ 逐字相同（`long` 0.0019） |
+| `p2_probe_short_clean.json` | 1 | ✅ 逐字相同（`other` 0.1847） |
+
+**顺带白赚的一条**：旧报告的 `results` 里**根本没有 `sourceKind` 键**（实测
+`'sourceKind' in results[0] == False`），回灌后整批落 `unknown` 且不抛异常 ——
+这才是「兼容旧测试集」的证据，而不是嘴上声明。
+已落成常驻用例 `test_replay_history_by_scenario_is_identical`（4 个参数化用例 + `skipif`，
+gitignore 的产物不在本机就跳过，**不假装通过**）。
+
+### 11.5 测试、探针与产物校验
+
+| 项 | 实测 |
+|---|---|
+| 全量 pytest | **306 → 353 通过 / 1 跳过**（新增 47 条，全绿） |
+| 新增用例 | `backend/tests/test_eval_source_kind.py`（652 行）：find_metadata 边界（含「第 3 层必须找不到」）/ 来源解析全分支 / 门禁三态与边界 / 两维分桶 / 拒绝账目 / verdict / **AST 接线守卫**（纯函数写了没人调 = 死功能且不会有任何用例变红） |
+| 变异探针 | `packaging/verify/probe_eval_source_kind_mutations.py` **24/24 全部被抓住**（前置「真身全绿」不变量校验；`.gitignore` 反选例外 5 → 6） |
+| 行尾 | `eval_asr_quality.py` 保持纯 CRLF；两个新文件纯 LF（`crlf=0`） |
+| 无人解析 stdout | 表头列数改了；全仓 grep 确认**没有**消费该脚本 stdout 的地方；`summary` 的消费方（`analyze_zh_ab.py` / `ab_terms_compare.py`）都按 key 取值 → additive 安全 |
+| 双副本对拍 | **160 → 162**，`same=162 diff=0 miss=0` |
+| 交付物指纹 | `302,570,573 B` / md5 `bf0af680c3851e3513fe4a3294a4413f` / sha256 `4a92fee21a7949ee5a6ade1376770b703fbdeaf13514d96e027187a3faf9060a` / mtime `2026-10-10 13:16:45` —— **全部未变** |
+
+### 11.6 结论与已知局限（诚实记账）
+
+- ✅ 三项功能落地，`byScenario` 无回归（回灌逐字相同），阈值守卫两端行为符合预期。
+- ⚠️ 短样本 `short_zhlecture_cnn.wav` 落在 **`scenario=other`** —— `scenario_of()` 按文件名
+  **前缀**判别，`short_*` 不匹配任何场景。**#172 生成场景集时按 `clean_*` / `noise_*` / … 命名即归位**，
+  本阶段不重命名（改名会牵动 metadata / 文档 / 工具默认参数）。
+- ⚠️ 「字幕数 > 片段数」告警在该素材上仍触发，属 §10.6 已记的**误报**（最长重复 0 字）；
+  解读必须同时看「最长重复子串」，单看计数比会给假警报。
+- ⚠️ 探针**未覆盖** `test_summarize_uses_once_per_result` 这条结构守卫 —— 要造一个
+  「少遍历但仍自洽」的变异并不自然，故诚实记账而不硬凑。
+- 下一步：**#171**（`ab_terms_compare.py` 补「0 字幕 → 提前中止」守卫，堵 H4）→
+  **#172**（中文 5 格场景集 + 指纹登记）→ **#173**（逐格基线填 §7 表）。
