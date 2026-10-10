@@ -1,6 +1,6 @@
 # P2：ASR 质量评估补全（分场景 CER/WER 报告）—— 方案与用例准备清单
 
-> 状态：**方案待决策**（§8 有 4 个待定项）。
+> 状态：**决策已定，进入执行**（D1~D4 见 §8；执行顺序见 §8 末）。
 > 前提：本任务只改 `<repo>/scripts/`、`<repo>/testset/`、`<repo>/docs/`、`packaging/eval/`，
 > **不动安装包**（边界逐条核实见同目录 `write-boundary.md`）。
 
@@ -224,7 +224,7 @@ scripts/make_asr_testset.py \
 |---|---|---|---|
 | H1 | **来源维度缺失**：`scenario` 只有 clean/noise/…/long/other，**合成劣化**与**真实录音**会被同名合并进同一个 `byScenario` 桶 | 结果里加 `sourceKind`（`tts` / `tts-degraded` / `real` / `synth-en`），由文件名或 metadata 判定；汇总里按 `(sourceKind, scenario)` 二维分组 | 改汇总结构 → 会动 `summarize()` 的产物 schema；需同步 `analyze_zh_ab.py` |
 | H2 | 中文只有 `--max-wer` 门禁，没有 `--max-cer` | 加 `--max-cer`（与 `--max-wer` 同构） | 低 |
-| H3 | 长素材做场景矩阵太慢（4 场景 × 10min，`--realtime` 下约 40min/轮） | 给 `make_asr_testset.py` 加「先截 N 秒再劣化」（如 `--clip-seconds 90`）；或在生成阶段用更短的源 | 低 |
+| H3 | 长素材做场景矩阵太慢（4 场景 × 10min，`--realtime` 下约 40min/轮） | **已定实现路径（见 §6.1 的实测）**：不做「模糊的 `--clip-seconds`」，改为**按段落静音边界切分**——切出来的音频与文本都来自同一份内置讲稿，配对天然精确 | 低（但必须先证边界数对得上，已证：29 = 30−1） |
 | **H4** | **无效轮次防护不均匀**（已核实）：`ab_terms_compare.py:435` **有**「背压丢弃 → 默认中止」的守卫（`--allow-drops` 才继续）；但**没有**「`totalSubtitles == 0` → 中止」的守卫（全文不引用 `verdict`/`passed`） | 加一条同构守卫：子报告 `summary.totalSubtitles == 0` 或 `verdict.passed == false` → 中止（除非显式 `--allow-invalid`） | 中（这正是 `short.json` 那种「整轮一个字幕没出、每格 WER 恒 1.0」还能进对照表的通道） |
 | H5 | ✅ **已核实无缺口**：报告的 `recognition` = 全部字幕文本 `" ".join(...)`（`eval_asr_quality.py:553/583`），**无截断**；`--detail-limit 200` 只作用于 `segmentDetail` | 无需改动（错误归因可直接用 `recognition` vs `reference`） | — |
 | H6 | 素材指纹未进入报告 | 把**音频 sha256 + 参考文本 sha256** 写进报告（教训 29：对照实验先证「被操纵的变量真变了」；P1 的 `artifact` 字段就是这个思路） | 低～中 |
@@ -238,10 +238,33 @@ scripts/make_asr_testset.py \
 
 ### 6.1 素材（方案 A 主线）
 
+#### ★ 短样本怎么切：实测结论（D3 的实现依据）
+
+「给 `make_asr_testset.py` 加个 `--clip-seconds`」这个直觉做法**不可行**，原因是实测出来的：
+
+| 实测项 | 结果 |
+|---|---|
+| `long_zhlecture_cnn.txt` 的结构 | **只有 1 个非空行 / 3153 字** —— 整篇讲稿**没有任何段落分隔符**。按行切片拿不到段落 |
+| 音频里的段落边界 | 10ms 帧 RMS + 阈值 2% 峰值找静音段：**静音 ≥1.1s 的段数 = 29 = `len(LECTURE) − 1`**（阈值 1.1s 与 1.2s 都是 29；0.9s/1.0s 会多切出 1 段）→ **段落边界可从静音精确恢复** |
+| 文本真值在哪 | `scripts/make_chinese_testset.py` 内置 `LECTURE`（30 段，汉字 2680） |
+| `txt` 与 `LECTURE` 的关系 | **`txt == ''.join(LECTURE).replace(' ', '')`，逐字符相等**（LECTURE 里有 30 个空格，正好是长度差 30） |
+
+⇒ **零新增依赖的切分法**：取 `LECTURE[:k]` 作为文本、音频切到第 k 个段落边界（该边界右侧留足静音，避免切断字尾）。
+两者同源，**配对精确性由构造保证**，不靠人工对齐。
+（顺带：`_PUNCT` 里含空格，`normalize()` 对中文会把空格一并删掉 → 短样本文本要不要带空格**对 CER 无影响**。）
+
+- [ ] 先写切分工具（建议 `<repo>/scripts/clip_tts_paragraphs.py`，只读长素材、写短样本 + 精确文本）
+- [ ] **切完必须自证配对正确**：对切出的短样本跑一次 `eval_asr_quality.py`，CER 应与整篇同一量级
+      （配对错了 CER 会爆掉 —— 这是「先证被操纵的变量真变了」的可操作形式）；
+      同时断言「切出音频里 ≥1.1s 静音段数 == k − 1」
+- [ ] 目标时长 60~90s（按前 3 段约 291 字、语速 ~4.4 字/秒推算，3~4 段约 66~90s）
+
+#### 劣化（方案 A 主线）
+
 - [ ] 确认目标目录（建议 `testset/chinese_lecture/scenarios/`；`testset/**/*.wav` 已被 gitignore 屏蔽，音频不入库 ✅）
-- [ ] 跑 `make_asr_testset.py --source testset/chinese_lecture/long/long_zhlecture_cnn.wav --out …`
-- [ ] 核对产物：`synth_{clean,noise,lowvol,fast,multi}_long_zhlecture_cnn.wav` **+ 同名 `.txt`**（参考文本随劣化复制，必须逐字节等于源 txt）
-- [ ] 跑 `check_transcript.py --audio <每个 wav>` 确认逐字稿仍合规（语速区间会因变速而变，**fast 格必然偏离**，需在白名单里说明）
+- [ ] 跑 `make_asr_testset.py --source <短样本>.wav --out …`（算子语言无关，中文可直接用）
+- [ ] 核对产物：`synth_{clean,noise,lowvol,fast,multi}_<短样本名>.wav` **+ 同名 `.txt`**（参考文本随劣化复制，必须逐字节等于源 txt）
+- [ ] 跑 `check_transcript.py --audio <每个 wav>` 确认逐字稿仍合规。⚠️ 变速会改语速：源 ~4.4 字/秒，`fast` 格 1.35× ⇒ ~5.9 字/秒，仍在 `CPS_RANGE (1.2~8.0)` 内；但 `check_transcript.py` 算的是**字数/音频时长**，fast 格音频变短、字数不变 ⇒ **必须真跑一遍确认，不得推断**
 - [ ] 记录每个 wav 的 `sha256 + 时长 + RMS/峰值` 写进 `metadata.json`（可复用 `make_chinese_testset.py` 的统计口径）
 
 ### 6.2 基线跑（每格必须**一次调用一份报告**）
@@ -259,38 +282,51 @@ scripts/make_asr_testset.py \
 - [ ] 人工校对 → `preproof_transcript.py` 出定稿 → `check_transcript.py` 全 OK
 - [ ] 只在**校对完成后**才纳入报告（拿草稿当参考文本 = 测自己的输出，`check_transcript.py` 第 7 条就是防这个）
 
-### 6.4 口音格（依赖 §8 决策）
+### 6.4 口音格（**已定：留空**）
 
-- [ ] 若走方言 TTS：先 `pip install edge-tts`（**当前 venv 与管理 python 都没有**）→ `edge-tts --list-voices` **实测**可用 voice（不凭记忆写 voice id）
-- [ ] 若走真人：并入 6.3 的锚点段
-- [ ] 若决定留空：在报告里显式登记为**已知缺口**（现状做法），不得用「变调」冒充
+- [x] **决策 D2 = 显式留空并登记为已知缺口**（不用任何近似手段冒充）
+- [ ] 在报告里写明「`accent` 未覆盖」及其理由（`make_asr_testset.py:24` 已论证「变调近似口音没有依据」）
+- [ ] 若日后恰好拿到合适真人素材（普通话不标准 + 远场），顺带补进 6.3 的锚点段（届时才需要改 `--source-kind real`）
 
 ---
 
 ## 7. 报告表样（跑完填）
 
-| 来源 | 场景 | n | CER | WER | 丢片 | 合并 | 字幕>片段 | 尾延迟 s | RTF |
+| 来源（sourceKind） | 场景 | n | CER | WER | 丢片 | 合并 | 字幕>片段 | 尾延迟 s | RTF |
 |---|---|---|---|---|---|---|---|---|---|
 | tts-degraded | clean | | | | | | | | |
 | tts-degraded | noise(8dB) | | | | | | | | |
 | tts-degraded | lowvol(−30dBFS) | | | | | | | | |
 | tts-degraded | fast(1.35×) | | | | | | | | |
 | tts-degraded | multi(0.35s/0.75) | | | | | | | | |
-| real | clean（真人课 630s） | | | | | | | | |
-| real | accent | | | | | | | | |
+| tts | long（整篇 626s，长时稳定性） | | | | | | | | |
+| real | other（真人课 630s） | | | | | | | | |
+| real | accent | **未覆盖（已登记缺口）** | — | — | — | — | — | — | — |
 
 > 空单元格 = 尚未测得。**不得填 0、不得填推断值。**
 
 ---
 
-## 8. 待决策项（需要拍板）
+## 8. 决策记录（2026-10-10 已拍板）
 
-| # | 决策 | 选项 | 我的建议 |
+| # | 决策 | **已定** | 落地要点 |
 |---|---|---|---|
-| **D1** | 中文场景素材走哪条路线 | A 纯合成 / B 纯真人 / **C 合成 + 真人锚点** | **C**：先用 A 拿到管道鲁棒性量化，再补 1 段真人做锚点；两者分开统计 |
-| **D2** | `accent` 格怎么办 | ①方言 TTS（需装 edge-tts，且「方言播音腔」≠「带口音普通话」）②真人带口音 ③显式留空登记为缺口 | **③ 留空 + ② 若恰好有合适真人素材则顺带补**；不要为了凑满 6 格而用 TTS 冒充口音 |
-| **D3** | 是否先做中文短样本（60~90s）以加快场景矩阵 | 是（快，但失去「长时稳定性」）/ 否（10min 直接上，慢） | **是**：短样本做 4 场景矩阵，10min 只留 clean/long 测长时稳定性 |
-| **D4** | 是否改 harness 加 `sourceKind`（H1） | 改（口径干净，但要动 `summarize()` schema）/ 不改（只靠文件名区分） | **改**：不改的话方案 C 的两类数字必然被平均，等于白测 |
+| **D1** | 中文场景素材路线 | **C：合成 + 真人锚点** | 合成 4 格（noise/lowvol/fast/multi）拿管道鲁棒性；再补 1 段真人课做真实锚点。**两类数字分开统计，合并不出一个均值**（依赖 H1） |
+| **D2** | `accent` 格 | **显式留空 + 登记为缺口** | 报告里写明未覆盖及理由；拿到合适真人素材再顺带补 |
+| **D3** | 是否先做短样本 | **是（60~90s）** | 实现路径见 §6.1「★ 短样本怎么切」——**按段落静音边界切**，零新增依赖；10min 只留 clean/long 测长时稳定性 |
+| **D4** | 是否改 harness | **改：H1 + H4** | H1 加 `sourceKind` 并新增 `bySourceScenario`（**additive，不动既有 `byScenario`**，避免破坏 `analyze_zh_ab.py`）；H4 给 `ab_terms_compare.py` 补「0 字幕 → 中止」守卫 |
+
+### 由此确定的执行顺序
+
+1. **H3 前置**：切分工具（段落静音边界）→ 产出 60~90s 短样本 + 精确文本 → **自证配对**（CER 量级 + 静音段数断言）
+2. **H1**：`eval_asr_quality.py` 加 `sourceKind`（`--source-kind auto|<label>`，auto 按路径/文件名启发式）+ 汇总新增 `bySourceScenario`
+3. **H4**：`ab_terms_compare.py` 加无效轮次守卫
+4. **H2**（顺手）：加 `--max-cer`
+5. 造中文 4 格 → 逐格跑基线（一格一份报告）→ 填 §7 表
+6. 真人锚点（用户挑 BV 号后）
+
+> ⚠️ 全部改动落在 `<repo>/scripts/` 与 `<repo>/testset/` —— **不进安装包**（`write-boundary.md`）；
+> 但每加一个文件都会让**双副本对拍基准** +1，改完必须 `cp` 同步镜像并重跑 `_mirror_check.py`。
 
 ---
 
