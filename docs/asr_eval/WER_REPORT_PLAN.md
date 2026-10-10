@@ -338,3 +338,117 @@ scripts/make_asr_testset.py \
 - ❌ 不用 11 秒名句类素材建基准（§3.1 的三个坑）
 - ❌ 不改 `backend/`、`frontend/`（会改安装包 → 作废 v3.4.1 证据；见 `write-boundary.md`）
 - ❌ 不把 `packaging/eval/` 的报告当可入库证据（该目录 gitignore）→ 关键数字必须落到**仓库内的 md**
+
+---
+
+## 10. #169 执行记录：切分工具 + 首轮 CER 量级验证（2026-10-10）
+
+### 10.1 工具
+
+`scripts/clip_tts_paragraphs.py`（新增；只读长素材 → 写短样本；零新增依赖：numpy + 标准库 wave）
+
+```bash
+<venv>/python scripts/clip_tts_paragraphs.py \
+    --audio testset/chinese_lecture/long/long_zhlecture_cnn.wav \
+    --paragraphs 4 --out-dir testset/chinese_lecture/short
+```
+
+内置**三项自证**，任一不过就 `exit 1` 且不写产物（工具必须能自证，否则不许用它产出的素材）：
+
+| # | 断言 | 本次实测 |
+|---|---|---|
+| ① | 整篇「静音 ≥`--gap-min` 的段数 == `len(LECTURE) − 1`」 | **29 == 29** ✓ |
+| ② | 切片内部「静音 ≥`--gap-min` 的段数 == k − 1」 | **3 == 3** ✓ |
+| ③ | 参考文本 == `''.join(LECTURE[:k]).replace(' ', '')` | 414 字 ✓ |
+
+另有第 4 条**独立交叉校验**（不在脚本内，手工核）：**短文本 == 官方长 txt 的前 414 字（逐字符相等）**，
+且长 txt 第 415 字起是「滑动的步长我们称为str…」（= 第 5 段开头）⇒ 切点落在正确的段落边界上。
+
+> 设计要点：切口取「第 k 个段落边界 + 0.20s」——保留一点静音**保护字尾**，
+> 又**短于 `gap_min`**，不会被自己的静音检测误数成一个边界（`--tail-keep` 必须 < `--gap-min`，脚本会拦）。
+> 断言②只看「内部」静音（排除贴头/贴尾 0.3s 内的段），否则尾静音会恒多算 1 —— 工具开始骗自己。
+
+### 10.2 产物与指纹
+
+```
+testset/chinese_lecture/short/short_zhlecture_cnn.wav   80.52s  2,576,684 B   （gitignore）
+testset/chinese_lecture/short/short_zhlecture_cnn.txt   414 字                （入库）
+testset/chinese_lecture/short/metadata.json            切片参数 + 双份 sha256 （入库）
+```
+
+| 字段 | 值 |
+|---|---|
+| `clip.paragraphs` / `cutSeconds` / `boundarySeconds` / `boundarySilenceSeconds` | 4 / **80.52** / 80.32 / 1.34 |
+| `clip.internalGaps` | 3 |
+| `clip.durationSeconds` / `rmsDbfs` / `peakDbfs` | 80.52 / **−27.37** / −2.27 |
+| `clip.audioSha256` | `c8b672e46eddbed966aa99efda4d01fe1f3a94f6ee151821f99a93366931c3b4` |
+| `clip.referenceSha256` | `db33812cc181f180729ea9104613dd2b1af007b21d87352e2fa048006b4d7c20` |
+| `source.audioSha256`（长素材） | `5d823fc76cc9e683c8213595b1960d221f2c690e3a32e6ec9ca00d8c812ebbd2` |
+
+### 10.3 配对正确性的直接证据（首尾对齐）
+
+`eval_asr_quality.py` 报告的 `reference` vs `recognition`（未做任何繁简转换）：
+
+```
+ref 首: 同学们好，今天这节课我们来讲卷积神经网络，以及它背后最重要的训练算法，反向传播。
+hyp 首: 同学们好,今天这节课我们来讲《卷机神经》网络,以及它背后最重要的训练算法,反向传…
+ref 末: 图上反复使用，这就是所谓参数共享，它让模型的参数量大幅下降。
+hyp 末: 反复使用, 这就是所谓参数共享, 它让模型的参数量大幅下降。
+```
+
+**首尾都对得上** —— 若切分配错，CER 会直接爆到接近 1.0，且首尾必然错位。这是「先证被操纵的变量真的变了」的可操作形式（教训 29）。
+
+### 10.4 首轮 CER 量级（干净 TTS 短样本）
+
+命令：`eval_asr_quality.py --audio short_zhlecture_cnn.wav --language zh --terms on --realtime`
+（⚠️ 未传 `--domain`/`--custom-terms` ⇒ 实测**提示词 0 字符**，所以本次是**无术语注入口径**）
+
+| 指标 | 实测值 |
+|---|---|
+| **CER / WER** | **0.1847 / 0.1847**（中文按字，两者同值） |
+| `refUnits` / `hypUnits` / `edits` | 379 / 356 / 70 |
+| 片段 → 字幕 | 6 → 9（`subtitles > segments`，verdict 记 ⚠） |
+| 丢弃 / 合并 / 收尾 | 0 / 0 / `drained=True`，`tailSeconds` 2.271 |
+| `referenceSource` | `short_zhlecture_cnn.txt`（短样本自己的 txt，非 preproof） |
+| 提示词 | 0 字符，`分层条目数 {'custom':0,'discovered':0,'domain':0,'phrases':0}`，术语语种 zh |
+| verdict | `passed = true` |
+
+**量级判读**：落在 P3 已建立的干净中文 TTS 基线上——`on`（799 字符提示词）原始 CER `0.1876`／繁转简后 `0.1862`。
+本机 0.1847 与之同一量级（Δ ≤ 0.003，远小于已记录的 run-to-run 波动 ±0.03~0.05），**不是 1.0 那种配对失败的形态**。
+
+🔴 **不得跨素材比较**：P3 那批的 `off` 原始 CER 是 **0.5182**，看着比 0.1847 差得多，
+但那是**全网课 626s + 2026-10-06 的旧代码**（繁体占比 34.4%）。本次短样本与它**不是同一个东西**，
+两者相减没有意义（教训 19）。
+
+### 10.5 逐字稿合规（`check_transcript.py`）
+
+```
+[ OK ] 非空: 1 段 / 414 字        [ OK ] 字数下限: 414 字 ≥ 200
+[ OK ] 语速区间: 414 字 / 1.34 分钟 = 5.14 字/秒（合理区间 1.2~8.0）
+[ OK ] 未校对痕迹: 无占位标记      [ OK ] 重复段: 无异常重复
+[ OK ] 尾部完整性: 末段正常        结论：可用 ✓
+```
+（「人工校对痕迹」项**跳过**：短样本没有 `*.draft.json`。这是 TTS 同源文本的正常情况，非缺陷。）
+
+### 10.6 官方分析器分解（`analyze_zh_ab.py`）
+
+| 项 | 实测 |
+|---|---|
+| CER → 繁转简后 | **0.1847 → 0.1847**（等值 ⇒ 输出本就是简体，**无繁简虚高**） |
+| 识别文本繁体字占比 | **0.00%**（自测 345 个汉字里 0 个繁体形态） |
+| 最长重复子串 | **0 字** |
+| 「字幕数/片段数」判据 | **1.5，会触发** —— 但最长重复 0 字 ⇒ **误报**（与 P3 §6.8 的 `off` 轮 1.6607 触发同类） |
+| 中文术语命中率 | **0.3684**（内置 `@zh` 词表比对，**无术语注入**下） |
+| 漏词清单 | 卷积 0/5 · 激活函数 0/3 · 卷积核 0/2 · 收敛 0/1 · 卷积神经网络 0/1 |
+| 典型错误 | `convolution` **整块 delete（漏识）**、`激活函数`→`几乎韩术`、`卷积核`→`球盒卷机盒`、`relu`→`锐炉` |
+
+**判读**：错误集中在**英文原词**（`convolution` 整块漏掉、`relu`→`锐炉`）与中文术语上——
+这与 P3 的既有结论一致（`base` 模型对中文专业课「基本不可用」），也说明 P2 的场景矩阵有诊断价值。
+
+### 10.7 结论
+
+- ✅ **切分工具可用**：三项自证 + 一项独立交叉校验 + 首尾对齐，四重证据下配对无疑义。
+- ✅ **短样本（4 段 / 80.52s / 414 字）通过全部前置校验**，可作为 #172 的劣化输入。
+- ⚠️ 本次是**无术语注入**口径（提示词 0 字符）；术语收益要等 `ab_terms_compare.py` 的 off/on 对照（且它需要 H4 守卫先落地）。
+- ⚠️ 「字幕数 > 片段数」判据在该素材上会**误报**，解读时必须同时看「最长重复子串」——单看计数比会给假警报。
+- 下一步：**#170**（`sourceKind` + `bySourceScenario` + `--max-cer`）→ **#171**（0 字幕守卫）→ **#172**（劣化 5 格）→ **#173**（逐格基线）。

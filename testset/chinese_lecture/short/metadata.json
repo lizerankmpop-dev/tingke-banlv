@@ -1,0 +1,29 @@
+{
+  "kind": "CLIP-FROM-TTS",
+  "warning": "从 long_zhlecture_cnn.wav 按段落静音边界切出的短样本。音频与文本同源构造（文本 = make_chinese_testset.LECTURE[:k]，音频切到第 k 个段落边界），因此配对精确；但**它仍然是 TTS 代理素材**：无口音、无口误、无混响、无背景噪声，CER 绝对值偏乐观，不得作为真实中文课堂的结论。",
+  "source": {
+    "audio": "long_zhlecture_cnn.wav",
+    "audioSeconds": 626.41,
+    "audioSha256": "5d823fc76cc9e683c8213595b1960d221f2c690e3a32e6ec9ca00d8c812ebbd2",
+    "lectureParagraphs": 30,
+    "textSource": "scripts/make_chinese_testset.py::LECTURE[:k]"
+  },
+  "clip": {
+    "paragraphs": 4,
+    "cutSeconds": 80.52,
+    "boundarySeconds": 80.32,
+    "boundarySilenceSeconds": 1.34,
+    "gapMinSeconds": 1.1,
+    "tailKeepSeconds": 0.2,
+    "internalGaps": 3,
+    "audio": "short_zhlecture_cnn.wav",
+    "reference": "short_zhlecture_cnn.txt",
+    "referenceChars": 414,
+    "rmsDbfs": -27.37,
+    "peakDbfs": -2.27,
+    "durationSeconds": 80.52,
+    "audioSha256": "c8b672e46eddbed966aa99efda4d01fe1f3a94f6ee151821f99a93366931c3b4",
+    "referenceSha256": "53f4623b85f6e784fd00a4bd8445e984c37dd3d99f81579ee3a71e710ecfa88b"
+  },
+  "generatedBy": "scripts/clip_tts_paragraphs.py"
+}
