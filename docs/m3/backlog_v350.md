@@ -21,14 +21,14 @@
 | **V5-2** | 语种检测置信度阈值可调 + 低置信降级 | 缺陷防护 | 中 | ✅ **已实现** | 本清单 §二 |
 | **V5-3** | ~~回调文本分段边界对齐~~ → **语种决策会话级粘滞** | 需求替换 | 中 | ⚠️ **原需求前提不成立，已等价替换** | 本清单 §三 |
 | **V5-4** | 简繁转换开关配置项 | 体验/退路 | 中 | ✅ **已实现**（DB+API+前端三层） | 本清单 §四 |
-| **V5-8** | 🔴 **`auto` 口径下英文短语层仍注入中文课** | 缺陷修复 | **高** | 🔴 **待裁决是否并入本版** | `known_defects.md` **D5** |
+| **V5-8** | **`auto` 口径下英文短语层仍注入中文课** | 缺陷修复 | **高** | ✅ **已实现**（2026-10-11 裁决并入） | `known_defects.md` **D5** |
 
 ### 安全域（不进包，可并行/穿插）
 
 | ID | 标题 | 类型 | 严重度 | 状态 | 依据 |
 |---|---|---|---|---|---|
 | **V5-5** | 评估脚本新增简繁校验探针 | 回归门禁 | 中 | ✅ **已实现** | `packaging/verify/check_simplified.py` |
-| **V5-6** | 更新 `WER_REPORT_PLAN.md` + `known_defects.md` | 文档 | 中 | ✅ **已实现**（§7.4 新增） | 本清单 §六 |
+| **V5-6** | 更新 `WER_REPORT_PLAN.md` + `known_defects.md` | 文档 | 中 | ✅ **已实现**（§7.4 / §7.5 新增） | 本清单 §六 |
 | **V5-7** | 预留 `accent` 评估框架（素材入口） | 评估口径 | 中 | ✅ **框架已就绪**，素材待 BV 号 | `known_defects.md` **D4** |
 
 ### 顺延（原 V5-2/V5-3/V5-4/V5-5/V5-6/V5-7 让位改号）
@@ -174,9 +174,13 @@
 
 ---
 
-## 十二、V5-8 · `auto` 口径下英文短语层仍注入中文课（🔴 待裁决是否并入本版）
+## 十二、V5-8 · `auto` 口径下英文短语层仍注入中文课（✅ 已实施，并入本版）
 
-**完整立案见** [`known_defects.md`](../asr_eval/known_defects.md) **D5**；下面是决策所需的最小信息。
+**裁决**：2026-10-11 用户裁决 **并入 v3.5.0**（与 V5-1~V5-4 同一次打包）。
+理由：本版已经要重打包一次；把它推到下一版意味着**本轮 L4/e2e 证据二次作废**。
+
+**完整立案见** [`known_defects.md`](../asr_eval/known_defects.md) **D5**；
+实测见 [`WER_REPORT_PLAN.md`](../asr_eval/WER_REPORT_PLAN.md) **§7.5**；下面是决策所需的最小信息。
 
 **现象（同会话实测，clean 实时口径，V5-1 修复后的引擎）**
 
@@ -196,8 +200,17 @@
 
 | 方案 | 做法 | 评价 |
 |---|---|---|
-| **a（推荐）** | 引擎探测判定为目标语种后回调管道，用解析出的语种重建术语层并热更新（复用 `set_initial_prompt()`） | 语义清晰；与 V5-4 开关天然共存 |
+| **a（已采用）** | 引擎探测判定为目标语种后回调管道，用解析出的语种重建术语层并热更新（复用 `set_initial_prompt()`） | 语义清晰；与 V5-4 开关天然共存 |
 | b | 引擎按层名（`phrases`）直接抑制该层 | 实现最短，但把「哪一层是英文短语」的语义塞进了引擎，跨层耦合 |
+
+**实施结果（`v58_ab_*.json`，同会话三格）**：修复幅度 **ΔCER −0.2137（−58.7%）**，
+`hypUnits` 450→375；修复后的默认路径与显式 `zh` **逐位一致**（0.1504 / 57 / 375）；
+`--language zh` 一格与 P2 时点完全一致 ⇒ v4 判据基准未受影响。
+
+**落点**：`whisper_engine.py`（`on_language_decided` + `_notify_language_decided()`，
+只回调一次、异常吞掉）+ `pipeline.py`（`_terminology_language()` / `_rebuild_terminology()` /
+`_on_language_decided()` / `make_term_rebuilder()`）+ `scripts/eval_asr_quality.py`
+（`--lang-aware-terms` / `--no-lang-aware-terms`，默认开，与产品默认一致）。
 
 **验收怎么算**：默认路径（`auto` + 术语层跟随）的 clean CER 应从 **0.438 → ≈0.1504**，
 繁体字符从 **4 → 0**；且英文课不受影响（非目标语种不触发切换）。
@@ -218,9 +231,9 @@
 | V5-5 | ✅ 已实现 | `packaging/verify/check_simplified.py`（含 `--self-test`） | 修复前 exit 1 / 修复后 exit 0 双向验证 |
 | V5-6 | ✅ 已实现 | `WER_REPORT_PLAN.md` §7.4 + `known_defects.md` D1/D5 + 本清单改号 | — |
 | V5-7 | ✅ 框架就绪 | `testset/chinese_lecture/accent/README.md` + `scripts/run_accent_baseline.py` | 无素材时 `SKIPPED-NO-MATERIAL`；违规素材 6 项全拦 |
-| V5-8 | 🔴 待裁决 | — | — |
+| V5-8 | ✅ 已实现（2026-10-11 裁决并入） | `whisper_engine.py` 回调 + `pipeline.py` 重建 + `make_term_rebuilder()` + A/B 脚本开关 | 单测 17 条；同会话 A/B ΔCER **−0.2137**，与显式 `zh` 逐位一致；变异探针 M15~M22 |
 
-**变异探针**：`packaging/verify/probe_lang_simp_mutations.py`（14 条，**14/14 全部抓住**，
+**变异探针**：`packaging/verify/probe_lang_simp_mutations.py`（**22** 条，**22/22 全部抓住**，
 不变量亦为绿）。已用 `.gitignore` 反选纳入跟踪 —— 否则 `packaging/verify/*` 会把它吞掉，
 「已有守卫」就成了假的。
 

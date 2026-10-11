@@ -294,6 +294,10 @@ class WhisperEngine:
         # V5-4：简繁输出开关。刻意放在签名**末尾**而不是 `language` 旁边 ——
         # 老调用点只用到 `cpu_threads` 为止，放中间会让按位置传参的调用点静默错位。
         simp_mode: str = SIMP_MODE_AUTO_SIMPLIFIED,
+        # V5-8：auto 下判定出目标语种后**一次性**回调，让上层用这个语种重建术语层。
+        # 引擎自己不知道术语分了几层、每层该不该有内容，那属于 `dictionary.terminology`
+        # 的知识；引擎只负责把「语种已经定了」这件事告诉上层。同样放在末尾。
+        on_language_decided: Optional[Callable[[str], None]] = None,
     ):
         self.model_size = model_size
         self.device = device
@@ -303,6 +307,7 @@ class WhisperEngine:
         self.cpu_threads = cpu_threads or _detect_cpu_threads()
         self.on_partial = on_partial
         self.on_progress = on_progress
+        self.on_language_decided = on_language_decided
         # 术语热词先验：给 Whisper 一段领域术语文本，显著提升专业词拼写准确率
         self.initial_prompt = (initial_prompt or "").strip() or None
         # 分层术语 `[(层名, [术语...]), ...]`（高 → 低优先级），来自
@@ -332,6 +337,11 @@ class WhisperEngine:
         self._lang_detect_events = 0          # 实际跑了探测的次数（观测用）
         self._lang_low_conf_events = 0        # 因置信不足而降级的次数（V5-2 观测用）
         self._lang_non_target_streak = 0      # 连续观察到非目标语种的次数
+        # V5-8：`on_language_decided` 只许发一次（同一场课重建一次术语层就够；
+        # 每块都重建会让提示词反复变化，`condition_on_previous_text` 的连贯性
+        # 条件随之抖动）。`reset_language_decision()` 会把它清零，使「换课程/
+        # 换素材后重新探测」也能重新通知。
+        self._lang_decided_notified = False
 
         self._model = None
         self._loading = False
@@ -1055,6 +1065,11 @@ class WhisperEngine:
                 f"[lang] auto 判定为 {lang}（置信 {conf:.2f}）"
                 f"⇒ 本会话启用简体引导语（V5-1）"
             )
+            # V5-8：语种定了 ⇒ 通知上层用**这个语种**重建术语层。
+            # 调用点在这里（而不是 `_transcribe` 之后）是有意的：回调会同步更新
+            # `_prompt_sections`，于是紧接着的 `_build_prompt()` 就已经用上新分层 ——
+            # 被判为中文的**第一块**就拿不到英文短语层，而不是从第二块才开始修。
+            self._notify_language_decided(lang)
             return lang, conf, "detected"
 
         # 非目标语种：要连续观察到 `LANG_NON_TARGET_LOCK_AFTER` 次才锁定，
@@ -1080,6 +1095,45 @@ class WhisperEngine:
         self.simp_mode = normalize_simp_mode(mode)
         self.reset_language_decision()
 
+    def _notify_language_decided(self, language: str) -> None:
+        """auto 下判定出目标语种后一次性通知上层（V5-8）
+
+        ## 为什么要这一跳
+
+        `build_prompt_sections(language="auto")` 会产出「词表短语层」，而该层由
+        `basic_vocab.json` 里**含空格的词**筛出 —— 即**只有英文多词短语**。中文课
+        拿到它是纯干扰：实测 `hypUnits` 375→487（多吐 112 字乱码）、CER +0.2876
+        （+65.7%）。关掉它对中文语种本就有现成开关（`_PHRASES_LAYER_EXCLUDED_LANGS`），
+        只是 auto 时判不了语种、只能走旧行为。
+
+        V5-1 让引擎在**解码前**就拿到了语种 ⇒ 这个「判不了」的前提消失了（见
+        `docs/m3/backlog_v350.md` §十二 V5-8 立案）。
+
+        ## 为什么由引擎发、由上层重建
+
+        引擎不知道术语分了几层、哪层该有内容 —— 那是 `dictionary.terminology` 的
+        知识。引擎只负责把「语种已经定了」这件事告诉上层，让上层用它重建。
+
+        ## 三个必须守住的点
+
+        1. **只发一次**。每块都重建会让提示词反复变化，而
+           `condition_on_previous_text=True` 的连贯性条件会跨这次变化抖动。
+        2. **异常必须吞掉**。回调里要做的是重建术语层（读词表、重排 token 预算），
+           它失败只该让「短语层没关掉」，绝不能让识别本身崩掉。
+        3. **`language` 为空时不发**。宁可不触发，也不要让上层拿着空串去重建。
+        """
+        if self.on_language_decided is None:
+            return
+        if self._lang_decided_notified:
+            return
+        if not (language or "").strip():
+            return
+        self._lang_decided_notified = True
+        try:
+            self.on_language_decided(language)
+        except Exception as e:                      # noqa: BLE001 —— 见 docstring 第 2 点
+            logger.warning(f"语种决策回调失败（不影响识别）：{e}")
+
     def reset_language_decision(self):
         """清掉会话级语种粘滞，让下一次识别重新探测（换课程/换素材时调用）。"""
         self._lang_decided = False
@@ -1087,6 +1141,8 @@ class WhisperEngine:
         self._lang_confidence = 0.0
         self._lang_source = "unset"
         self._lang_non_target_streak = 0
+        # V5-8：重新探测后要能重新通知，否则「换到中文课」时术语层还是旧语种建的
+        self._lang_decided_notified = False
 
     def _build_prompt(self, simp: Optional[bool] = None) -> Optional[str]:
         """
@@ -1244,4 +1300,9 @@ class WhisperEngine:
             "languageSource": self._lang_source,
             "langDetectEvents": self._lang_detect_events,
             "langLowConfidenceEvents": self._lang_low_conf_events,
+            # V5-8：语种决策有没有真的通知到上层。为 False 时「术语层仍是按 auto
+            # 建的」—— 中文课会带着英文短语层跑，CER 差 0.29，而这一点从
+            # languageSource=detected 看不出来（决策对了，只是没通知出去）。
+            "langDecidedNotified": self._lang_decided_notified,
         }
+

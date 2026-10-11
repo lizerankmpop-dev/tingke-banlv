@@ -444,6 +444,59 @@ RTF 列与它是**同一次**非实时合跑（`summary.byScenario.*.meanRtf`）
 
 ---
 
+### 7.5 语种感知术语层（V5-8 / 缺陷 D5，2026-10-11 实测）
+
+#### 为什么必须单列一节
+
+这一条**只在默认路径上出现**：`--language zh` 一格完全不受影响（不触发探测、
+回调不发）。所以**只看 P2 的 `zh` 基线永远看不到它** —— 这正是它被漏掉一整轮的
+原因：前面所有基线都跑在显式 `zh` 上。
+
+它的性质也和 §7.4 不同：§7.4 是**字形**问题，这里是**内容**问题
+（英文短语层把模型带进复读式幻觉）。两者在 CER 上叠加，方向相反地互相掩盖。
+
+#### 同会话 A/B（clean，`--realtime`）
+
+三格由 `packaging/eval/v58_ab_*.json` 生成，表由 `_v58_ab.py` 从产物读出（**不手抄**）。
+`v58_on` / `v58_off` 的唯一变量是 V5-8 开关，`v58_zh` 是 P2 口径的对拍格。
+
+| 格 | 命令 | CER | edits | hypUnits/refUnits | `languageSource` | 术语层重建 | 繁体字 |
+|---|---|---|---|---|---|---|---|
+| 修复前 | `--language auto --no-lang-aware-terms` | 0.3641 | 138 | 450/379 | `sticky` | — | 0 / 0.00% |
+| **修复后** | `--language auto` | **0.1504** | **57** | **375/379** | `sticky` | zh → phrases **0** 项 | **0** |
+| P2 基线口径 | `--language zh --term-language zh` | 0.1504 | 57 | 375/379 | `explicit` | — | 0 |
+
+#### 三条结论
+
+1. **修复幅度 ΔCER −0.2137（相对 −58.7%）**，`hypUnits` 450 → 375
+   —— 少吐 **75 个字的幻觉**。「默认路径上英文短语层的代价」就是这个量级。
+2. **修复后的默认路径与显式 `zh` 逐位一致**（CER 0.1504 / edits 57 / hypUnits 375
+   三项全同）⇒ 可以断言「`auto` 已等价于显式中文」，与 §7.4 第 2 条结论互证。
+3. **`--language zh` 一列与 P2 时点完全一致** ⇒ v4 判据的对拍基准未受影响
+   （显式语种不触发探测，回调根本不发）。这是「这次改动能不能只改默认路径」的答案。
+
+⚠️ **跨会话漂移提醒（台账 D3）**：`v58_off` 在本会话是 **0.3641**，而 §7.4 那批数据里
+同一条件是 **0.438**。同一份代码、同一份素材、不同会话，CER 差 0.074 —— 与 D3 的
+量级一致。所以**本表只允许同会话内部比较**，不要拿它去和 §7.4 的表做减法。
+
+#### 落盘字段怎么读
+
+`config.langAwareTerms` 说明开关状态，`config.termRebuilds` 说明**实际重建了几次、
+重建成什么**。两个字段缺一不可：`languageSource=detected` 只说明「判对了语种」，
+不说明「术语层按这个语种重建了」—— 而后者才是 D5 的修复点，两者在 CER 上差 0.21。
+
+复算命令：
+
+```bash
+<venv>/Scripts/python.exe scripts/eval_asr_quality.py \
+    --audio testset/chinese_lecture/scenarios/short/synth_clean_short_zhlecture_cnn.wav \
+    --realtime --report packaging/eval/v58_ab_v58_on.json
+# 关掉 V5-8 复现修复前行为：追加 --no-lang-aware-terms
+# 表格与差值：安装空间/_v58_ab.py（数字全部从产物读取）
+```
+
+---
+
 ## 8. 决策记录（2026-10-10 已拍板）
 
 | # | 决策 | **已定** | 落地要点 |

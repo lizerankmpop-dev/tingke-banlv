@@ -432,6 +432,9 @@ def _bare_engine(
     engine._lang_detect_events = 0
     engine._lang_low_conf_events = 0
     engine._lang_non_target_streak = 0
+    # V5-8：语种决策回调（默认为空；本文件只测队列/收尾/循环防护，不接回调）
+    engine.on_language_decided = None
+    engine._lang_decided_notified = False
     engine._echo = EchoCleaner(get_simp_hint() if engine._hint_possible() else "")
     engine._echo_logged = False
     return engine

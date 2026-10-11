@@ -330,6 +330,8 @@ class TestRealCallChain:
         pipe.course_config = {"domain": "", "custom_terms": [], "language": "zh"}
         pipe._discovered_terms = []
         pipe._terminology = {}
+        # V5-8 起术语层语种另有来源（探测结果优先），未解析时为 None
+        pipe._term_language = None
 
         captured: dict = {}
 
@@ -357,6 +359,7 @@ class TestRealCallChain:
         pipe.course_config = {"domain": "", "custom_terms": [], "language": "en"}
         pipe._discovered_terms = []
         pipe._terminology = {}
+        pipe._term_language = None
 
         class _FakeWhisper:
             def set_initial_prompt(self, prompt, sections=None):

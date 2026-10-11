@@ -172,6 +172,70 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
         '    data["simpMode"] = data.get("simpMode")\n',
         f"{TEST}::test_create_course_normalizes_garbage_simp_mode",
     ),
+    # ---- V5-8：auto 判出语种后重建术语层 ----
+    (
+        "M15 引擎判出目标语种却不通知 ⇒ 中文课一直带着英文短语层（D5 未修）",
+        ENGINE,
+        '            self._notify_language_decided(lang)\n',
+        '            pass\n',
+        f"{TEST}::test_auto_detected_chinese_notifies_once",
+    ),
+    (
+        "M16 「只通知一次」的守卫失效 ⇒ 提示词每块都重建，连贯性条件一直抖",
+        ENGINE,
+        '        if self._lang_decided_notified:\n            return\n',
+        '        if False:\n            return\n',
+        # ⚠️ 这里**不能**指向 `test_auto_detected_chinese_notifies_once`：那条用例里
+        # 第二次通知是被**粘滞**挡住的（`_lang_decided=True` 后走不到通知那行），
+        # 所以删掉守卫它照样全绿 —— 首次跑这个探针就是在这里漏网的。
+        # 一次性守卫要由直接调 `_notify_language_decided()` 的用例来守。
+        f"{TEST}::test_notify_guard_stands_on_its_own",
+    ),
+    (
+        "M17 `reset_language_decision()` 不清通知标记 ⇒ 换课后术语层停在上一个语种",
+        ENGINE,
+        '        # V5-8：重新探测后要能重新通知，否则「换到中文课」时术语层还是旧语种建的\n'
+        '        self._lang_decided_notified = False\n',
+        '        pass\n',
+        f"{TEST}::test_reset_reallows_notification",
+    ),
+    (
+        "M18 回调异常没被吞 ⇒ 术语层重建失败会把整条识别链路带崩",
+        ENGINE,
+        '        except Exception as e:                      # noqa: BLE001 —— 见 docstring 第 2 点\n'
+        '            logger.warning(f"语种决策回调失败（不影响识别）：{e}")\n',
+        '        except ValueError as e:\n'
+        '            logger.warning(f"语种决策回调失败（不影响识别）：{e}")\n',
+        f"{TEST}::test_callback_failure_does_not_break_recognition",
+    ),
+    (
+        "M19 管道收到通知却不记语种 ⇒ 后续重建退回 auto，短语层又回来",
+        PIPELINE,
+        '            self._term_language = new_lang\n',
+        '            pass\n',
+        f"{TEST}::test_pipeline_rebuild_uses_detected_language",
+    ),
+    (
+        "M20 `_terminology_language()` 忽略已解析语种 ⇒ 术语热更新复活英文短语层",
+        PIPELINE,
+        '        return self._term_language or self.course_config.get("language", "auto")\n',
+        '        return self.course_config.get("language", "auto")\n',
+        f"{TEST}::test_hot_update_after_detection_keeps_phrases_out",
+    ),
+    (
+        "M21 引擎构造漏接回调 ⇒ V5-8 整条链路静默失效（方法级用例仍全绿）",
+        PIPELINE,
+        '            on_language_decided=self._on_language_decided,\n',
+        '',
+        f"{TEST}::test_engine_notification_is_actually_wired_in_pipeline",
+    ),
+    (
+        "M22 A/B 脚本不复用管道实现 ⇒ 「测到的」不再是「用户遇到的」",
+        "scripts/eval_asr_quality.py",
+        '            from asr.pipeline import make_term_rebuilder\n',
+        '',
+        f"{TEST}::test_eval_script_reuses_the_pipeline_rebuilder",
+    ),
 ]
 
 

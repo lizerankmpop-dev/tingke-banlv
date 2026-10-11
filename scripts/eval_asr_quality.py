@@ -566,7 +566,13 @@ def percentile(values: list[float], ratio: float) -> float:
 
 # ============ 引擎 / VAD 组装 ============
 
-def build_engine(args, router: "SubtitleRouter", prompt: str):
+def build_engine(
+    args,
+    router: "SubtitleRouter",
+    prompt: str,
+    sections: list | None = None,
+    on_language_decided=None,
+):
     from asr.whisper_engine import COMPUTE_TYPE, DEFAULT_MODEL, DEVICE, WhisperEngine
 
     # 绝不能把 None 透传给引擎：model_size=None 会被拼成
@@ -585,6 +591,14 @@ def build_engine(args, router: "SubtitleRouter", prompt: str):
         on_partial=router,
         on_progress=lambda stage, pct: status.append(f"{stage}:{pct:.0f}%"),
         initial_prompt=prompt,
+        # 分层术语（高→低）交给引擎按 token 预算重排（P0-3）。V5-8 重建术语层后
+        # 引擎会用新的分层整份替换它 —— 所以这里必须一并传，否则「重建前」没有分层、
+        # 「重建后」有分层，提示词 md5 的变化就带了两个变量，说不清是谁的功劳。
+        prompt_sections=sections,
+        # V5-8：语种决策回调。传的是 `ASRPipeline._on_language_decided` 本尊
+        # （见 `make_term_rebuilder`），不在这里另写一份 —— 抄一份就会漂移，
+        # 而这里的漂移是静默的：A/B 测到的将不是产品行为。
+        on_language_decided=on_language_decided,
     )
 
     started = time.time()
@@ -1222,6 +1236,20 @@ def main() -> int:
         "`--language zh --term-language zh` 才是修复后的行为。"
         "不动 --language 是为了不让 ASR 语种一起变成变量。",
     )
+    parser.add_argument(
+        "--lang-aware-terms",
+        dest="lang_aware_terms",
+        action="store_true",
+        default=True,
+        help="V5-8：auto 下引擎判出语种后，用该语种重建术语层（与产品默认一致）。"
+        "关掉可复现修复前的行为：术语层永远按 --term-language 建。",
+    )
+    parser.add_argument(
+        "--no-lang-aware-terms",
+        dest="lang_aware_terms",
+        action="store_false",
+        help="关闭 V5-8 的语种感知术语层（复现修复前行为）。",
+    )
     parser.add_argument("--terms", choices=("on", "off"), default="on", help="是否注入术语热词")
     parser.add_argument("--domain", default="", help="术语领域（配合 --terms on）")
     parser.add_argument(
@@ -1289,6 +1317,7 @@ def main() -> int:
     term_language = args.term_language or args.language
     prompt_md5 = ""
     prompt_sections: dict[str, int] = {}
+    prompt_sections_raw: list | None = None
     if args.terms == "on":
         try:
             from dictionary.terminology import build_terminology
@@ -1304,6 +1333,7 @@ def main() -> int:
             prompt = term["prompt"]
             prompt_md5 = hashlib.md5(prompt.encode("utf-8")).hexdigest()
             prompt_sections = {k: len(v) for k, v in (term.get("sections") or [])}
+            prompt_sections_raw = term.get("sections")
             total = term["stats"]["total"]
             print(
                 f"  术语热词: {total} 个"
@@ -1319,8 +1349,48 @@ def main() -> int:
         except Exception as exc:
             print(f"  ⚠ 术语热词构建失败，按不注入处理: {exc}")
 
+    # ---- V5-8：语种感知的术语层 ----
+    # 判出语种后必须用**该语种**重建术语层：默认的 `auto` 会产出「词表短语层」，
+    # 而那一层只有英文多词短语，对中文课是纯干扰（实测 CER +0.2876）。
+    rebuilder = None
+    term_rebuilds: list[dict] = []
+    on_language_decided = None
+    if args.lang_aware_terms and args.terms == "on":
+        try:
+            from asr.pipeline import make_term_rebuilder
+
+            rebuilder = make_term_rebuilder({
+                "domain": args.domain,
+                "custom_terms": [x.strip() for x in (args.custom_terms or "").split(",") if x.strip()],
+                "language": args.language,
+            })
+            _inner = rebuilder._on_language_decided
+
+            def on_language_decided(language: str) -> None:
+                _inner(language)
+                term_rebuilds.append({
+                    "language": language,
+                    "termLanguage": rebuilder._term_language,
+                    "sections": {k: len(v) for k, v in (rebuilder._terminology.get("sections") or [])},
+                })
+
+            print("  语种感知术语层: 开（V5-8）")
+        except Exception as exc:
+            print(f"  ⚠ V5-8 接线失败，按关闭处理: {exc}")
+            rebuilder = None
+            on_language_decided = None
+    elif not args.lang_aware_terms:
+        print("  语种感知术语层: 关（复现修复前行为）")
+
     router = SubtitleRouter()
-    engine = build_engine(args, router, prompt)
+    engine = build_engine(
+        args, router, prompt,
+        sections=prompt_sections_raw,
+        on_language_decided=on_language_decided,
+    )
+    if rebuilder is not None:
+        # 引擎建好后才回填：回调只在识别时触发，那时引擎一定在
+        rebuilder._whisper = engine
     if args.model is None:
         args.model = engine.model_size
 
@@ -1333,6 +1403,13 @@ def main() -> int:
         engine.set_auto_degrade(True)
         print("防循环兜底：已强制开启")
     print(f"术语提示词：{len(engine.initial_prompt or '')} 字符，兜底开关={'开' if engine.get_stats()['termAutoDegrade'] else '关'}")
+    # V5-8：把「术语层到底有没有按判定语种重建」打出来。只打 languageSource 不够 ——
+    # 决策对了不等于这条链路通了，而两者在 CER 上差 0.29。
+    if term_rebuilds:
+        for _rb in term_rebuilds:
+            print(f"  术语层已按 {_rb['language']} 重建：{_rb['sections']}")
+    elif args.lang_aware_terms and args.terms == "on":
+        print("  术语层未重建（未判定出目标语种，或语种是显式指定的）")
 
     results: list[dict] = []
     try:
@@ -1369,6 +1446,11 @@ def main() -> int:
             # **先比 md5**：相同就说明唯一变量没有引起任何变化，这组对照无效。
             "termPromptMd5": prompt_md5,
             "termPromptSections": prompt_sections,
+            # V5-8：语种感知术语层是否启用、实际重建了几次、重建成了什么。
+            # 必须落盘 —— 否则「CER 从 0.438 降到 0.15」无法归因到这条链路，
+            # 复核者只能看到 languageSource=detected 就往「已修」上靠。
+            "langAwareTerms": bool(args.lang_aware_terms),
+            "termRebuilds": term_rebuilds,
         },
         "summary": summary,
         "verdict": {"passed": passed, "notes": notes},

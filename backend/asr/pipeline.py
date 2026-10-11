@@ -51,6 +51,15 @@ class ASRPipeline:
         self._accumulated_text: list[str] = []
         self._discovered_terms: list[str] = []  # 本课程运行时已识别的术语（动态加入热词）
 
+        # V5-8：**已解析出的**术语层语种。None = 还没解析出来，跟随课程配置。
+        #
+        # 为什么不直接改 `course_config["language"]`：那个字段的语义是「用户给课程
+        # 设的解码语种」，引擎构造时读它来决定要不要自己探测。把它改成探测结果的值
+        # 会让管道重建后走 `explicit` 分支—— 表面等价，实则丢掉了 V5-2 的低置信
+        # 保护（用户显式指定语种时不打折，探测来的语种应该打折）。所以术语层的
+        # 语种单独存一份，两者互不串台。
+        self._term_language: Optional[str] = None
+
         # 构建术语热词（自定义术语 + 领域术语 + 词表短语）
         # 作用：让 Whisper 把 "convolution" 拼对，而不是听成 "convalution"
         #
@@ -61,7 +70,7 @@ class ASRPipeline:
             self._terminology = build_terminology(
                 domain=course_config.get("domain", ""),
                 custom_terms=course_config.get("custom_terms", []),
-                language=course_config.get("language", "auto"),
+                language=self._terminology_language(),
             )
             initial_prompt = self._terminology["prompt"]
             if initial_prompt:
@@ -105,6 +114,10 @@ class ASRPipeline:
             # V5-4：简繁输出开关。由引擎侧 normalize 收敛，这里不做校验 ——
             # 校验点越少越好，且历史课程可能带着旧值。
             simp_mode=course_config.get("simpMode"),
+            # V5-8：引擎在 auto 下判定出目标语种后回调，由本管道用**这个语种**
+            # 重建术语层。不接这一跳，中文课的默认路径就会一直带着英文短语层
+            # （实测 CER +0.2876），把 V5-1 的收益大半吃掉。
+            on_language_decided=self._on_language_decided,
         )
 
         self._vad = VoiceActivityDetector(
@@ -136,23 +149,94 @@ class ASRPipeline:
 
         self._start_listening()
 
+    def _terminology_language(self) -> str:
+        """术语层该按哪个语种构建（V5-8）
+
+        已解析出语种时用它，否则跟随课程配置。`update_terminology()` 与
+        `__init__` 必须走**同一个**来源 —— 否则用户改一次自定义术语，就把 V5-8
+        刚关掉的英文短语层又装回中文课（缺陷 b 复活的经典路径，上一版已在
+        `update_terminology` 里踩过一次）。
+        """
+        return self._term_language or self.course_config.get("language", "auto")
+
+    def _rebuild_terminology(
+        self,
+        language: Optional[str] = None,
+        custom_terms: Optional[list[str]] = None,
+    ) -> dict:
+        """按给定语种重建术语层并热更新引擎提示词（V5-8 与术语热更新的共用体）
+
+        `language=None` 表示用当前已解析的语种（见 `_terminology_language()`）。
+        `custom_terms=None` 表示沿用 `course_config` 里已有的（**不写回** course_config
+        —— 沿用原实现语义，DB 才是自定义术语的真源）。
+        """
+        from dictionary.terminology import build_terminology
+
+        term = build_terminology(
+            domain=self.course_config.get("domain", ""),
+            custom_terms=(
+                custom_terms if custom_terms is not None
+                else self.course_config.get("custom_terms", [])
+            ),
+            discovered_terms=self._discovered_terms,
+            language=language if language is not None else self._terminology_language(),
+        )
+        self._terminology = term
+        self._whisper.set_initial_prompt(term["prompt"], term.get("sections"))
+        return term
+
+    def _on_language_decided(self, language: str):
+        """引擎在 auto 下判定出目标语种 ⇒ 用该语种重建术语层（V5-8）
+
+        ## 这一跳值多少
+
+        `build_prompt_sections(language="auto")` 会产出「词表短语层」，而那一层
+        由 `basic_vocab.json` 里含空格的词筛出 —— 即只有英文多词短语。中文课拿到
+        它是纯干扰：实测 `hypUnits` 375→487、CER **+0.2876（+65.7%）**。
+        `terminology.py` 早就有 `_PHRASES_LAYER_EXCLUDED_LANGS` 能关掉它，
+        缺的只是「auto 时的语种」—— V5-1 把这件事解决了。
+
+        ## 时序
+
+        引擎在**解码前**调用本方法，所以本方法里 `set_initial_prompt()` 写下的
+        分层，会被紧接着的 `_build_prompt()` 读到 ⇒ 被判为中文的**第一块**就不带
+        英文短语层。（这也是把回调点放在 `_resolve_language()` 里、而不是
+        `_transcribe()` 末尾的原因。）
+
+        ## 代价
+
+        一次会话内提示词会变两次（初始 → 探测后重建），而
+        `condition_on_previous_text=True` 的连贯性条件会跨这次变化 —— `_last_text`
+        里可能还留着切换前那段（多语种混讲时甚至是繁体）的尾巴，切换后 1~2 块内
+        可能出现一次衔接不顺。相对于「整场课带着英文短语层跑」，这个代价是划算的；
+        但也**不要**为了「更平滑」而改成每块都重建（那会让提示词一直抖）。
+
+        异常一律吞掉：回调失败只该导致「短语层没关掉」，不能拖垮识别。
+        """
+        try:
+            new_lang = (language or "").strip().lower()
+            if not new_lang:
+                return
+            if new_lang == self._term_language:
+                return
+            self._term_language = new_lang
+            term = self._rebuild_terminology(language=new_lang)
+            logger.info(
+                f"已按识别语种 {new_lang} 重建术语层（V5-8）："
+                f"{term['stats']['total']} 个术语"
+            )
+        except Exception as e:                          # noqa: BLE001 —— 见 docstring
+            logger.warning(f"按识别语种重建术语层失败（不影响识别）：{e}")
+
     def update_terminology(self, custom_terms: Optional[list[str]] = None):
         """
         热更新术语热词（用户在课程里新增自定义术语后调用，无需重启管道）
         """
         try:
-            from dictionary.terminology import build_terminology
-            new_custom = custom_terms if custom_terms is not None else self.course_config.get("custom_terms", [])
-            # `language` 必须与首次构建（见 __init__）用同一个来源，否则热更新会把
-            # 已关掉的中文课短语层又装回来 —— 用户改一次术语表就等于把缺陷 b 复原。
-            term = build_terminology(
-                domain=self.course_config.get("domain", ""),
-                custom_terms=new_custom,
-                discovered_terms=self._discovered_terms,
-                language=self.course_config.get("language", "auto"),
-            )
-            self._terminology = term
-            self._whisper.set_initial_prompt(term["prompt"], term.get("sections"))
+            # `language` 必须与首次构建（见 `__init__`）用同一个来源（V5-8 起是
+            # `_terminology_language()`），否则热更新会把已关掉的中文课短语层又装
+            # 回来 —— 用户改一次术语表就等于把缺陷 b 复原。
+            term = self._rebuild_terminology(custom_terms=custom_terms)
             logger.info(f"术语热词已热更新: {term['stats']['total']} 个术语")
         except Exception as e:
             logger.error(f"术语热词热更新失败: {e}")
@@ -399,3 +483,31 @@ class ASRPipeline:
             logger.debug("LLM 提取器不可用，跳过 AI 术语提取")
         except Exception as e:
             logger.error(f"AI 术语提取失败: {e}")
+
+
+def make_term_rebuilder(course_config: dict, discovered_terms: Optional[list[str]] = None):
+    """构造一个**只带术语重建能力**的轻量管道替身（不加载 VAD/模型）
+
+    给谁用：不构造完整 `ASRPipeline` 的调用方 —— 目前是
+    `scripts/eval_asr_quality.py`（它直接操 `WhisperEngine`，起一个管道要多加载
+    VAD + 音频捕获）。
+
+    为什么要给工厂而不是让调用方自己抄一遍：V5-8 的语义是「判出语种 ⇒ 用该语种
+    重建术语层 ⇒ 热更新提示词」。若评估脚本另写一份，两份实现迟早漂移，而这里的
+    漂移是**静默**的 —— A/B 测到的将不是产品行为，结论却是按产品行为写的。
+
+    用法（`_whisper` 要等引擎建好后再回填，因为回调只在识别时才触发）::
+
+        stub = make_term_rebuilder(course_config, discovered_terms)
+        engine = WhisperEngine(..., on_language_decided=stub._on_language_decided)
+        stub._whisper = engine
+
+    返回：替身本身（`ASRPipeline` 实例，走 `__new__` 绕过 `__init__`）。
+    """
+    stub = ASRPipeline.__new__(ASRPipeline)
+    stub.course_config = dict(course_config or {})
+    stub._discovered_terms = list(discovered_terms or [])
+    stub._terminology = {}
+    stub._term_language = None
+    stub._whisper = None
+    return stub

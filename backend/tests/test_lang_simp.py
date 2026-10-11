@@ -128,6 +128,9 @@ def _engine(language: str = "auto", model=None, simp_mode: str = SIMP_MODE_AUTO_
     engine._lang_detect_events = 0
     engine._lang_low_conf_events = 0
     engine._lang_non_target_streak = 0
+    # V5-8：语种决策回调（默认不接，测回调的用例自行挂上）
+    engine.on_language_decided = None
+    engine._lang_decided_notified = False
     engine._echo = EchoCleaner("")
     engine._echo_logged = False
     return engine
@@ -753,4 +756,313 @@ def test_create_course_normalizes_garbage_simp_mode(api_client, monkeypatch):
     assert resp2.status_code == 200, resp2.text
     assert captured["simpMode"] == SIMP_MODE_AUTO_SIMPLIFIED, (
         "不传时必须落默认（auto-simplified），这是 D1 要修的默认路径"
+    )
+
+
+# ============ V5-8：auto 判出语种后重建术语层 ============
+#
+# 缺陷 D5：默认路径（`language=auto` + 术语层跟随 auto）下，`build_prompt_sections`
+# 仍会产出「词表短语层」，而那一层只有英文多词短语 —— 中文课拿到它是纯干扰。
+# 实测 `hypUnits` 375→487、CER **+0.2876（+65.7%）**，把 V5-1 的收益大半吃回去。
+#
+# 所以这一段要证明两件事：
+#   1. 引擎**真的会通知**（且只通知一次、异常不拖垮识别）；
+#   2. 管道**真的会按通知重建**，并且此后任何一次术语热更新都不会把短语层装回来
+#      —— 后者是缺陷 b 复活的经典路径，上一版已经在 `update_terminology` 里踩过一次。
+
+PIPELINE_SRC = Path(__file__).resolve().parent.parent / "asr" / "pipeline.py"
+
+
+def _pipeline_stub(course_language: str = "auto"):
+    """不加载模型/VAD 的管道实例（只需 `_rebuild_terminology` 用到的字段）"""
+    from asr.pipeline import ASRPipeline
+
+    class _FakeWhisper:
+        def __init__(self):
+            self.calls: list = []
+
+        def set_initial_prompt(self, prompt, sections=None):
+            self.calls.append((prompt, sections))
+
+    pipe = ASRPipeline.__new__(ASRPipeline)
+    pipe.course_config = {"domain": "", "custom_terms": [], "language": course_language}
+    pipe._discovered_terms = []
+    pipe._terminology = {}
+    pipe._term_language = None
+    pipe._whisper = _FakeWhisper()
+    return pipe
+
+
+def _sections_count(pipe) -> dict:
+    return {k: len(v) for k, v in (pipe._terminology.get("sections") or [])}
+
+
+def test_phrases_layer_premise():
+    """前提断言：`auto` 有短语层、`zh` 没有。
+
+    这一条把「V5-8 到底在修什么」钉在数据上 —— 下面所有断言都建立在它之上，
+    若哪天 `terminology` 改了筛选规则，这里会先红，而不是让 V5-8 的用例变成空转。
+    """
+    from dictionary.terminology import build_prompt_sections
+
+    auto = dict(build_prompt_sections(language="auto"))
+    zh = dict(build_prompt_sections(language="zh"))
+    assert len(auto.get("phrases", [])) > 0, "auto 应当产出词表短语层（旧行为）"
+    assert len(zh.get("phrases", [])) == 0, "中文语种必须没有短语层"
+
+
+def test_auto_detected_chinese_notifies_once():
+    """auto 判为中文 ⇒ 通知一次，带上语种"""
+    engine = _engine(model=_RecordingModel(("zh", 0.99)))
+    got: list[str] = []
+    engine.on_language_decided = got.append
+
+    assert _detect(engine)[2] == "detected"
+    assert got == ["zh"]
+
+    # 第二块不再通知：每块都重建会让提示词反复变化
+    _detect(engine)
+    assert got == ["zh"], "语种决策回调重复触发 ⇒ 提示词会一直抖"
+
+
+def test_explicit_language_does_not_notify():
+    """显式指定语种时上层早已按该语种建好术语层，不需要通知（也不该有探测开销）"""
+    engine = _engine(language="zh", model=_RecordingModel(("zh", 0.99)))
+    got: list[str] = []
+    engine.on_language_decided = got.append
+
+    _detect(engine)
+
+    assert got == []
+
+
+def test_non_target_language_does_not_notify():
+    """判为英文 ⇒ 短语层本就该在，无需重建"""
+    engine = _engine(model=_RecordingModel(("en", 0.99)))
+    got: list[str] = []
+    engine.on_language_decided = got.append
+
+    _detect(engine)          # 第 1 次：non-target-pending
+    _detect(engine)          # 第 2 次：锁定为非目标语种
+
+    assert got == []
+
+
+def test_notify_guard_stands_on_its_own():
+    """一次性保护必须**自己**站得住 —— 直接调 `_notify_language_decided()` 两次。
+
+    为什么不能只靠 `test_auto_detected_chinese_notifies_once`：那条用例里第二次
+    通知是被**粘滞**挡住的（`_lang_decided=True` 之后根本走不到通知那行），所以
+    即使把 `_notify_language_decided()` 里的一次性守卫整个删掉，它照样全绿 ——
+    变异探针 M16 实测漏网才发现这一点。
+    两层保护挡的不是同一件事：粘滞挡「重复探测」，这里挡「重复通知」，
+    所以要各测各的。
+    """
+    engine = _engine(model=_RecordingModel(("zh", 0.99)))
+    got: list[str] = []
+    engine.on_language_decided = got.append
+
+    engine._notify_language_decided("zh")
+    engine._notify_language_decided("zh")
+
+    assert got == ["zh"], "一次性守卫失效 ⇒ 同一语种会被反复通知、提示词反复重建"
+
+    # reset 之后重新放开：换课程/换素材时要能重新通知
+    engine.reset_language_decision()
+    engine._notify_language_decided("zh")
+
+    assert got == ["zh", "zh"]
+
+
+def test_reset_reallows_notification():
+    """`reset_language_decision()` 之后必须能重新通知。
+
+    否则「换到另一门中文课」时术语层还是上一次的语种建的 —— 表现为新课程莫名
+    带着上一个语种的术语层，且看不出为什么。
+    """
+    engine = _engine(model=_RecordingModel(("zh", 0.99)))
+    got: list[str] = []
+    engine.on_language_decided = got.append
+
+    _detect(engine)
+    engine.reset_language_decision()
+    _detect(engine)
+
+    assert got == ["zh", "zh"]
+
+
+def test_callback_failure_does_not_break_recognition():
+    """回调抛异常不能拖垮识别 —— 回调失败只该导致「短语层没关掉」"""
+    engine = _engine(model=_RecordingModel(("zh", 0.99)))
+
+    def boom(_lang):
+        raise RuntimeError("术语层重建失败")
+
+    engine.on_language_decided = boom
+
+    lang, conf, source = _detect(engine)
+
+    assert (lang, source) == ("zh", "detected")
+    assert conf > 0
+
+
+def test_low_confidence_never_notifies():
+    """置信不足时不通知：此时连语种都没定，不该拿一个不确定的结果去重建术语层"""
+    engine = _engine(model=_RecordingModel(("zh", LANG_MIN_CONFIDENCE - 0.01)))
+    got: list[str] = []
+    engine.on_language_decided = got.append
+
+    _detect(engine)
+
+    assert got == []
+
+
+def test_stats_expose_notified_flag():
+    """通知与否必须能从统计里看出来：`languageSource=detected` 只说明判断对了，
+    不说明这个判断有没有真的传达出去。"""
+    engine = _engine(model=_RecordingModel(("zh", 0.99)))
+    engine.on_language_decided = lambda _l: None
+
+    _detect(engine)
+
+    assert engine.get_stats()["langDecidedNotified"] is True
+
+
+def test_pipeline_rebuild_uses_detected_language():
+    """管道收到通知 ⇒ 用该语种重建术语层并热更新引擎提示词"""
+    pipe = _pipeline_stub(course_language="auto")
+
+    pipe._on_language_decided("zh")
+
+    assert _sections_count(pipe).get("phrases") == 0, "重建后短语层必须为空"
+    assert pipe._whisper.calls, "重建后必须把新提示词交给引擎"
+    assert pipe._term_language == "zh"
+
+
+def test_pipeline_rebuild_is_idempotent_for_same_language():
+    """同一个语种重复通知不重复重建（引擎侧已只发一次，这里是第二道保险）"""
+    pipe = _pipeline_stub(course_language="auto")
+
+    pipe._on_language_decided("zh")
+    first = len(pipe._whisper.calls)
+    pipe._on_language_decided("zh")
+
+    assert len(pipe._whisper.calls) == first
+
+
+def test_pipeline_does_not_hijack_course_language():
+    """重建术语层**不得**改写 `course_config["language"]`。
+
+    改了会让管道重建后走 `explicit` 分支 —— 表面等价（反正都是中文），实际丢掉了
+    V5-2 的低置信保护（用户显式指定语种时不打折，探测来的语种应该打折）。
+    """
+    pipe = _pipeline_stub(course_language="auto")
+
+    pipe._on_language_decided("zh")
+
+    assert pipe.course_config["language"] == "auto", "课程的解码语种被探测结果污染了"
+
+
+def test_hot_update_after_detection_keeps_phrases_out():
+    """🔴 关键回归：语种定了之后，任何一次术语热更新都不能把短语层装回来。
+
+    这是缺陷 b 复活的经典路径：`update_terminology()` 若还按
+    `course_config["language"]`（= "auto"）重建，用户在前端加一个自定义术语，
+    中文课就又把 60 个英文短语吃回去了 —— 且只有 A/B 复测才能发现。
+    """
+    pipe = _pipeline_stub(course_language="auto")
+    pipe._on_language_decided("zh")
+
+    pipe.update_terminology(["卷积", "反向传播"])
+
+    counts = _sections_count(pipe)
+    assert counts.get("phrases") == 0, f"热更新把英文短语层装回中文课了：{counts}"
+    assert counts.get("custom") == 2
+
+
+def test_pipeline_ignores_blank_language():
+    """空串不触发重建（宁可不做，也不要拿空串去构建术语层）"""
+    pipe = _pipeline_stub(course_language="auto")
+
+    pipe._on_language_decided("")
+
+    assert pipe._whisper.calls == []
+    assert pipe._term_language is None
+
+
+def test_pipeline_callback_swallows_errors(monkeypatch):
+    """重建失败不能往外抛 —— 它是从引擎的识别线程里调过来的"""
+    pipe = _pipeline_stub(course_language="auto")
+
+    def boom(*_a, **_k):
+        raise RuntimeError("词表炸了")
+
+    monkeypatch.setattr(pipe, "_rebuild_terminology", boom)
+
+    pipe._on_language_decided("zh")     # 不抛即通过
+
+
+def test_engine_notification_is_actually_wired_in_pipeline():
+    """静态守卫：`ASRPipeline` 构造引擎时必须把回调接上。
+
+    为什么用静态守卫：真实接线要构造完整管道（加载 VAD + 模型）才看得到。
+    漏接的后果是**静默**的 —— 术语层永远停在 `auto` 版，中文课一直带着英文短语层，
+    而所有方法级用例仍然全绿（它们直接调 `_on_language_decided`）。
+    """
+    src = PIPELINE_SRC.read_text(encoding="utf-8")
+    src = re.sub(r'"""(?:.|\n)*?"""', "", src)
+    lines = [ln for ln in src.splitlines() if not ln.lstrip().startswith("#")]
+    code = "\n".join(lines)
+
+    assert "on_language_decided=self._on_language_decided" in code, (
+        "引擎构造时没接语种决策回调 —— V5-8 整条链路不会生效"
+    )
+
+
+def test_make_term_rebuilder_shares_the_same_body():
+    """`make_term_rebuilder()` 造出的替身必须能用**同一个方法体**重建术语层。
+
+    它存在的理由就是「评估脚本与产品走同一份实现」：抄一份就会漂移，而这里的
+    漂移是静默的 —— A/B 测到的将不是产品行为，结论却按产品行为写。
+    """
+    from asr.pipeline import make_term_rebuilder
+
+    stub = make_term_rebuilder(
+        {"domain": "", "custom_terms": [], "language": "auto"}, ["卷积"]
+    )
+
+    class _FakeWhisper:
+        def __init__(self):
+            self.calls = []
+
+        def set_initial_prompt(self, prompt, sections=None):
+            self.calls.append((prompt, sections))
+
+    stub._whisper = _FakeWhisper()
+    stub._on_language_decided("zh")
+
+    assert stub._term_language == "zh"
+    assert _sections_count(stub).get("phrases") == 0
+    assert stub._whisper.calls
+
+
+def test_eval_script_reuses_the_pipeline_rebuilder():
+    """静态守卫：A/B 脚本必须 `import make_term_rebuilder`，不得自己重写一份。
+
+    这是「测到的 == 用户遇到的」这条不变量的唯一保障。重写一份不会让任何行为
+    断言变红（脚本自己那套在脚本内自洽），只会让结论悄悄失去意义。
+
+    ⚠️ 只断言「字符串出现了」是不够的：`import` 行被删掉后，
+    `rebuilder = make_term_rebuilder({...})` 里的名字还在，断言照样绿 ——
+    变异探针 M22 实测漏网。所以必须**逐字断言 import 语句**。
+    """
+    eval_src = (
+        Path(__file__).resolve().parent.parent.parent / "scripts" / "eval_asr_quality.py"
+    ).read_text(encoding="utf-8")
+
+    assert "from asr.pipeline import make_term_rebuilder" in eval_src, (
+        "A/B 脚本没复用管道的术语重建实现 —— 测到的不是产品行为"
+    )
+    assert "on_language_decided=on_language_decided" in eval_src, (
+        "A/B 脚本没把回调接到引擎上"
     )
