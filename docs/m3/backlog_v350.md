@@ -237,9 +237,10 @@
 不变量亦为绿）。已用 `.gitignore` 反选纳入跟踪 —— 否则 `packaging/verify/*` 会把它吞掉，
 「已有守卫」就成了假的。
 
-**阶段A 收尾已完成**：镜像同步（副本对拍 **178/178 diff=0 miss=0**）、`.gitignore` 反选
-纳入 `check_simplified.py`、全量回归（pytest **421 passed / 1 skipped**、`tsc` 0 错、
-`npm test` **157/0**）、提交。
+**阶段A 收尾已完成**（提交链 `3cb4835` → `bdfb3b9` → `9190888`）：镜像同步（副本对拍
+**179/179 diff=0 miss=0**）、`.gitignore` 反选纳入 `check_simplified.py` 与
+`probe_lang_simp_mutations.py`、全量回归（pytest **445 passed / 1 skipped**、`tsc` 0 错、
+`npm test` **157/0**）、变异探针 **22/22**、同会话 A/B 落盘（V5-1 五格 + V5-8 三格）。
 
 **尚未做**（阶段B/C/D）：重打包 v3.5.0、L4 全量重跑（必须 `auto`/`zh` 双跑）、真机 e2e、
 `known_defects.md` D1 标记关闭、归档与 `MEMORY.md` 更新。
