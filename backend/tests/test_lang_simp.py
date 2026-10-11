@@ -583,3 +583,174 @@ def test_db_layer_persists_and_leaves_untouched(tmp_path, monkeypatch):
             await db.close()
 
     asyncio.run(scenario())
+
+
+# ============ V5-4：热更新链路（改了开关必须立刻生效，不能等重开课）============
+#
+# 为什么这一段单独列：DB 层的读写有用例覆盖了，但**「改完之后正在跑的那场课有没有
+# 立刻改过来」**没人管。这条链路上有两个静默失败点：
+#   1. 路由拿到了 `simpMode` 却忘了往 `active_pipelines` 下发 ⇒ 界面显示已关闭，
+#      字幕仍满屏繁体，用户只能停课重开——而开关的意义就是当场生效；
+#   2. `ASRPipeline.update_simp_mode()` 只改引擎、不改 `course_config` ⇒ 用户改了别的
+#      配置触发管道重建，开关**静默回退**（表现为「改了，过一会儿又变回繁体」）。
+# 第 2 条的后果尤其坏：它把「代码 bug」伪装成「玄学」。
+#
+# 这两条都靠 `__new__` + 假管道验证，不加载真模型/VAD。
+
+
+def test_pipeline_update_simp_mode_updates_course_config():
+    """热更新必须**同时**落到 `course_config`，否则管道重建后静默回退。"""
+    from asr.pipeline import ASRPipeline
+
+    class FakeWhisper:
+        def __init__(self):
+            self.calls = []
+
+        def set_simp_mode(self, mode):
+            self.calls.append(mode)
+
+    pipe = ASRPipeline.__new__(ASRPipeline)
+    pipe.course_config = {"language": "auto", "simpMode": SIMP_MODE_AUTO_SIMPLIFIED}
+    pipe._whisper = FakeWhisper()
+
+    pipe.update_simp_mode(SIMP_MODE_RAW)
+
+    assert pipe.course_config["simpMode"] == SIMP_MODE_RAW, (
+        "只改引擎内存、不改 course_config：管道重建后开关会静默回退"
+    )
+    assert pipe._whisper.calls == [SIMP_MODE_RAW]
+
+
+def test_pipeline_update_simp_mode_without_engine_is_safe():
+    """引擎还没起来（模型加载中）时改开关不能崩，且 `course_config` 仍要更新 ——
+    新引擎就是从它构造的。"""
+    from asr.pipeline import ASRPipeline
+
+    pipe = ASRPipeline.__new__(ASRPipeline)
+    pipe.course_config = {"simpMode": SIMP_MODE_AUTO_SIMPLIFIED}
+    pipe._whisper = None
+
+    pipe.update_simp_mode(SIMP_MODE_RAW)
+
+    assert pipe.course_config["simpMode"] == SIMP_MODE_RAW
+
+
+@pytest.fixture(scope="module")
+def api_client():
+    """真 TestClient：覆盖「路由 → 下发到 active_pipelines」这一段真实链路。
+
+    `db` 侧用 monkeypatch 顶掉（不写用户真实数据库），其余走真实路由代码 ——
+    这样「忘了下发」才会真的被测出来，而不是被我自己搭的假链路掩盖。
+    """
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    with TestClient(app) as c:
+        yield c
+
+
+def test_update_course_hot_updates_running_pipeline(api_client, monkeypatch):
+    """PUT /api/courses/{id} 带 simpMode ⇒ 正在跑的管道必须收到。"""
+    from api import routes
+
+    received: list[str] = []
+
+    class FakePipeline:
+        def update_simp_mode(self, mode):
+            received.append(mode)
+
+    async def fake_update_course(course_id, data):
+        return {"id": course_id, **data}
+
+    monkeypatch.setattr(routes.db, "update_course", fake_update_course)
+
+    cid = "fake-simp-hot-1"
+    routes.active_pipelines[cid] = FakePipeline()  # type: ignore[assignment]
+    try:
+        resp = api_client.put(f"/api/courses/{cid}", json={"simpMode": SIMP_MODE_RAW})
+        assert resp.status_code == 200, resp.text
+        assert received == [SIMP_MODE_RAW], (
+            "开关变更必须下发到正在运行的管道，否则用户得停课重开才生效"
+        )
+    finally:
+        routes.active_pipelines.pop(cid, None)
+
+
+def test_update_course_absent_simp_mode_does_not_hot_update(api_client, monkeypatch):
+    """不带 simpMode 的 PUT 视为「不动」—— 不能因为改了个名字就把开关冲回默认。
+
+    与 `test_asr_config_api.py::test_missing_field_does_not_reset` 同一条语义，
+    这里是它在本字段上的落地。
+    """
+    from api import routes
+
+    received: list[str] = []
+    captured: dict = {}
+
+    class FakePipeline:
+        def update_simp_mode(self, mode):
+            received.append(mode)
+
+    async def fake_update_course(course_id, data):
+        captured.update(data)
+        return {"id": course_id, **data}
+
+    monkeypatch.setattr(routes.db, "update_course", fake_update_course)
+
+    cid = "fake-simp-absent-1"
+    routes.active_pipelines[cid] = FakePipeline()  # type: ignore[assignment]
+    try:
+        resp = api_client.put(f"/api/courses/{cid}", json={"name": "只改名字"})
+        assert resp.status_code == 200, resp.text
+        assert "simpMode" not in captured, "缺字段被当成了「传默认值」"
+        assert received == []
+    finally:
+        routes.active_pipelines.pop(cid, None)
+
+
+def test_update_course_normalizes_garbage_simp_mode(api_client, monkeypatch):
+    """非法值在路由入口收敛成默认（与引擎侧同一套策略），**不报错**。
+
+    刻意不返回 422：为一个显示开关让「保存课程」整体失败，代价远大于收益；
+    用户看到的是开关停在默认档，而不是一个看不懂的校验错误。
+    """
+    from api import routes
+
+    captured: dict = {}
+
+    async def fake_update_course(course_id, data):
+        captured.update(data)
+        return {"id": course_id, **data}
+
+    monkeypatch.setattr(routes.db, "update_course", fake_update_course)
+
+    resp = api_client.put("/api/courses/whatever", json={"simpMode": "zh-hant-please"})
+    assert resp.status_code == 200, resp.text
+    assert captured["simpMode"] == SIMP_MODE_AUTO_SIMPLIFIED
+
+
+def test_create_course_normalizes_garbage_simp_mode(api_client, monkeypatch):
+    """建课入口同样收敛：`CreateCourseRequest` 的默认值走的是**唯一入口**那条线。"""
+    from api import routes
+
+    captured: dict = {}
+
+    async def fake_create_course(data):
+        captured.update(data)
+        return {"id": "new", **data}
+
+    monkeypatch.setattr(routes.db, "create_course", fake_create_course)
+
+    resp = api_client.post(
+        "/api/courses", json={"name": "新课", "simpMode": "bogus"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert captured["simpMode"] == SIMP_MODE_AUTO_SIMPLIFIED
+
+    captured.clear()
+    resp2 = api_client.post("/api/courses", json={"name": "不提开关的新课"})
+    assert resp2.status_code == 200, resp2.text
+    assert captured["simpMode"] == SIMP_MODE_AUTO_SIMPLIFIED, (
+        "不传时必须落默认（auto-simplified），这是 D1 要修的默认路径"
+    )

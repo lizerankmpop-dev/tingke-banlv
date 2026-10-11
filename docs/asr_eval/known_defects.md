@@ -48,6 +48,19 @@
 * **修复后的 `auto` 与显式 `zh` 逐位一致**（CER/edits/hypUnits 三项全同）；
 * ⚠️ 默认路径（`auto`+`auto`）只兑现 −0.0554，残余成因**不是**简繁路径，已单独立案 **D5**。
 
+**修复的三道守卫（阶段A 实测，可复现）**：
+
+| 守卫 | 命令 | 结果 |
+|---|---|---|
+| 单元测试 | `pytest backend/tests/test_lang_simp.py` | **36 条通过**（含热更新链路 6 条） |
+| 变异探针 | `python packaging/verify/probe_lang_simp_mutations.py` | **14/14 全部抓住**（不变量亦为绿） |
+| 简繁探针 | `python packaging/verify/check_simplified.py --report <产物>` | 修复前 **exit 1 阻断**（147 字）／修复后 **exit 0**（0~4 字） |
+
+变异探针存在的理由：D1 是**静默**缺陷（不报错、不告警，测试也可能恒绿），
+所以每条新断言都要证明「变异它就会红」——`probe_lang_simp_mutations.py` 逐条注入
+「auto 判定失效 / 接线断裂 / 粘滞失效 / 非目标即刻锁定 / 清洗器退回旧写法 /
+老库缺 ALTER / 路由忘记下发 / 管道漏改 `course_config`」等 14 种缺陷，全部被抓。
+
 ### 一、现象
 
 `language` 取默认值 `auto` 时，中文音频的识别输出是**繁体**：

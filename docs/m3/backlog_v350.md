@@ -211,14 +211,18 @@
 
 | ID | 状态 | 交付物 | 验证 |
 |---|---|---|---|
-| V5-1 | ✅ 已实现 | `backend/asr/whisper_engine.py` `_resolve_language()` / `_hint_possible()` | `backend/tests/test_lang_simp.py`；2×2 实测 §7.4 |
-| V5-2 | ✅ 已实现 | `LANG_MIN_CONFIDENCE`（env 可配）+ 低置信降级分支 | 同上（阈值可配用例） |
-| V5-3 | ⚠️ 等价替换 | 会话级粘滞（`_lang_decided` / `_lang_decision`） | 同上（粘滞 + 不早锁用例 + 静态耦合守卫） |
-| V5-4 | ✅ 已实现 | DB 列 + 迁移 + API + `pipeline.update_simp_mode()` + `CourseConfig.tsx` | 迁移用例 + tsc + npm test 157/0 |
+| V5-1 | ✅ 已实现 | `backend/asr/whisper_engine.py` `_resolve_language()` / `_hint_possible()` | `backend/tests/test_lang_simp.py`；2×2 实测 §7.4；变异探针 M1/M6/M8 |
+| V5-2 | ✅ 已实现 | `LANG_MIN_CONFIDENCE`（env 可配）+ 低置信降级分支 | 同上（阈值可配用例）；变异探针 M3 |
+| V5-3 | ⚠️ 等价替换 | 会话级粘滞（`_lang_decided` / `_lang_decision`） | 同上（粘滞 + 不早锁用例 + 静态耦合守卫）；变异探针 M4/M5 |
+| V5-4 | ✅ 已实现 | DB 列 + 迁移 + API + `pipeline.update_simp_mode()` + `CourseConfig.tsx` | 迁移用例 + 热更新链路 6 条 + tsc + npm test 157/0；变异探针 M7/M9/M10/M11/M12/M13/M14 |
 | V5-5 | ✅ 已实现 | `packaging/verify/check_simplified.py`（含 `--self-test`） | 修复前 exit 1 / 修复后 exit 0 双向验证 |
 | V5-6 | ✅ 已实现 | `WER_REPORT_PLAN.md` §7.4 + `known_defects.md` D1/D5 + 本清单改号 | — |
 | V5-7 | ✅ 框架就绪 | `testset/chinese_lecture/accent/README.md` + `scripts/run_accent_baseline.py` | 无素材时 `SKIPPED-NO-MATERIAL`；违规素材 6 项全拦 |
 | V5-8 | 🔴 待裁决 | — | — |
+
+**变异探针**：`packaging/verify/probe_lang_simp_mutations.py`（14 条，**14/14 全部抓住**，
+不变量亦为绿）。已用 `.gitignore` 反选纳入跟踪 —— 否则 `packaging/verify/*` 会把它吞掉，
+「已有守卫」就成了假的。
 
 **阶段A 收尾已完成**：镜像同步（副本对拍 **178/178 diff=0 miss=0**）、`.gitignore` 反选
 纳入 `check_simplified.py`、全量回归（pytest **421 passed / 1 skipped**、`tsc` 0 错、
