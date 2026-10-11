@@ -375,7 +375,12 @@ def _bare_engine(
     新增字段时要同步加在这里，否则测试会在用到时抛 AttributeError。
     """
     from asr.prompt_echo import EchoCleaner
-    from asr.whisper_engine import SIMP_HINT_LANGS, WhisperEngine, get_simp_hint
+    from asr.whisper_engine import (
+        SIMP_HINT_LANGS,
+        SIMP_MODE_AUTO_SIMPLIFIED,
+        WhisperEngine,
+        get_simp_hint,
+    )
 
     engine = WhisperEngine.__new__(WhisperEngine)   # 不触发模型加载
     engine.model_size = "base"
@@ -416,11 +421,18 @@ def _bare_engine(
     engine._prompt_original_sections = None
     engine._last_budget = None
     # 提示词回显清洗，见 asr/prompt_echo.py
-    # 引导语只在中文场景注入（与 `_build_prompt` 的 SIMP_HINT_LANGS 判断一致），
-    # 所以英文用例拿到的必然是**未启用**的清洗器 —— 这正是「英文不可能回显」的语义。
-    engine._echo = EchoCleaner(
-        get_simp_hint() if (language or "").lower() in SIMP_HINT_LANGS else ""
-    )
+    # V5-1 起 auto 也可能注入引导语（探测判为中文时），所以判据不再是
+    # 「language 是否中文」，而是 `_hint_possible()` —— 直接复用它，
+    # 免得测试里再抄一份判据、与生产代码漂移。
+    engine.simp_mode = SIMP_MODE_AUTO_SIMPLIFIED
+    engine._lang_decided = False
+    engine._lang_decision = None
+    engine._lang_confidence = 0.0
+    engine._lang_source = "unset"
+    engine._lang_detect_events = 0
+    engine._lang_low_conf_events = 0
+    engine._lang_non_target_streak = 0
+    engine._echo = EchoCleaner(get_simp_hint() if engine._hint_possible() else "")
     engine._echo_logged = False
     return engine
 

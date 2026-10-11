@@ -27,6 +27,14 @@ def _get_data_dir() -> Path:
 DB_DIR = _get_data_dir()
 DB_PATH = DB_DIR / "tingkebanlv.db"
 
+# ---------- V5-4：简繁输出开关的默认值 ----------
+# 刻意**不**从 `asr.whisper_engine` 导入：数据库层不该依赖 ASR 层（那会为了拿一个字面量
+# 把 numpy / faster-whisper 拉进导入链），而消费侧本来就会用
+# `normalize_simp_mode()` 收敛非法值。两处字面量的一致性由单测
+# `test_lang_simp.py::test_simp_mode_default_agrees_with_engine` 守住 ——
+# 让它漂移的后果是新课程存进去的值不被引擎认作默认，行为与界面提示不一致。
+SIMP_MODE_DEFAULT = "auto-simplified"
+
 # ---------- 生词复习闭环（v3.4.0）字段定义 ----------
 #
 # 迁移原则（硬约束）：**只 ADD COLUMN，绝不 DROP / 改类型 / 重建表**。
@@ -101,6 +109,11 @@ class DatabaseManager:
                 custom_terms TEXT DEFAULT '[]',
                 course_type TEXT NOT NULL DEFAULT 'online',
                 language TEXT DEFAULT 'auto',
+                -- V5-4：简繁输出开关。'auto-simplified' = auto 判为中文时强制简体（默认，
+                -- 修缺陷 D1）；'raw' = 保留原始识别字形（= 修复前的行为，给高级用户退路）。
+                -- 这里**不做取值约束**：历史行与新写入口径不同是常态，取值统一由
+                -- asr.whisper_engine.normalize_simp_mode() 在消费侧收敛，非法值回落默认。
+                simp_mode TEXT DEFAULT 'auto-simplified',
                 auto_extract_terms INTEGER DEFAULT 1,
                 ollama_model TEXT DEFAULT 'qwen2.5:7b',
                 created_at INTEGER NOT NULL,
@@ -165,6 +178,17 @@ class DatabaseManager:
             )
             await self.db.commit()
             logger.info("数据库迁移：courses 表已添加 language 列")
+
+        # V5-4：简繁输出开关。老库没有这一列，而 CREATE TABLE IF NOT EXISTS 会被跳过，
+        # 所以必须在这里补 —— 否则老用户升级后一读取课程就报 no such column。
+        cursor = await self.db.execute("PRAGMA table_info(courses)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "simp_mode" not in columns:
+            await self.db.execute(
+                "ALTER TABLE courses ADD COLUMN simp_mode TEXT DEFAULT 'auto-simplified'"
+            )
+            await self.db.commit()
+            logger.info("数据库迁移：courses 表已添加 simp_mode 列")
 
         # 生词复习闭环字段
         cursor = await self.db.execute("PRAGMA table_info(vocabulary)")
@@ -231,8 +255,8 @@ class DatabaseManager:
         course_id = str(uuid.uuid4())
         now = int(time.time() * 1000)
         await self.db.execute(
-            """INSERT INTO courses (id, name, domain, description, custom_terms, course_type, language, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO courses (id, name, domain, description, custom_terms, course_type, language, simp_mode, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 course_id,
                 data["name"],
@@ -241,6 +265,7 @@ class DatabaseManager:
                 json.dumps(data.get("customTerms", []), ensure_ascii=False),
                 data.get("courseType", "online"),
                 data.get("language", "auto"),
+                data.get("simpMode", SIMP_MODE_DEFAULT),
                 now,
                 now,
             ),
@@ -255,10 +280,13 @@ class DatabaseManager:
 
         updates = []
         params = []
-        for field in ["name", "domain", "description", "course_type", "language"]:
+        for field in ["name", "domain", "description", "course_type", "language", "simp_mode"]:
             if field in data:
                 updates.append(f"{field} = ?")
                 params.append(data[field])
+        if "simpMode" in data:
+            updates.append("simp_mode = ?")
+            params.append(data["simpMode"])
         if "customTerms" in data:
             updates.append("custom_terms = ?")
             params.append(json.dumps(data["customTerms"], ensure_ascii=False))
@@ -630,6 +658,9 @@ class DatabaseManager:
             d["words"] = d.pop("words_json")
         if "course_type" in d:
             d["courseType"] = d.pop("course_type")
+        if "simp_mode" in d:
+            # 老库刚迁移出来时可能是 NULL；给默认值，免得前端拿到 null 后 select 空白
+            d["simpMode"] = d.pop("simp_mode") or SIMP_MODE_DEFAULT
         if "custom_terms" in d:
             d["customTerms"] = d.pop("custom_terms")
         if "created_at" in d:

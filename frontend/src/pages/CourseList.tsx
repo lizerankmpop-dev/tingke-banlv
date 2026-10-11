@@ -22,7 +22,10 @@ export default function CourseList() {
   const { enterCourse } = useAppStore()
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState({
-    name: '', domain: '计算机科学', description: '', customTerms: '', courseType: 'online' as 'online' | 'offline', language: 'auto'
+    name: '', domain: '计算机科学', description: '', customTerms: '', courseType: 'online' as 'online' | 'offline', language: 'auto',
+    // V5-4：建课表单不暴露这个开关（建完课在课程配置页里改）。这里显式给默认值，
+    // 不用「省略等后端补」——省了会让类型上的必填项永远靠隐式约定，改一处就断。
+    simpMode: 'auto-simplified',
   })
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
 
@@ -37,9 +40,10 @@ export default function CourseList() {
       customTerms: form.customTerms.split(/[,，\n]/).map(t => t.trim()).filter(Boolean),
       courseType: form.courseType,
       language: form.language,
+      simpMode: form.simpMode,
     })
     setShowCreate(false)
-    setForm({ name: '', domain: '计算机科学', description: '', customTerms: '', courseType: 'online', language: 'auto' })
+    setForm({ name: '', domain: '计算机科学', description: '', customTerms: '', courseType: 'online', language: 'auto', simpMode: 'auto-simplified' })
   }
 
   const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {

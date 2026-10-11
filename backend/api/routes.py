@@ -18,6 +18,7 @@ from typing import Optional
 
 from dependencies import db
 from asr.pipeline import ASRPipeline
+from asr.whisper_engine import SIMP_MODE_AUTO_SIMPLIFIED, normalize_simp_mode
 from llm.explainer import WordExplainer
 from llm.summarizer import LectureSummarizer
 from llm.qa import ChatQA
@@ -66,6 +67,10 @@ class CreateCourseRequest(BaseModel):
     customTerms: list[str] = []
     courseType: str = "online"  # 'online' | 'offline'
     language: str = "auto"      # 'auto' / 'en' / 'zh' / 'ja' / ...
+    # V5-4：简繁输出开关。'auto-simplified'（默认，修 D1）| 'raw'（保留原始字形）。
+    # 取值不做严格校验：非法值在路由入口用 normalize_simp_mode() 收敛成默认，
+    # 与消费侧（引擎）同一套策略 —— 为一个开关让建课失败不划算。
+    simpMode: str = SIMP_MODE_AUTO_SIMPLIFIED
 
 
 class UpdateCourseRequest(BaseModel):
@@ -75,6 +80,7 @@ class UpdateCourseRequest(BaseModel):
     customTerms: Optional[list[str]] = None
     courseType: Optional[str] = None
     language: Optional[str] = None
+    simpMode: Optional[str] = None
 
 
 class UpdateVocabularyRequest(BaseModel):
@@ -164,6 +170,9 @@ def _course_config_for_asr(course: dict) -> dict:
         "name": course.get("name", ""),
         "courseType": course.get("courseType", "online"),
         "language": course.get("language", "auto"),
+        # V5-4：随课程下发给 ASR 管道。缺省给默认值，让老课程（迁移前建的）也走
+        # 「auto 强制简体」—— 那正是 D1 要修的场景。
+        "simpMode": normalize_simp_mode(course.get("simpMode")),
     }
 
 
@@ -187,19 +196,30 @@ async def get_course(course_id: str):
 @router.post("/courses")
 async def create_course(req: CreateCourseRequest):
     """创建新课程"""
-    return await db.create_course(req.model_dump())
+    data = req.model_dump()
+    # 在**唯一入口**收敛开关取值（策略与引擎侧一致：非法值回落默认，不报错）
+    data["simpMode"] = normalize_simp_mode(data.get("simpMode"))
+    return await db.create_course(data)
 
 
 @router.put("/courses/{course_id}")
 async def update_course(course_id: str, req: UpdateCourseRequest):
     """更新课程信息"""
-    result = await db.update_course(course_id, req.model_dump(exclude_none=True))
+    data = req.model_dump(exclude_none=True)
+    if "simpMode" in data:
+        data["simpMode"] = normalize_simp_mode(data["simpMode"])
+    result = await db.update_course(course_id, data)
     if not result:
         raise HTTPException(status_code=404, detail="课程不存在")
 
     # 自定义术语变更 → 热更新正在运行的 ASR 管道热词（无需重启监听）
     if req.customTerms is not None and course_id in active_pipelines:
         active_pipelines[course_id].update_terminology(req.customTerms)
+
+    # 简繁开关变更 → 热更新（无需重启监听）。这里必须热更新：开关的意义就是
+    # 「当前这场课立刻不再满屏繁体」，要求用户停课重开等于没修。
+    if req.simpMode is not None and course_id in active_pipelines:
+        active_pipelines[course_id].update_simp_mode(req.simpMode)
 
     return result
 

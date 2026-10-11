@@ -379,6 +379,71 @@ RTF 列与它是**同一次**非实时合跑（`summary.byScenario.*.meanRtf`）
 
 ---
 
+### 7.4 简繁质量（V5-1，2026-10-11 实测）
+
+#### 为什么必须单列一节
+
+**CER 对"字形对不对"是迟钝且方向不定的**：
+
+* 繁体字与简体参考稿的差异被算进编辑距离，和"听错了"混在**同一个数字**里；
+* 它**可正可负** —— §7.2 那批数据里 auto 口径的 `fast` 反而比 zh 口径低 0.0343。
+  单看 CER 会得出「繁体没坏处」的错误结论。
+
+所以简繁质量必须用**只看字形**的独立判据：`packaging/verify/check_simplified.py`
+（统计繁体字符数与占比，超阈值即非零退出）。它同时是 V5-5 的交付物。
+
+#### 2×2 正交分解（clean，`--realtime`，**同一会话**）
+
+同一份素材、同一台机器、同一次会话，只差两个变量：`LANG_DETECT`（= V5-1 的修复开关）
+与术语层语种。四格由 `packaging/eval/v5_1_ab_*.json` 生成，表由
+`_v5_1_report.py` 从产物读出（**不手抄**）。
+
+| 条件 | 术语层 = `auto`（**生产默认**） | 术语层 = `zh` |
+|---|---|---|
+| **修复前**（`LANG_DETECT=0`） | CER **0.4934**｜繁体 147 / 33.95% ❌ | CER **0.4776**｜繁体 142 / 35.06% ❌ |
+| **修复后**（V5-1） | CER **0.438**｜繁体 4 / 0.71% ✅ | CER **0.1504**｜繁体 **0 / 0.00%** ✅ |
+
+| 格 | `languageSource` | `languageDecision` | 置信 | `langDetectEvents` |
+|---|---|---|---|---|
+| 修复前两格 | `disabled` | `None` | 0.0 | 0 |
+| 修复后两格 | `sticky`（首块 `detected`） | `zh` | **0.9978** | **1** |
+
+#### 三条结论
+
+1. **修复本身的效果 = ΔCER −0.3272（相对 −68.5%）**
+   在术语层同为 `zh` 的干净条件下（0.4776 → 0.1504），唯一变量就是 V5-1。
+   这比"混着短语层看"（−0.0554）大 6 倍。
+2. **修复后的 `auto` 与显式 `zh` 逐位一致**
+   `CER 0.1504 / edits 57 / hypUnits 375` 三项全同 ⇒ 可以断言
+   「auto 路径已等价于显式指定中文」，这是本次修复最强的证据。
+3. ⚠️ **默认路径（`auto` + `auto`）仍未兑现全部收益**：只从 0.4934 降到 0.438。
+   原因是**另一个已登记的缺陷**在同一个格上制造了大量插入错误 ——
+   英文短语层让模型产出复读式乱码（`hypUnits` 396 → 487），把 0.327 的字形收益掩盖掉了。
+   该项已单独立案为 **D5**，修法见 `docs/m3/backlog_v350.md` **V5-8**。
+
+#### 阈值怎么定的（可复算）
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 修复前（必须 FAIL） | 147 字 / 33.95% | 约 34%，与 `whisper_engine.py` P0-1 注释里记的 **34.4%** 独立吻合 |
+| 修复后（必须 PASS） | 4 字 / 0.71%（`zh` 口径 0 字） | |
+| 默认阈值 | `--max-trad-chars 20` / `--max-trad-ratio 2%` | 约为修复后的 7 倍、修复前的 1/17，两侧都留量级余量 |
+
+⚠️ **已知盲区**：修复后 `auto/auto` 残留的 4 个字全是「捲」——
+那是**识别用字错误**（应为「卷积」，模型写成「捲击」），属内容层；
+`auto/zh` 口径下为 **0**，说明它**不是**简繁路径没生效。
+所以 `verdict=FAIL` 时要先看 `languageSource`：已生效则成因在内容层，不要回退简繁逻辑。
+
+复算命令：
+
+```bash
+<venv>/Scripts/python.exe packaging/verify/check_simplified.py --self-test
+<venv>/Scripts/python.exe packaging/verify/check_simplified.py --report packaging/eval/v5_1_ab_pre_auto.json   # 期望 exit 1
+<venv>/Scripts/python.exe packaging/verify/check_simplified.py --report packaging/eval/v5_1_ab_post_auto.json  # 期望 exit 0
+```
+
+---
+
 ## 8. 决策记录（2026-10-10 已拍板）
 
 | # | 决策 | **已定** | 落地要点 |

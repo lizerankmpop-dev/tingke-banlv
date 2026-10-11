@@ -208,6 +208,55 @@ def get_simp_hint() -> str:
     return (os.environ.get("TINGKEBANLV_SIMP_HINT") or "").strip() or SIMP_HINT
 
 
+# ---------------------------------------------------------------------------
+# V5-1：auto 模式下的语种探测与简体强制（缺陷 D1）
+# ---------------------------------------------------------------------------
+#
+# **问题**：`SIMP_HINT_LANGS` 不含 `"auto"`，而前后端 6 处默认值全是 `"auto"`
+# ⇒ 走默认路径的中文课程**从不注入**简体引导语 ⇒ 输出满屏繁体
+# （`docs/asr_eval/known_defects.md` D1）。
+#
+# **为什么必须做一次「前置」探测**：引导语要在**解码之前**进 prompt，而语种要
+# **解码之后**才能从 `info.language` 读到 —— 等拿到语种再补提示词已经晚了。
+# 所以 auto 下只能自己先跑一次 encoder-only 的 `detect_language()`，
+# 据此决定这一块走不走简体路径。
+#
+# **为什么不用 zhconv 之类的后处理**：上面的 P0-1 实测已经证明「提示词里出现
+# 简体中文」就能把繁体占比从 34.4% 压到 0.1%，且**不需要额外依赖**。后处理是在
+# 识别结果上硬改字形，会引入新的误改风险（专有名词、古文、异体字）；而引导语是
+# 让模型在**源头**直接吐简体。两条路线的实测对比见
+# `docs/asr_eval/WER_REPORT_PLAN.md` 的「简繁质量」小节。
+#
+# **开销**：探测本身要跑一遍 encoder，但**每个会话最多只付几次**（见粘滞策略），
+# 稳态下不再重复探测 ⇒ 对 RTF 的影响可忽略。
+LANG_DETECT_ENABLED = os.environ.get("TINGKEBANLV_LANG_DETECT", "1") not in ("0", "false", "False")
+
+# 语种探测置信度阈值：低于它视为「判不准」⇒ **降级**，既不强制中文、也不注入引导语，
+# 完全维持修复前的 auto 行为。宁可维持现状，也不要在判不准时乱改字形（V5-2）。
+LANG_MIN_CONFIDENCE = float(os.environ.get("TINGKEBANLV_LANG_MIN_PROB", "0.6"))
+
+# 判定为**目标语种**（中文）时，第 1 次高置信即锁定 —— 这正是要修的场景。
+# 判定为**非目标语种**（如英文课）时要连续观察到这么多次才锁定：只看到 1 次就锁，
+# 中文课开头的英文片头/报幕会把整个会话锁成「不注引导语」，缺陷原样复发。
+LANG_NON_TARGET_LOCK_AFTER = int(os.environ.get("TINGKEBANLV_LANG_NON_TARGET_LOCK", "2"))
+
+# V5-4 开关的两个取值（课程配置项，见 backend/api/routes.py 与 CourseConfig.tsx）
+SIMP_MODE_AUTO_SIMPLIFIED = "auto-simplified"   # 默认：auto 判为中文时强制简体
+SIMP_MODE_RAW = "raw"                           # 保留原始识别字形（= 修复前的行为）
+SIMP_MODES = (SIMP_MODE_AUTO_SIMPLIFIED, SIMP_MODE_RAW)
+
+
+def normalize_simp_mode(value: Optional[str]) -> str:
+    """把外部传进来的开关值收敛到合法取值，非法值一律回落到默认（不报错）。
+
+    为什么要收敛而不是抛错：这个值来自数据库里的历史行与前端表单，
+    两者都可能带上旧值/空值。为它让整个 ASR 管道起不来是不划算的 ——
+    识别功能正常远比开关取值严格重要。
+    """
+    v = (value or "").strip().lower()
+    return v if v in SIMP_MODES else SIMP_MODE_AUTO_SIMPLIFIED
+
+
 @dataclass
 class WordTimestamp:
     word: str
@@ -242,11 +291,15 @@ class WhisperEngine:
         initial_prompt: Optional[str] = None,
         prompt_sections: Optional[list[tuple[str, list[str]]]] = None,
         cpu_threads: Optional[int] = None,
+        # V5-4：简繁输出开关。刻意放在签名**末尾**而不是 `language` 旁边 ——
+        # 老调用点只用到 `cpu_threads` 为止，放中间会让按位置传参的调用点静默错位。
+        simp_mode: str = SIMP_MODE_AUTO_SIMPLIFIED,
     ):
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
         self.language = language
+        self.simp_mode = normalize_simp_mode(simp_mode)
         self.cpu_threads = cpu_threads or _detect_cpu_threads()
         self.on_partial = on_partial
         self.on_progress = on_progress
@@ -261,13 +314,24 @@ class WhisperEngine:
         self._last_text: Optional[str] = None
 
         # ---- 提示词回显清洗（见 asr/prompt_echo.py 模块注释）----
-        # 引导语只在中文场景注入（`_build_prompt` 同样按 SIMP_HINT_LANGS 判断），
-        # 不注入就不可能被回显，所以这里也按同一条件构造，保持两边同源。
-        # 清洗器内部从**实际生效的引导语文案**派生黑名单，不另抄常量。
-        self._echo = EchoCleaner(
-            get_simp_hint() if (self.language or "").lower() in SIMP_HINT_LANGS else ""
-        )
+        # 🔴 与 V5-1 的耦合点，别改回去：auto 路径现在**也可能**注入引导语
+        # （探测判为中文时），所以这里不能再只按 `self.language in SIMP_HINT_LANGS`
+        # 判断。否则 auto 下注入的引导语**不会被清洗**，静音块上会被模型接着念出来、
+        # 当字幕显示给用户 —— 正是 prompt_echo 模块开头描述的那条虚假字幕。
+        # 判据与 `_build_prompt()` 的注入判据必须同源（见 `_hint_possible()`）。
+        self._echo = EchoCleaner(get_simp_hint() if self._hint_possible() else "")
         self._echo_logged = False
+
+        # ---- V5-1：auto 模式下的语种决策（会话级粘滞，等价实现原 V5-3）----
+        # 决策对象是「本次调用该以什么语种解码」，它同时驱动引导语注入与 transcribe
+        # 的 `language=` 参数 —— 两处必须由**同一次**决策驱动，各判一次迟早会不一致。
+        self._lang_decided = False            # 是否已锁定（锁定后不再探测）
+        self._lang_decision: Optional[str] = None   # 锁定到的语种；None = 已判定为非目标语种
+        self._lang_confidence = 0.0
+        self._lang_source = "unset"           # explicit / disabled / sticky / detected / ...
+        self._lang_detect_events = 0          # 实际跑了探测的次数（观测用）
+        self._lang_low_conf_events = 0        # 因置信不足而降级的次数（V5-2 观测用）
+        self._lang_non_target_streak = 0      # 连续观察到非目标语种的次数
 
         self._model = None
         self._loading = False
@@ -601,24 +665,37 @@ class WhisperEngine:
                 audio = audio.astype(np.float32)
 
             # 调用 Faster-Whisper
-            lang = None if self.language == "auto" else self.language
+            # V5-1：auto 下先探测语种，再据此一次性决定「按什么语种解码」与
+            # 「要不要注入简体引导语」。两件事必须由**同一次决策**驱动 ——
+            # 分开判会出现「按 zh 解码但没注引导语」（仍旧繁体）或
+            # 「注了引导语却按 auto 解码」这类半修状态，后者更糟：引导语会被送去
+            # 解码非中文音频，可能反而拉低识别质量。
+            decode_lang, _lang_conf, _lang_source = self._resolve_language(audio)
+            self._lang_source = _lang_source
+            # 只认 `SIMP_HINT_LANGS` 这一个集合：`decode_lang` 落在里面才注引导语。
+            simp = (decode_lang or "").lower() in SIMP_HINT_LANGS
+
             segments, info = self._model.transcribe(
                 audio,
-                language=lang,                # auto / en / zh / ja / ...
+                language=decode_lang,         # None=auto / en / zh / ja / ...
                 beam_size=5,
                 word_timestamps=True,         # 启用词级时间戳
                 vad_filter=False,             # 我们已有 VAD
                 vad_parameters=dict(
                     min_silence_duration_ms=200,
                 ),
-                # 术语热词注入：领域术语 + 课程自定义术语
-                initial_prompt=self._build_prompt(),
+                # 术语热词注入：领域术语 + 课程自定义术语（+ 中文场景的简体引导语）
+                initial_prompt=self._build_prompt(simp=simp),
                 condition_on_previous_text=True,
                 no_speech_threshold=0.4,
             )
 
             detected_lang = info.language
-            logger.debug(f"检测语言: {detected_lang}, 概率: {info.language_probability:.2f}")
+            logger.debug(
+                f"检测语言: {detected_lang}, 概率: {info.language_probability:.2f}"
+                f"；解码语种: {decode_lang or 'auto'}，简体引导语: {'on' if simp else 'off'}"
+                f"（来源 {_lang_source}）"
+            )
 
             # 处理识别结果
             for segment in segments:
@@ -895,7 +972,123 @@ class WhisperEngine:
             return None
         return getattr(model, "hf_tokenizer", None)
 
-    def _build_prompt(self) -> Optional[str]:
+    # ---- V5-1 / V5-2 / V5-4：语种决策 ----
+
+    def _hint_possible(self) -> bool:
+        """本引擎**是否有可能**注入简体引导语（构造 EchoCleaner 用）
+
+        与 `_build_prompt()` 的注入判据同源：显式中文 ⇒ 一定注入；auto + 简体强制
+        ⇒ 探测判为中文时注入。两处判据分家的后果是「清洗器以为不会注入、实际注入了」
+        ⇒ 回显漏网（见 `__init__` 里的 🔴 注释）。
+        """
+        lang = (self.language or "").lower()
+        if lang in SIMP_HINT_LANGS:
+            return True
+        return (
+            lang == "auto"
+            and LANG_DETECT_ENABLED
+            and self.simp_mode == SIMP_MODE_AUTO_SIMPLIFIED
+        )
+
+    def _resolve_language(self, audio: np.ndarray) -> tuple[Optional[str], float, str]:
+        """决定**本次调用**的解码语种（V5-1 / V5-2）
+
+        返回 `(decode_lang, confidence, source)`：`decode_lang=None` 表示按 auto 解码
+        （不强制语种）；非 None 表示要显式按该语种解码，且它落在 `SIMP_HINT_LANGS`
+        里时 `_build_prompt()` 会注入简体引导语。
+
+        四种来源：
+
+        * `explicit`  —— 用户显式指定了语种（`language != "auto"`），不探测、不打折；
+        * `disabled`  —— V5-4 开关关掉了简体强制 / 探测被 env 关掉 ⇒ 退回修复前行为；
+        * `sticky`    —— 本会话已锁定，直接复用（稳态零探测开销，同时避免逐块翻转
+                          导致字幕在简繁/语种之间来回抖 —— 原 V5-3 的真正风险点，
+                          它描述的「切在词语中间」在按段处理下并不存在，见
+                          `docs/m3/backlog_v350.md` V5-3 的替换说明）；
+        * `detected` / `non-target` / `low-confidence` / `detect-failed` —— 本轮探测结果。
+        """
+        configured = (self.language or "auto").lower()
+        if configured != "auto":
+            return self.language, 1.0, "explicit"
+
+        if not LANG_DETECT_ENABLED or self.simp_mode == SIMP_MODE_RAW:
+            return None, 0.0, "disabled"
+
+        if self._lang_decided:
+            return self._lang_decision, self._lang_confidence, "sticky"
+
+        if self._model is None:
+            return None, 0.0, "model-not-ready"
+
+        self._lang_detect_events += 1
+        try:
+            # faster-whisper 各版本返回值形状不一（`(lang, prob)` / `(lang, prob, all)`），
+            # 按下标取前两项，避免把版本差异变成硬依赖。
+            info = self._model.detect_language(audio)
+        except Exception as e:                      # noqa: BLE001 —— 探测失败不能拖垮识别
+            logger.warning(f"语种探测失败，本会话退回 auto 行为：{e}")
+            return None, 0.0, "detect-failed"
+
+        lang = (info[0] or "").lower() if info else ""
+        try:
+            conf = float(info[1]) if info and len(info) > 1 else 0.0
+        except (TypeError, ValueError):
+            conf = 0.0
+        self._lang_confidence = conf
+
+        if conf < LANG_MIN_CONFIDENCE:
+            # V5-2 的降级分支：判不准就什么都别做。这里**不锁定**——下一块接着探，
+            # 因为「这一块是静音/噪声」并不代表整场课判不准。
+            self._lang_low_conf_events += 1
+            self._lang_source = "low-confidence"
+            logger.info(
+                f"[lang] 探测结果 {lang or '未知'} 置信 {conf:.2f} < "
+                f"{LANG_MIN_CONFIDENCE} ⇒ 降级为不强制简体（V5-2）"
+            )
+            return None, conf, "low-confidence"
+
+        if lang in SIMP_HINT_LANGS:
+            self._lang_decided = True
+            self._lang_decision = lang
+            self._lang_source = "detected"
+            logger.info(
+                f"[lang] auto 判定为 {lang}（置信 {conf:.2f}）"
+                f"⇒ 本会话启用简体引导语（V5-1）"
+            )
+            return lang, conf, "detected"
+
+        # 非目标语种：要连续观察到 `LANG_NON_TARGET_LOCK_AFTER` 次才锁定，
+        # 免得中文课开头的英文片头把整个会话锁成「不注引导语」。
+        self._lang_non_target_streak += 1
+        if self._lang_non_target_streak >= LANG_NON_TARGET_LOCK_AFTER:
+            self._lang_decided = True
+            self._lang_decision = None
+            self._lang_source = "non-target"
+            logger.info(
+                f"[lang] auto 判定为 {lang}（置信 {conf:.2f}）"
+                f"，连续 {self._lang_non_target_streak} 次 ⇒ 本会话不注入简体引导语"
+            )
+            return None, conf, "non-target"
+
+        self._lang_source = "non-target-pending"
+        return None, conf, "non-target-pending"
+
+    def set_simp_mode(self, mode: str):
+        """切换简繁输出开关（V5-4）。切换会**清掉已锁定的语种决策**——
+        否则「关掉开关」后本会话仍会沿用之前的简体决策，表现为开关不生效。
+        """
+        self.simp_mode = normalize_simp_mode(mode)
+        self.reset_language_decision()
+
+    def reset_language_decision(self):
+        """清掉会话级语种粘滞，让下一次识别重新探测（换课程/换素材时调用）。"""
+        self._lang_decided = False
+        self._lang_decision = None
+        self._lang_confidence = 0.0
+        self._lang_source = "unset"
+        self._lang_non_target_streak = 0
+
+    def _build_prompt(self, simp: Optional[bool] = None) -> Optional[str]:
         """
         组装提示词：术语（按 token 预算排优先级）+ 上一段文本 + 简体引导语
 
@@ -915,15 +1108,20 @@ class WhisperEngine:
            放开头或中间会被第 1 条的静默截断吃掉。
 
         实现见 `asr/prompt_budget.py`：按高→低分配预算，按低→高拼接。
+
+        `simp` 是**本次调用是否注入简体引导语**，由 `_resolve_language()` 的决策驱动
+        （V5-1）。默认 `None` = 退回按 `self.language` 判断的老行为，便于老调用点与
+        既有单测不受影响。注意新代码不要再传 `None` —— auto 下这样会漏注引导语，
+        正是缺陷 D1 的成因。
         """
         count, _exact = prompt_budget.make_counter(self._tokenizer())
 
-        # 中文才注入简体引导语；其它语种简繁不分，加了纯属浪费 token 预算
-        hint = (
-            get_simp_hint()
-            if (self.language or "").lower() in SIMP_HINT_LANGS
-            else ""
-        )
+        # 中文才注入简体引导语；其它语种简繁不分，加了纯属浪费 token 预算。
+        # auto 下 `self.language` 恒为 "auto"，单看它永远判不出中文 —— 必须用
+        # `_resolve_language()` 探测出来的**有效语种**，见 V5-1 注释块。
+        if simp is None:
+            simp = (self.language or "").lower() in SIMP_HINT_LANGS
+        hint = get_simp_hint() if simp else ""
 
         # 降级后砍的是**预算**而不是字符串 —— 这样高优先级术语天然排在前面，
         # 不会像旧实现那样按字符砍尾巴（= 砍掉最该保住的那些词）。
@@ -1035,4 +1233,15 @@ class WhisperEngine:
             "promptPrevChars": len(b.prev_kept) if b else 0,
             "inSegments": self._stat_in_segments,
             "outSegments": self._stat_out_segments,
+            # ---- V5-1/V5-2/V5-4：语种决策与简体强制（供评估脚本与排障）----
+            # 为什么要把这几项暴露出来：简体强制是**按会话锁定**的，一旦锁错
+            # （例如被英文片头锁成非目标语种），用户在界面上只会看到「还是繁体」，
+            # 却无从判断是「开关关了」「置信不足降级」还是「锁错了语种」。
+            "simpMode": self.simp_mode,
+            "languageDecision": self._lang_decision,       # None = 已判定为非目标语种
+            "languageDecided": self._lang_decided,
+            "languageConfidence": round(self._lang_confidence, 4),
+            "languageSource": self._lang_source,
+            "langDetectEvents": self._lang_detect_events,
+            "langLowConfidenceEvents": self._lang_low_conf_events,
         }

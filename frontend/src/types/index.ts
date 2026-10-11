@@ -8,6 +8,7 @@ export interface Course {
   customTerms: string[] // 用户自定义术语表
   courseType: 'online' | 'offline'  // 课程类型：线上网课 / 线下课堂
   language: string      // 识别语言：auto / en / zh / ja / ...
+  simpMode: string      // V5-4 简繁输出：auto-simplified（简体优先）/ raw（保留原始字形）
   createdAt: number
   updatedAt: number
   videoCount: number
@@ -19,6 +20,7 @@ export interface CourseConfig {
   customTerms: string[]
   courseType: 'online' | 'offline'
   language: string             // 识别语言：auto / en / zh / ja / ...
+  simpMode: string             // V5-4 简繁输出：auto-simplified / raw
   autoExtractTerms: boolean  // 是否自动提取术语
   ollamaModel: string         // 使用的 Ollama 模型
 }

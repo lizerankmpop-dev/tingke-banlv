@@ -102,6 +102,9 @@ class ASRPipeline:
             # 分层术语（高 → 低优先级）交给引擎按 token 预算重排（P0-3）：
             # 高优先级贴尾部保留窗口，预算不够时丢低优先级，而不是丢自定义术语
             prompt_sections=self._terminology.get("sections"),
+            # V5-4：简繁输出开关。由引擎侧 normalize 收敛，这里不做校验 ——
+            # 校验点越少越好，且历史课程可能带着旧值。
+            simp_mode=course_config.get("simpMode"),
         )
 
         self._vad = VoiceActivityDetector(
@@ -157,6 +160,19 @@ class ASRPipeline:
     def get_terminology(self) -> dict:
         """返回当前术语库信息（供 API 查询）"""
         return self._terminology
+
+    def update_simp_mode(self, mode: str):
+        """
+        热更新简繁输出开关（V5-4）
+
+        必须同时更新 `course_config`：管道重建（例如用户改了别的配置触发重启）时会
+        从 `course_config` 重新构造引擎，只改引擎内存里的值会在重建后**静默回退**，
+        表现为「改了开关，过一会儿又变回繁体」。
+        """
+        self.course_config["simpMode"] = mode
+        if self._whisper is not None:
+            self._whisper.set_simp_mode(mode)
+        logger.info(f"简繁输出开关已热更新: {mode}")
 
     def set_term_auto_degrade(self, enabled: bool) -> bool:
         """

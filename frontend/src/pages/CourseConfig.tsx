@@ -16,6 +16,14 @@ const LANGUAGES = [
   { value: 'es', label: '西班牙语' },
 ]
 
+// V5-4 简繁输出开关。取值必须与后端 asr/whisper_engine.py 的
+// SIMP_MODE_AUTO_SIMPLIFIED / SIMP_MODE_RAW 一致 —— 不一致会被后端
+// normalize_simp_mode() 静默收敛成默认值，表现为「开关点了没用」。
+const SIMP_MODES = [
+  { value: 'auto-simplified', label: '简体优先' },
+  { value: 'raw', label: '保留原始字形' },
+]
+
 type LoopbackStatus = 'checking' | 'ok' | 'missing'
 
 interface LoopbackGuide {
@@ -208,6 +216,7 @@ export default function CourseConfig() {
   const [domain, setDomain] = useState(course?.domain || '计算机科学')
   const [description, setDescription] = useState(course?.description || '')
   const [language, setLanguage] = useState(course?.language || 'auto')
+  const [simpMode, setSimpMode] = useState(course?.simpMode || 'auto-simplified')
   const [customTerms, setCustomTerms] = useState('')
   const [loopbackStatus, setLoopbackStatus] = useState<LoopbackStatus>('checking')
   const [loopbackGuide, setLoopbackGuide] = useState<LoopbackGuide | null>(null)
@@ -222,6 +231,7 @@ export default function CourseConfig() {
       setDomain(course.domain)
       setDescription(course.description)
       setLanguage(course.language || 'auto')
+      setSimpMode(course.simpMode || 'auto-simplified')
       setCustomTerms((course.customTerms || []).join(', '))
     }
   }, [course])
@@ -250,7 +260,7 @@ export default function CourseConfig() {
       fetch(`/api/courses/${courseId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain, description, language, customTerms: customTerms.split(/[,，]/).map(t => t.trim()).filter(Boolean) }),
+        body: JSON.stringify({ domain, description, language, simpMode, customTerms: customTerms.split(/[,，]/).map(t => t.trim()).filter(Boolean) }),
       }).catch(() => {})
     }
     startListening()
@@ -316,6 +326,22 @@ export default function CourseConfig() {
             {LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
           </select>
           <p style={styles.labelHint}>自动检测适合英文课程；多语混读或识别不准时请手动指定</p>
+
+          {/* V5-4：只在「自动检测」下露出 —— 指定了语种时这个开关不起作用，
+              一直显示一个点了没反应的控件比不显示更容易误导用户。 */}
+          {language === 'auto' && (
+            <>
+              <label style={styles.label}>
+                <Languages size={14} /> 中文输出字形
+              </label>
+              <select value={simpMode} onChange={e => setSimpMode(e.target.value)} style={styles.input}>
+                {SIMP_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+              <p style={styles.labelHint}>
+                自动检测判定为中文时，优先输出简体（推荐）。课题涉及古文、繁体教材时可改为「保留原始字形」。
+              </p>
+            </>
+          )}
 
           <label style={styles.label}>
             <Settings size={14} /> 自定义术语（支持中英文，优先识别）

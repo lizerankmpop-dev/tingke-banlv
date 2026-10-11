@@ -794,6 +794,16 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
         "droppedTerms": stats_after.get("droppedTerms") or [],
         # 最近一次复读检测的证据（关闭降级时也有值，用来区分「没检出」和「检出但没管」）
         "lastRepeat": stats_after.get("lastRepeat"),
+        # V5-1/V5-4：语种决策与简体强制（自动检测路径）。必须落盘 —— 否则
+        # 「CER 变好了」无法归因到具体路径（探测命中 / 置信不足降级 / 开关关闭），
+        # 复核者只能靠猜；而这三条路径的期望结果完全不同。
+        "simpMode": stats_after.get("simpMode"),
+        "languageDecision": stats_after.get("languageDecision"),
+        "languageDecided": bool(stats_after.get("languageDecided")),
+        "languageConfidence": stats_after.get("languageConfidence"),
+        "languageSource": stats_after.get("languageSource"),
+        "langDetectEvents": stats_after.get("langDetectEvents"),
+        "langLowConfidenceEvents": stats_after.get("langLowConfidenceEvents"),
         "inSegments": delta("inSegments"),
         "outSegments": delta("outSegments"),
         "paired": bool(paired),
