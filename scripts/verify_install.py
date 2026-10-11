@@ -39,7 +39,7 @@ v3.4.0 起新增 **S 层（稳定性加固）断言**。为什么非要在「实
 用法
 ----
     <venv>/Scripts/python.exe scripts/verify_install.py \
-        --installer frontend/release/tingkebanlv-3.4.1-setup.exe \
+        --installer frontend/release/tingkebanlv-3.5.0-setup.exe \
         [--hold 150] [--report packaging/verify/report.json]
 
 安装包文件名里的版本号 = frontend/package.json 的 `version`（electron-builder 自动拼），

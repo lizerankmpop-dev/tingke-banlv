@@ -64,7 +64,7 @@ from dependencies import db
 # app.getVersion()、后端 /api/ping 是同一个版本号的三个出口，对不上时
 # 排障会看到「装的是 3.4.1、ping 报 3.4.0」。
 # frontend/tests/version-consistency.test.cjs 逐字对拍这两处。
-APP_VERSION = "3.4.1"
+APP_VERSION = "3.5.0"
 
 # ============ 回环流量必须绕过系统代理 ============
 # 企业/校园网络常预设 HTTP_PROXY / HTTPS_PROXY，而 httpx 与 urllib 默认会信任
