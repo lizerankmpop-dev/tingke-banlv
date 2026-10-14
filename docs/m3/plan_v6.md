@@ -235,6 +235,56 @@ Zustand 的 `view` 驱动进入（`App.tsx` 明确让路由只区分三个独立
 | 日志目录 | `TINGKEBANLV_HOME`（默认 `~/.tingkebanlv`），与 `main.cjs` 现有 `logFilePath` 同源，**不要另算路径** |
 | 验收 | ① 入口可见；② 版本号三处一致（机器断言，非人工核对）；③ 点击可打开日志目录（用 `shell.openPath`，失败要有提示而不是静默） |
 
+**实施记录（2026-10-12）**
+
+做成了**模态面板**（`HelpAboutPanel`）而不是新页面。理由：应用内的视图切换由
+`useAppStore().view` 驱动（`App.tsx` 明确让路由只负责「三个独立入口」、不承担
+应用内导航），为帮助页加一个 view 值要动类型联合 + `App.tsx` 的 switch +
+一条「从哪儿进来往哪儿回去」的路径；而它只需要「随时能查一下」，模态不占导航位。
+
+| 产物 | 内容 |
+|---|---|
+| `frontend/electron/main.cjs`（改 2 处） | destructure 补 `shell`；新增 `diag:get-info` 与 `diag:open-log-dir` 两个 handler |
+| `frontend/electron/preload.cjs`（新增 `diag` 命名空间） | `getInfo()` / `openLogDir()`，**只读**，渲染层不做任何持久化 |
+| `frontend/src/types/index.ts` + `types/electron.d.ts` | `DiagInfo` / `OpenLogDirResult` 与 `ElectronDiagAPI` |
+| `frontend/src/lib/helpCopy.ts`（新增） | 全部可见文案 + `HELP_KEYS`（按位置引 `HOTKEYS[2]`）+ `versionLine()` / `openLogDirMessage()` 两个纯函数 |
+| `frontend/src/lib/diagBridge.ts`（新增） | 永不抛的三层封装 |
+| `frontend/src/components/HelpAboutPanel.tsx`（新增） | `role="dialog"` + `aria-modal` + `aria-labelledby`；Esc 关闭；失败提示 |
+| `frontend/src/pages/CourseList.tsx`（改 2 处） | 标题栏新增入口（复用 `helpBtn` 以继承 `no-drag`）+ 条件渲染面板 |
+| `frontend/tests/help-about.test.mts`（新增 16 条） | 文案审计、FAQ 结构、热键引用语义、`openLogDirMessage` 三分支、无障碍源守卫、桥接兜底、主进程返回值检查、审计变异 |
+| `frontend/tests/version-consistency.test.cjs`（扩 3 条） | **界面显示链**（见下） |
+
+**版本号「第五个出口」现在也被机器钉住了**：前四个出口都是文件之间的一致性；
+而帮助页显示的值是「界面显示的值到底从哪来」。整链静态可验：
+
+```
+package.json → app.getVersion() → 'diag:get-info' → preload diag.getInfo
+            → diagBridge.getDiagInfo → HelpAboutPanel [data-testid=help-about-version]
+```
+
+并额外断言两份界面源码里**不得出现任何 `x.y.z` 形态的字面量**
+（写死就等于多了个不会被构建步骤改写的版本号出口，而用户恰恰是为了报版本号才打开这一页）。
+
+**三条静默失败被显式处理**（都是「点了没反应」的类型）：
+
+1. `shell.openPath()` **不抛异常**：失败时把错误信息当**字符串返回**、成功返回空串。
+   写成 `await shell.openPath(dir)` 不检查返回值 = 失败时静默。现在映射成
+   `{ ok, dir, error }`，界面把原因原样显示出来。
+2. `openLogDirMessage()` 是纯函数且**把「没有 error」也判成失败**（`null` / `{}` /
+   `error: '   '` 都走失败分支）。反向写法（「有 error 才算失败」）会让
+   `{ok:false}` 显示成「已在文件管理器中打开」—— 比不报错更糟。
+3. 路径**只由主进程算**。渲染层拿不到 `dataHome()`（它不是 Electron 的 `userData`），
+   自己拼会指向一个空目录，用户照着找不到日志只会更困惑。
+
+**又踩了一次「注释假失败」**：`version-consistency.test.cjs` 首次运行时，
+新断言被 `HelpAboutPanel.tsx` 注释里**举例说明**的版本号写法弄红了。
+已按既有做法**先剥块注释再扫**。这是本项目第三次踩同一个坑（`panel-copy`、
+`course-config-hint`、这里），所以在两个测试文件里都留了同一条说明。
+
+实测（本机 2026-10-12）：`node --test "tests/**/*.test.*"` → **205 通过 / 0 失败**
+（189→205）；`tsc --noEmit` 0 错；`npm run build` 成功（1590 modules）；
+`node --check` 三个文件通过。
+
 ---
 
 ### 2.4 V6-3 · 应用图标 v4.1
@@ -356,7 +406,7 @@ Zustand 的 `view` 驱动进入（`App.tsx` 明确让路由只区分三个独立
 | **C-1b** | 变异探针 | `packaging/verify/probe_*.py`（9 个探针） | **全部捕获**（基线 22 条 + 本轮新增） |
 | **C-1c** | 前端 | `npm --prefix frontend run test` + `npm --prefix frontend run build` | `tsc` 无错、前端测试全绿 |
 | **C-2** | 七格识别 | §16.3 口径，7 格 × {`zh`, `auto`}，`--realtime` | 七格全通过；`zh` 四格锚点**逐位复现**；`auto` 与 `zh` **提示词逐项同构** |
-| **C-3** | 真机 e2e | 安装段 + 运行时 E1~E4 + 内容层 C1~C4 + **C5（V6-1 提示条可见性）** | 全部 OK（基线 21 条 + C5）；繁体 **0**；低置信正确降级 |
+| **C-3** | 真机 e2e | 安装段 + 运行时 E1~E4 + 内容层 C1~C4 + **C5（V6-1 提示条可见性）** + **C6（V6-2 帮助面板）** | 全部 OK（基线 21 条 + C5 + C6）；繁体 **0**；低置信正确降级 |
 | **C-4** | L4 安装包验收 | `scripts/verify_install.py --installer <setup.exe> --hold 150 --expect-sha256 <hex> --report <out>` | **连跑 3 次全通过**（D6 修好后不应再出现阻断；若 V6-7 未修则此门禁不适用） |
 | **C-5** | 双副本对拍 | `_mirror_sync.py` → `_mirror_check.py` | `diff=0 miss=0`（基准 `git ls-files`，**不能用 `find`**） |
 | **C-6** | 换行符 | 逐文件核对 | 3 个 CRLF 例外保持 CRLF，其余 **loneLF 正常 / CRLF 0** |
@@ -367,6 +417,14 @@ Zustand 的 `view` 驱动进入（`App.tsx` 明确让路由只区分三个独立
 为什么必须真机做：`smoke-overlay.cjs` 只能按 hash 跳转，而课程配置页由
 Zustand 的 `view` 驱动（`App.tsx` 有意让路由只区分三个独立入口），冒烟脚本
 进不去这一页 —— 所以「渲染出来没有」目前**没有任何自动化覆盖**，只能靠 e2e。
+
+**C6 的定义（V6-2 引入，2026-10-12）**：真机点开帮助面板，断言
+① `[data-testid="help-about-panel"]` 出现；② `[data-testid="help-about-version"]`
+的文本 **≡ 安装包版本**（`app.getVersion()` → 即 `package.json` / 安装包文件名里的版本，
+这一条把「界面显示链」从静态断言升级成真机证据）；
+③ `[data-testid="help-about-logdir"]` 非占位值、且路径**存在**；
+④ 点「打开日志目录」后，成功则资源管理器打开该目录，失败则
+`[data-testid="help-about-notice"]` 必须可见并带原因 —— **不允许两种都没有**。
 
 ### 打包与冻结流程（批 A 完成后执行）
 

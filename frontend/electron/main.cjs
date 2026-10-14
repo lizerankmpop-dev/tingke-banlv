@@ -34,7 +34,7 @@
  * 日志：本进程与后端输出统一落盘到 <TINGKEBANLV_HOME>/logs/electron.log
  */
 
-const { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -2040,6 +2040,50 @@ ipcMain.handle('app:get-host-status', () => ({
 
 /** 性能埋点快照（本地展示用，不联网） */
 ipcMain.handle('app:get-perf-stats', () => perfSnapshot());
+
+/**
+ * 诊断信息（帮助 / 关于页用，V6-2）
+ *
+ * 为什么把「数据目录 / 日志目录」也一起下发，而不是让渲染层自己拼：
+ * 渲染层能拿到的只有 `app.getPath('userData')`，而本项目的日志落在
+ * `dataHome()`（默认 `~/.tingkebanlv`，可用 `TINGKEBANLV_HOME` 覆盖）——
+ * **两者不是同一个位置**（见本文件 1536 行附近的说明）。渲染层自己拼必然拼错，
+ * 用户在界面上看到的路径会指向一个空目录，照着找只会更困惑。
+ * 所以这里的原则是：**路径只由主进程算，渲染层只负责显示**。
+ */
+ipcMain.handle('diag:get-info', () => ({
+  version: app.getVersion(),
+  dataHome: dataHome(),
+  logDir: logDir(),
+  logFile: logFilePath,
+  isPackaged: app.isPackaged,
+  compatMode: COMPAT_MODE,
+  electron: process.versions.electron,
+}));
+
+/**
+ * 打开日志目录（帮助 / 关于页的「打开日志目录」按钮）
+ *
+ * ⚠️ `shell.openPath()` **不抛异常**：失败时它把错误信息当**字符串返回**
+ * （成功返回空串）。写成 `await shell.openPath(dir)` 而不检查返回值，
+ * 就会出现「点了没反应、也不报错」—— 用户以为按钮坏了。
+ * 所以这里把返回值映射成显式的 `{ ok, error }`，界面据此提示。
+ */
+ipcMain.handle('diag:open-log-dir', async () => {
+  const dir = logDir();
+  try {
+    const errMsg = await shell.openPath(dir);
+    if (errMsg) {
+      logError(`[diag] 打开日志目录失败: ${dir} —— ${errMsg}`);
+      return { ok: false, dir, error: errMsg };
+    }
+    logLine(`[diag] 已打开日志目录: ${dir}`);
+    return { ok: true, dir };
+  } catch (err) {
+    logError(`[diag] 打开日志目录异常: ${dir} —— ${err.message}`);
+    return { ok: false, dir, error: err.message };
+  }
+});
 
 /**
  * 导出诊断日志

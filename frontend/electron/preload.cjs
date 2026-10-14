@@ -76,4 +76,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     /** 「重新查看新手引导」入口 */
     reopen: () => ipcRenderer.invoke('onboarding:reopen'),
   },
+
+  // 诊断 / 帮助（V6-2）
+  //
+  // 路径只由主进程算：渲染层拿不到 `dataHome()`（它不是 Electron 的 userData），
+  // 自己拼会指向一个空目录。所以这里是**只读**接口，渲染层不做任何持久化。
+  diag: {
+    /** 版本号 / 数据目录 / 日志目录 / 兼容模式（全部主进程现算） */
+    getInfo: () => ipcRenderer.invoke('diag:get-info'),
+    /** 打开日志目录；返回 { ok, dir, error? }（失败带原因，界面不许静默） */
+    openLogDir: () => ipcRenderer.invoke('diag:open-log-dir'),
+  },
 });

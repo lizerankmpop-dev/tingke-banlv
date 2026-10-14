@@ -1,7 +1,9 @@
 import type {
+  DiagInfo,
   HostStatusPayload,
   OnboardingState,
   OnboardingStatePayload,
+  OpenLogDirResult,
   OverlaySettings,
   OverlaySubtitlePayload,
   OverlayToastPayload,
@@ -59,11 +61,19 @@ export interface ElectronOnboardingAPI {
   reopen: () => Promise<{ open: boolean }>
 }
 
+/** 新增：诊断 / 帮助（V6-2）。**只读** —— 渲染层不做任何持久化 */
+export interface ElectronDiagAPI {
+  getInfo: () => Promise<DiagInfo>
+  /** 打开日志目录；失败时 `error` 有值（`shell.openPath` 不抛异常，只返回错误串） */
+  openLogDir: () => Promise<OpenLogDirResult>
+}
+
 export type ElectronAPI = ElectronHostAPI & {
   getAppVersion: () => Promise<string>
   getBackendPort: () => Promise<number | null>
   overlay?: ElectronOverlayAPI
   onboarding?: ElectronOnboardingAPI
+  diag?: ElectronDiagAPI
 }
 
 declare global {

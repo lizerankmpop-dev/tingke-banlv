@@ -351,3 +351,37 @@ export interface OnboardingStatePayload {
   reason: string
   totalSteps: number
 }
+
+/**
+ * `diag:get-info` 的返回（帮助 / 关于页用）
+ *
+ * 全部是**主进程已经持有的值**，刻意让渲染层不要自己算：
+ * 「数据目录」这一项尤其容易算错 —— 主进程用的是 `dataHome()`
+ * （默认 `~/.tingkebanlv`，可被 `TINGKEBANLV_HOME` 覆盖），
+ * 而它**不是** Electron 默认的 `userData`。渲染层自己拼路径必然拼错，
+ * 用户照着去那个目录里找不到日志，只会更困惑。
+ */
+export interface DiagInfo {
+  /** 应用版本，等价于 `frontend/package.json` 的 version（主进程 `app.getVersion()`） */
+  version: string
+  /** 数据目录（日志与 overlay.json 的落点） */
+  dataHome: string
+  /** 日志目录（`<dataHome>/logs`） */
+  logDir: string
+  /** 当前日志文件；落盘不可用时为 null */
+  logFile: string | null
+  /** 是否打包运行 */
+  isPackaged: boolean
+  /** 是否处于兼容模式（`--no-sandbox`） */
+  compatMode: boolean
+  /** Electron 版本，排障时用 */
+  electron: string
+}
+
+/** `diag:open-log-dir` 的返回：**失败必须带 error**，界面不能静默 */
+export interface OpenLogDirResult {
+  ok: boolean
+  dir: string
+  /** `shell.openPath` 的失败原因（它不抛异常，而是把错误当字符串返回） */
+  error?: string
+}

@@ -101,3 +101,75 @@ test('package-lock.json 的根标识与依赖范围必须与 package.json 一致
     );
   }
 });
+
+// ---------------------------------------------------------------- 界面显示链（V6-2）
+
+/**
+ * 帮助 / 关于页会把版本号**显示给用户看**，于是它成了「版本号的第五个出口」。
+ *
+ * 前四个出口（package.json / APP_VERSION / git tag / 锁文件）都是**文件之间**的一致性，
+ * 这一条不同：它是「**界面显示的值到底从哪来**」。如果这一页把版本号写成一个字面量，
+ * 那么每次升版它都会显示旧值 —— 而用户恰恰是**因为要报版本号**才会打开这一页。
+ *
+ * 这里把整条链静态钉住（不启动应用也能验）：
+ *   package.json → app.getVersion() → 'diag:get-info' → preload diag.getInfo
+ *                → diagBridge.getDiagInfo → HelpAboutPanel 显示
+ * 任何一环被换成别的来源（写死、读配置、读 tag）都会被下面任一条断言拦下。
+ */
+const MAIN_CJS = path.join(__dirname, '..', 'electron', 'main.cjs');
+const PRELOAD = path.join(__dirname, '..', 'electron', 'preload.cjs');
+const PANEL = path.join(__dirname, '..', 'src', 'components', 'HelpAboutPanel.tsx');
+const HELP_LIB = path.join(__dirname, '..', 'src', 'lib', 'helpCopy.ts');
+
+test('界面版本号来自主进程 app.getVersion()（不得写死）', () => {
+  const mainSrc = fs.readFileSync(MAIN_CJS, 'utf8');
+  // 允许 ipcMain.handle(...) 里直接引用，或经过中间变量；只要求这一行没被换掉来源
+  assert.match(
+    mainSrc,
+    /version:\s*app\.getVersion\(\)/,
+    "'diag:get-info' 的 version 必须直接来自 app.getVersion()（electron 读 package.json）",
+  );
+  assert.match(
+    mainSrc,
+    /ipcMain\.handle\('diag:get-info'/,
+    '缺少 diag:get-info 处理器 —— 帮助页拿不到版本号',
+  );
+});
+
+test('preload 暴露 diag.getInfo，且指向同一个通道', () => {
+  const src = fs.readFileSync(PRELOAD, 'utf8');
+  assert.match(src, /diag:\s*\{/, 'preload 必须暴露 diag 命名空间');
+  assert.match(
+    src,
+    /getInfo:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('diag:get-info'\)/,
+    'diag.getInfo 必须指向 diag:get-info（通道名不一致会静默 invoke 失败）',
+  );
+  assert.match(
+    src,
+    /openLogDir:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('diag:open-log-dir'\)/,
+    'diag.openLogDir 必须指向 diag:open-log-dir',
+  );
+});
+
+test('帮助页显示的版本号取自主进程返回值，且全链无版本字面量', () => {
+  const panel = fs.readFileSync(PANEL, 'utf8');
+  assert.match(panel, /getDiagInfo\(\)/, '帮助页必须真的去取诊断信息');
+  assert.match(panel, /info\?\.version/, '版本号必须来自 getInfo() 的返回值');
+
+  // 界面源码里不得出现 x.y.z 形态的版本字面量 —— 有，就说明某一处把版本号写死了。
+  //
+  // ⚠️ 必须先剥块注释再扫：这两份文件的注释里**会**用例子说明「不要硬编码
+  // 某个 `x.y.z` 这种写法」，不剥就会因说明性文字永远失败，然后被顺手放宽成
+  // 一条更弱的断言 —— 那才是真正的失败（`panel-copy.test.mts` 已记过这个坑）。
+  const stripBlockComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
+  const VERSION_LITERAL = /['"`]\d+\.\d+\.\d+['"`]/;
+  for (const [label, file] of [['HelpAboutPanel.tsx', PANEL], ['helpCopy.ts', HELP_LIB]]) {
+    const m = VERSION_LITERAL.exec(stripBlockComments(fs.readFileSync(file, 'utf8')));
+    assert.equal(
+      m,
+      null,
+      `${label} 里出现了版本号字面量 ${m && m[0]} —— 升版时它会继续显示旧值，`
+        + '而用户正是为了报版本号才打开这一页',
+    );
+  }
+});

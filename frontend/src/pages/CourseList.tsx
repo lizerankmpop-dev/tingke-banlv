@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/useAppStore'
 import { useCourseStore } from '../stores/useCourseStore'
-import { Plus, Trash2, BookOpen, Hash, Clock, ChevronRight, Play, Monitor, School, FileText, Languages, HelpCircle } from 'lucide-react'
+import { Plus, Trash2, BookOpen, Hash, Clock, ChevronRight, Play, Monitor, School, FileText, Languages, HelpCircle, LifeBuoy } from 'lucide-react'
 import { WIZARD_COPY } from '../lib/onboarding'
 import { onboardingBridge } from '../lib/onboardingBridge'
+import { HELP_COPY } from '../lib/helpCopy'
+import HelpAboutPanel from '../components/HelpAboutPanel'
 
 const DOMAINS = ['计算机科学', '医学', '生物学', '物理学', '数学', '化学', '法律', '经济学', '哲学', '历史', '文学', '其他']
 const LANGUAGES = [
@@ -21,6 +23,7 @@ export default function CourseList() {
   const { courses, isLoading, loadCourses, createCourse, deleteCourse } = useCourseStore()
   const { enterCourse } = useAppStore()
   const [showCreate, setShowCreate] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [form, setForm] = useState({
     name: '', domain: '计算机科学', description: '', customTerms: '', courseType: 'online' as 'online' | 'offline', language: 'auto',
     // V5-4：建课表单不暴露这个开关（建完课在课程配置页里改）。这里显式给默认值，
@@ -77,7 +80,22 @@ export default function CourseList() {
         >
           <HelpCircle size={16} />
         </button>
+        {/* 帮助 / 关于（V6-2）：版本号、常见问题、日志目录。文案一律取 HELP_COPY，
+            受 help-about.test.mts 的禁词审计；样式复用 helpBtn 以继承 no-drag
+            （标题栏整条是 drag 区，不标 no-drag 的按钮点不动 —— 只在打包后失效）。 */}
+        <button
+          type="button"
+          data-testid="help-about-open"
+          onClick={() => setShowHelp(true)}
+          style={styles.helpBtn}
+          title={HELP_COPY.openHint}
+          aria-label={HELP_COPY.openLabel}
+        >
+          <LifeBuoy size={16} />
+        </button>
       </div>
+
+      {showHelp && <HelpAboutPanel onClose={() => setShowHelp(false)} />}
 
       {/* 课程列表 */}
       <div style={styles.listArea}>
