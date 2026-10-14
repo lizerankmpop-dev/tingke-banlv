@@ -174,6 +174,55 @@ try {
 **注意**：`localStorage` 在 Electron 渲染进程可用，但**不要**依赖它跨数据目录迁移——
 若与 `overlay.json` 的持久化风格不一致，改为走既有配置存储更稳。
 
+**实施记录（2026-10-12）**
+
+缓存方案用了 `localStorage`（与 `ReviewReminder` 的「今天不再提醒」同套路），
+键名 `tingkebanlv.courseConfigHint.dismissed`。**没有**改走 `overlay.json` 的原因：
+那份配置是悬浮窗的**位置与外观**，语义是「设备相关、需要跨会话保持的偏好」；
+而「一条提示看过没有」是一次性标记，`ReviewReminder` 已经确立了 localStorage
+先例。已知代价：换数据目录 / 清理应用数据后提示会再出现一次（用户再点一下关闭），
+可接受，因此不加迁移逻辑。
+
+| 产物 | 内容 |
+|---|---|
+| `frontend/src/lib/courseConfigCopy.ts`（新增） | `COURSE_CONFIG_DEFAULTS`（三项默认值，唯一来源）、`DEFAULT_LABELS`、`CONFIG_HINT_COPY`（全部可见文案）、`HINT_DISMISS_KEY`、`isHintDismissed()` / `dismissHint()`（存储可注入） |
+| `frontend/src/components/CourseConfigHint.tsx`（新增） | 提示条组件，`role="note"` + `aria-label` + `data-testid="course-config-hint"` |
+| `frontend/src/pages/CourseConfig.tsx`（改 4 处） | ① import 常量与组件；② 三处 `useState` 默认值改走 `COURSE_CONFIG_DEFAULTS`；③ **同步 effect 里两处兜底值**（`course.language \|\| '…'`）同样改走常量；④ 修掉 `var(--border-color)` 错名 |
+| `frontend/tests/course-config-hint.test.mts`（新增 16 条） | 文案审计、三项齐备、项名与页面控件标签对拍、默认值与页面源码逐字对拍、**字形模式取值与后端常量对拍**、无障碍源守卫、无重复文案字面量、关闭状态全边界、审计变异 |
+| `frontend/tests/_copy-audit.mts`（新增） | 审计实现与禁词表的**共享模块**（`onboarding-copy.test.mts` 已改为引用它，两处守卫从此同一份禁词表） |
+| `frontend/tests/css-vars.test.mts`（新增 5 条） | `src/**` 的 `var(--x)` 引用完整性（见下方「顺带修复」） |
+
+实测（本机 2026-10-12）：`node --test "tests/**/*.test.*"` → **189 通过 / 0 失败**（168→189）；
+`tsc --noEmit` 0 错；`npm run build` 成功（1587 modules）。
+
+**守卫自己抓出来的两个真问题**（都不是事后补的说明，是断言先红）：
+
+1. **同步 effect 里还留着第二份默认值。**
+   `useEffect(() => { if (course) { ... setLanguage(course.language || 'auto') ... } })`
+   —— 我只改了 `useState` 那一处，这条「课程记录字段缺失时写回默认值」的路径漏了。
+   它是真实的漂移源：该路径下页面显示的同样是「默认值」，与提示条里说的推荐值同义。
+   断言写法是「**任何** `course.<字段> || '<字面量>'` 都算违规」（正则扫全文件），
+   所以第一版只查 `useState` 的写法当场就被否掉了。
+2. **注释里的 `role="status"` 把无障碍守卫弄红了。**
+   组件注释里写着「用 `role="note"` 而不是 `role="status"`」—— 不剥注释就会
+   因说明性文字永远失败，然后被「顺手」放宽成一条更弱的断言。
+   已按 `panel-copy.test.mts` 的既有做法先剥块注释再扫。
+
+**顺带修复：一处静默失效的 CSS 变量引用（新发现）**
+
+扫描过程中发现 `CourseConfig.tsx` 的术语预览 chip 用了 `var(--border-color)`，
+而 `global.css` 只定义了 `--border`。`var(--undefined)` 是**静默失效**：浏览器不报错、
+控制台无输出，那条声明在计算值阶段被判无效后**整条丢弃**，回落到初始值 ——
+对 `border: 1px solid var(--x)` 这种简写来说就是**边框直接没有**。
+已改为 `--border`，并新增 `tests/css-vars.test.mts` 把这一类彻底钉死
+（全量扫描确认当时**只此一处**）。**这是本轮唯一一处**原计划外的代码改动。
+
+**尚未完成**：提示条在**真机上的可见性**（渲染出来没有）尚无自动化覆盖 ——
+`smoke-overlay.cjs` 只走主窗口 / 悬浮窗 / 向导三处，而课程配置页只能由
+Zustand 的 `view` 驱动进入（`App.tsx` 明确让路由只区分三个独立入口、
+不承担应用内导航），冒烟脚本按 hash 跳不进去。当前只由「静态守卫 + 纯函数单测」
+兜住逻辑，**可见性验证放到批 A 收尾的 e2e**（需真机点进课程配置页）。
+
 ---
 
 ### 2.3 V6-2 · 前端「帮助 / 关于」入口
@@ -307,10 +356,17 @@ try {
 | **C-1b** | 变异探针 | `packaging/verify/probe_*.py`（9 个探针） | **全部捕获**（基线 22 条 + 本轮新增） |
 | **C-1c** | 前端 | `npm --prefix frontend run test` + `npm --prefix frontend run build` | `tsc` 无错、前端测试全绿 |
 | **C-2** | 七格识别 | §16.3 口径，7 格 × {`zh`, `auto`}，`--realtime` | 七格全通过；`zh` 四格锚点**逐位复现**；`auto` 与 `zh` **提示词逐项同构** |
-| **C-3** | 真机 e2e | 安装段 + 运行时 E1~E4 + 内容层 C1~C4 | 全部 OK（基线 21 条）；繁体 **0**；低置信正确降级 |
+| **C-3** | 真机 e2e | 安装段 + 运行时 E1~E4 + 内容层 C1~C4 + **C5（V6-1 提示条可见性）** | 全部 OK（基线 21 条 + C5）；繁体 **0**；低置信正确降级 |
 | **C-4** | L4 安装包验收 | `scripts/verify_install.py --installer <setup.exe> --hold 150 --expect-sha256 <hex> --report <out>` | **连跑 3 次全通过**（D6 修好后不应再出现阻断；若 V6-7 未修则此门禁不适用） |
 | **C-5** | 双副本对拍 | `_mirror_sync.py` → `_mirror_check.py` | `diff=0 miss=0`（基准 `git ls-files`，**不能用 `find`**） |
 | **C-6** | 换行符 | 逐文件核对 | 3 个 CRLF 例外保持 CRLF，其余 **loneLF 正常 / CRLF 0** |
+
+**C5 的定义（V6-1 引入，2026-10-12）**：真机点进课程配置页，断言
+① `[data-testid="course-config-hint"]` 存在且可见；② 三项文案都在 DOM 里；
+③ 点关闭后元素消失；④ 重启应用后再进本页，元素**不再出现**。
+为什么必须真机做：`smoke-overlay.cjs` 只能按 hash 跳转，而课程配置页由
+Zustand 的 `view` 驱动（`App.tsx` 有意让路由只区分三个独立入口），冒烟脚本
+进不去这一页 —— 所以「渲染出来没有」目前**没有任何自动化覆盖**，只能靠 e2e。
 
 ### 打包与冻结流程（批 A 完成后执行）
 

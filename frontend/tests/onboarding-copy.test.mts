@@ -47,48 +47,13 @@ import {
   SEED_TIMEOUT_ATTEMPTS,
 } from '../src/lib/onboarding.ts';
 
+import { auditCopy, type CopyTree } from './_copy-audit.mts';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-// ---------------------------------------------------------------- 审计
-
-/** 界面可见文案里禁止出现的实现术语（与控制面板 B4 修复后的口径一致） */
-const FORBIDDEN_TERMS = /token|Token|预算|截断|提示词|initial_prompt/;
-
-/** 不承诺具体行为、用户无法据此做决策的含糊说法 */
-const VAGUE_TERMS = /智能降级|智能地|自动优化/;
-
-type CopyNode = string | readonly string[] | readonly Record<string, unknown>;
-type CopyTree = Record<string, CopyNode>;
-
-/**
- * 遍历文案树，返回问题清单（空数组 = 通过）。
- * `forbidden` 允许注入：变异用例要塞进**任意**禁词来验证审计没有漏检。
- */
-function auditCopy(copy: CopyTree, forbidden: RegExp = FORBIDDEN_TERMS): string[] {
-  const problems: string[] = [];
-  const walk = (path: string, node: unknown): void => {
-    if (typeof node === 'string') {
-      if (forbidden.test(node)) {
-        problems.push(`文案 ${path} 含实现术语：${JSON.stringify(node)}`);
-      }
-      if (VAGUE_TERMS.test(node)) {
-        problems.push(`文案 ${path} 含不承诺行为的说法：${JSON.stringify(node)}`);
-      }
-      return;
-    }
-    if (Array.isArray(node)) {
-      node.forEach((item, i) => walk(`${path}[${i}]`, item));
-      return;
-    }
-    if (node && typeof node === 'object') {
-      for (const [k, v] of Object.entries(node)) walk(path ? `${path}.${k}` : k, v);
-    }
-  };
-  walk('', copy);
-  return problems;
-}
-
 // ---------------------------------------------------------------- 文案红线
+// 审计实现与禁词表在 `_copy-audit.mts`（与 course-config-hint 守卫共用同一份，
+// 避免两处禁词表各自漂移成「假守卫」）。
 
 test('全部文案 · 无实现术语、无含糊说法', () => {
   assert.deepEqual(auditCopy(WIZARD_COPY as unknown as CopyTree), []);

@@ -3,6 +3,8 @@ import { useAppStore } from '../stores/useAppStore'
 import { useCourseStore } from '../stores/useCourseStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
 import { ArrowLeft, Play, Settings, BookOpen, Mic, Monitor, School, AlertTriangle, Languages, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import CourseConfigHint from '../components/CourseConfigHint'
+import { COURSE_CONFIG_DEFAULTS } from '../lib/courseConfigCopy'
 
 const DOMAINS = ['计算机科学', '医学', '生物学', '物理学', '数学', '化学', '法律', '经济学', '哲学', '历史', '文学', '其他']
 const LANGUAGES = [
@@ -179,7 +181,7 @@ const termStyles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     background: 'var(--bg-tertiary)',
     color: 'var(--text-primary)',
-    border: '1px solid var(--border-color)',
+    border: '1px solid var(--border)',
   },
   chipCustom: {
     borderColor: 'rgba(0, 206, 201, 0.55)',
@@ -213,10 +215,13 @@ export default function CourseConfig() {
   const course = courses.find(c => c.id === courseId)
   const isOffline = course?.courseType === 'offline'
 
-  const [domain, setDomain] = useState(course?.domain || '计算机科学')
+  // 三个默认值统一取自 `lib/courseConfigCopy`，与提示条里写的「推荐值」同源。
+  // 直接写字面量的后果：改了这里、忘了改提示条，提示条就会教用户一个不存在的
+  // 默认值（有源守卫逐字对拍，见 tests/course-config-hint.test.mts）。
+  const [domain, setDomain] = useState(course?.domain || COURSE_CONFIG_DEFAULTS.domain)
   const [description, setDescription] = useState(course?.description || '')
-  const [language, setLanguage] = useState(course?.language || 'auto')
-  const [simpMode, setSimpMode] = useState(course?.simpMode || 'auto-simplified')
+  const [language, setLanguage] = useState(course?.language || COURSE_CONFIG_DEFAULTS.language)
+  const [simpMode, setSimpMode] = useState(course?.simpMode || COURSE_CONFIG_DEFAULTS.simpMode)
   const [customTerms, setCustomTerms] = useState('')
   const [loopbackStatus, setLoopbackStatus] = useState<LoopbackStatus>('checking')
   const [loopbackGuide, setLoopbackGuide] = useState<LoopbackGuide | null>(null)
@@ -230,8 +235,10 @@ export default function CourseConfig() {
     if (course) {
       setDomain(course.domain)
       setDescription(course.description)
-      setLanguage(course.language || 'auto')
-      setSimpMode(course.simpMode || 'auto-simplified')
+      // 这里的兜底值也必须走同一份常量：课程记录里字段可能缺失（老库 / 导入的课程），
+      // 这时页面显示的值同样是「默认值」，写死字面量就和提示条里说的推荐值成了两份事实。
+      setLanguage(course.language || COURSE_CONFIG_DEFAULTS.language)
+      setSimpMode(course.simpMode || COURSE_CONFIG_DEFAULTS.simpMode)
       setCustomTerms((course.customTerms || []).join(', '))
     }
   }, [course])
@@ -285,6 +292,9 @@ export default function CourseConfig() {
       </div>
 
       <div style={styles.content}>
+        {/* 一次性填写提示（V6-1）：只在首次进入时出现，关掉后写 localStorage 标记 */}
+        <CourseConfigHint />
+
         {/* 顶部提示 */}
         <div style={{
           ...styles.hint,
