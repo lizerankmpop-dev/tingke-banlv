@@ -41,6 +41,11 @@ const os = require('os');
 const net = require('net');
 const http = require('http');
 const { spawn } = require('child_process');
+// 兼容模式自我重启的编排（含「先让锁 → 再 spawn」的顺序不变量，D6 修复）
+const {
+  buildCompatRelaunchSpec,
+  performCompatRelaunch,
+} = require('./compat-relaunch.cjs');
 
 // ============ 启动参数 ============
 //
@@ -104,7 +109,7 @@ function markCompatModeNeeded() {
 
 const FORCED_COMPAT = compatMarkerExists();
 const COMPAT_MODE = process.argv.includes('--tingkebanlv-compat') || FORCED_COMPAT;
-const COMPAT_RELAUNCH_ARGS = ['--no-sandbox', '--tingkebanlv-compat'];
+// 重启参数与「让锁 → spawn」的顺序不变量都在 compat-relaunch.cjs（D6 事故的根因是顺序反了）
 
 // 命令行走的是 --no-sandbox 参数；从标记恢复时没有这个参数，必须自己补上，
 // 否则「这台机器需要兼容模式」这个判断只改了超时阈值、沙箱照样拦，白白再崩一次。
@@ -1319,47 +1324,42 @@ const COMPAT_REPAINT_TIMEOUT_MS = 20000;
  * 表现为「应用闪一下消失、日志停在 watchdog 那一行」。开发模式排查兼容问题时必看此处。
  */
 function relaunchInCompatMode() {
-  // cwd 必须是一个真实存在的**目录**。踩过的坑：打包后 app.getAppPath() 指向
-  // `<安装目录>\resources\app.asar` —— 那是一个**文件**，把它当 cwd 传给 spawn，
-  // 底层直接以 ENOENT 失败，而错误信息里出现的是 exe 路径，
-  // 看起来像「找不到程序」，极容易误判。
-  // 这个 bug 只在实装后暴露：源码模式下 getAppPath() 是仓库目录，一切正常，
-  // 所以 CDP 冒烟全绿也照样带着它出门。
-  const cwd = app.isPackaged ? path.dirname(process.execPath) : app.getAppPath();
-  const args = app.isPackaged
-    ? [...COMPAT_RELAUNCH_ARGS]
-    : [...COMPAT_RELAUNCH_ARGS, app.getAppPath()];
+  // cwd 取法的坑（打包后 appPath 指向 app.asar 这个**文件**，当 cwd 会 ENOENT）
+  // 与「先让锁 → 再 spawn」的顺序不变量，都在 compat-relaunch.cjs 里有完整说明。
 
   // 先把标记落下：即便下面 spawn 失败，用户下次手动双击也会直接进兼容模式，
   // 不至于反复卡在同一个坑里
   markCompatModeNeeded();
 
-  try {
-    const child = spawn(process.execPath, args, {
-      detached: true, // 独立进程组，父进程退出后仍存活
-      stdio: 'ignore',
-      cwd,
-      env: process.env,
-    });
-    // spawn 的失败是**异步**的（走 'error' 事件）。不挂监听的话它会一路冒到
-    // uncaughtException —— 实测就是这样：日志里只剩一行堆栈，用户什么提示都
-    // 看不到，而调用方以为已经成功拉起了新实例。挂上监听后，是否成功改由
-    // 返回值（pid）决定，调用方才能正确地弹出错误框。
-    child.on('error', (err) => {
-      logError(`[watchdog] 兼容模式实例启动失败: ${err.message}`);
-    });
-    // pid 取不到 = 底层 spawn 没成功，此时绝不能报「已拉起」
-    if (!child.pid) {
-      logError('[watchdog] 兼容模式实例未取到 pid，判定为拉起失败');
-      return false;
-    }
-    child.unref();
-    logLine(`[watchdog] 已拉起兼容模式实例 pid=${child.pid} cwd=${cwd} args=${args.join(' ')}`);
-    return true;
-  } catch (err) {
-    logError(`[watchdog] 拉起兼容模式实例失败: ${err.message}`);
-    return false;
-  }
+  const result = performCompatRelaunch({
+    spawn,
+    spec: buildCompatRelaunchSpec({
+      isPackaged: app.isPackaged,
+      execPath: process.execPath,
+      appPath: app.getAppPath(),
+    }),
+    // env 刻意原样透传：**不**注入 TINGKEBANLV_ALLOW_MULTI。
+    // 让子进程跳过抢锁 ⇒ 锁从此无人持有 ⇒ 兼容实例存活期间用户再双击图标
+    // 就会成功抢锁并开出第二个实例。正确做法是「父进程先让锁」，而不是「子进程不抢」。
+    env: process.env,
+    releaseLock: () => {
+      // 父进程本来就没拿到锁时无需释放（例如 TINGKEBANLV_ALLOW_MULTI=1 的验证场景）
+      if (!singleInstanceOwner) return false;
+      try {
+        app.releaseSingleInstanceLock();
+        singleInstanceOwner = false;
+        logLine('[single-instance] 已释放单实例锁，交由兼容模式实例接管');
+        return true;
+      } catch (err) {
+        logError(`[single-instance] 释放单实例锁失败: ${err.message}`);
+        return false;
+      }
+    },
+    logLine,
+    logError,
+  });
+
+  return result.ok;
 }
 
 function armRenderWatchdog() {

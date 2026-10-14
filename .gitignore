@@ -44,6 +44,10 @@ packaging/verify/*
 # 任务面板上「已有扫繁体字的守卫」就是假的 —— 它根本不在库里，CI 也拿不到。
 !packaging/verify/check_simplified.py
 !packaging/verify/probe_lang_simp_mutations.py
+# D6 单实例锁竞态修复（V6-7）的守卫，同样是手工维护的工具代码：
+# 探针验的是「releaseLock 必须严格早于 spawn」这条顺序不变量，
+# 漏掉这条反选 = 守卫根本不在库里，等于 D6 的回归防线是纸糊的。
+!packaging/verify/probe_compat_relaunch_mutations.py
 
 # 内置模型种子（约 141MB 二进制，由 scripts/prepare_seed_model.py 生成，
 # 不入库；构建前需先执行该脚本）
