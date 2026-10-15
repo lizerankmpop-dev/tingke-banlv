@@ -122,6 +122,27 @@ def gradient(top, bottom):
     return Image.fromarray(arr, "RGB")
 
 
+def s16_pixel_face(im16: Image.Image) -> Image.Image:
+    """v4.1：在 **16×16 网格上直接贴**五官像素（绕过一切抗锯齿）。
+
+    为什么不走设计空间：16px 下白脸（muzzle 椭圆）只有 ≈2px 高、≈5px 宽，
+    设计空间里任何「圆」经 8× 超采样 + LANCZOS 下采样都会跨像素涂抹 ——
+    实测两轮全部失败（眼距 32 → 三点糊成一条墨镜横带；眼距 40 → 糊成灰带，
+    且白脸被涂碎）。像素级贴点是 16px 下唯一精确的表情画法。
+
+    坐标按 v4 原版 16px 实测网格反推（勿凭感觉改）：白脸占 y7~10、
+    网格中心 x=7.5（两列之间），因此五官必须按 x=7.5 对称：
+      眼 y8 行 x6 / x9（到中心各 1.5 格，中间留 2 格白）；
+      鼻 y10 行 x7+x8（2 格宽，同样对称；与眼睛隔开整行 y9）。
+    """
+    im = im16.copy()
+    p = im.load()
+    ink = tuple(int(COL["ink"][i:i + 2], 16) for i in (1, 3, 5)) + (255,)
+    for x, y in ((6, 8), (9, 8), (7, 10), (8, 10)):
+        p[x, y] = ink
+    return im
+
+
 def render(kind="master", tiers=(256, 128, 96, 64, 48, 32)):
     """kind: master | s24 | s16 —— 返回 {尺寸: 图像}, 超采样原图"""
     img = Image.new("RGBA", (W, W), (0, 0, 0, 0))
@@ -199,7 +220,11 @@ def render(kind="master", tiers=(256, 128, 96, 64, 48, 32)):
         rrect(d, (128, 206, 40, 26, 6), 6, COL["book"])
 
     elif kind == "s16":
-        # 16px 手绘：仅头部 + 学士帽剪影；高对比、零细节，保证深色任务栏可辨
+        # 16px 手绘：仅头部 + 学士帽剪影；高对比、零细节，保证深色任务栏可辨。
+        # v4.1 的五官**不在这里画**——16px 下白脸只有 ≈2px 高，设计空间的圆经
+        # 超采样 + LANCZOS 必然跨像素涂抹（实测两轮：眼距 32 糊成一条墨镜横带、
+        # 眼距 40 糊成灰带）。像素级贴点见 s16_pixel_face()，是 16px 下唯一
+        # 精确的表情画法。
         HEAD16 = (128, 116, 72)
         head_mask = mask_of(lambda dd: circ(dd, HEAD16, 255))
         white_mask = mask_of(lambda dd: circ(dd, HEAD16, 255, 2))
@@ -318,10 +343,16 @@ def svg_small(kind: int) -> str:
             + svg_rrect((128, 206, 40, 26, 6), COL["book"])
         )
     elif kind == 16:
+        # 五官用 **16px 网格对齐的 rect**（1 格 = 16 设计单位）表达，与
+        # s16_pixel_face() 的贴点坐标一一对应：(6,8)/(9,8) → x=96/144, y=128；
+        # (7,10)+(8,10) → x=112, y=160, w=32。SVG 是位图贴点的几何近似。
         shapes = (
             svg_ell((128, 116, 74), COL["white"])
             + svg_ell((128, 116, 72), "url(#bodyGrad)")
             + svg_ell((128, 148, 44, 32), COL["face"])
+            + f'<rect x="96" y="128" width="16" height="16" fill="{COL["ink"]}"/>'
+            + f'<rect x="144" y="128" width="16" height="16" fill="{COL["ink"]}"/>'
+            + f'<rect x="112" y="160" width="32" height="16" fill="{COL["ink"]}"/>'
             + svg_ell((128, 70, 56, 22), COL["cap_skull"])
             + svg_poly([(128, 22), (210, 52), (128, 82), (46, 52)], COL["cap_board"])
             + svg_ell((128, 34, 6), COL["cap_skull"])
@@ -343,13 +374,17 @@ def main():
     (out / "png").mkdir(parents=True, exist_ok=True)
 
     # 矢量源始终写在本脚本同目录（仓库内，随提交归档）
-    (HERE / "tingke-otter-master.svg").write_text(svg_master(), encoding="utf-8")
-    (HERE / "tingke-otter-24.svg").write_text(svg_small(24), encoding="utf-8")
-    (HERE / "tingke-otter-16.svg").write_text(svg_small(16), encoding="utf-8")
+    # newline="\n"：Windows 上 write_text 默认用 os.linesep（CRLF），会把仓库里的
+    # SVG 写成 CRLF —— 仓库纪律是除 3 个 CRLF 例外文件外全 LF，必须显式锁死。
+    for name, text in (("tingke-otter-master.svg", svg_master()),
+                       ("tingke-otter-24.svg", svg_small(24)),
+                       ("tingke-otter-16.svg", svg_small(16))):
+        (HERE / name).write_text(text, encoding="utf-8", newline="\n")
 
     master, _ = render("master", (256, 128, 96, 64, 48, 32))
     s24, _ = render("s24", (24,))
     s16, _ = render("s16", (16,))
+    s16[16] = s16_pixel_face(s16[16])
     imgs = {**master, 24: s24[24], 16: s16[16]}
 
     for t in (256, 128, 96, 64, 48, 32):

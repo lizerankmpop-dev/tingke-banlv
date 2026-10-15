@@ -1,8 +1,9 @@
 # M3 · 应用图标资源规范（Icon Asset Spec）
 
-> 状态：**加载链路已实现（2026-10-07）**；`icon.ico` 当前为**占位版本**（生成器
-> `frontend/scripts/make-placeholder-icon.py`，语义＝深紫底 + 字幕条，符合 §3/§4
-> 全部格式要求），正式美术资源交付后直接覆盖 `frontend/build/icon.ico` 即可。
+> 状态：**加载链路已实现（2026-10-07）**；`icon.ico` 当前为 **v4.1 海獭版**
+> （生成器 `frontend/build/icon-source/build_otter.py`，单一数据源：master 256~32
+> 完整设计 + 16/24px 独立剪影；v4.1 于 2026-10-12 给 16px 剪影加了像素脸，
+> 见 `frontend/build/README.md`「当前状态」）。换图 / 美化迭代直接改脚本参数重跑。
 > **换图工具链已就位（2026-10-07）**：产物层校验 `scripts/icon_assets.py`（§8.4）
 > + 换图一条命令（§6.1.1），美术资源到位后按 §8.3 执行即可。
 > **📌 换图时请直接看 §九（§8.5「图标交付后流水线 · 唯一清单来源」）—— 那是唯一执行清单，
@@ -367,6 +368,15 @@ cd frontend && npm run electron:build
 [env] AppUserModelId=com.tingkebanlv.app
 [env] 应用图标=C:\...\frontend\build\icon.ico
 ```
+
+**v4.1 增补（2026-10-12，V6-3）**：16px 剪影加「两眼 + 鼻」像素脸。
+产物层机器判据全部通过 —— `icon_assets.py check`（8 档 / 256 PNG / 体积不变 82.1 KB）、
+`test_icon_assets.py` **12 passed**、前端 `npm test` **205 pass**（含 ico 容器守卫）。
+16px 可辨识性按 §6.1 第 5 项用**像素级放大图**复核（NEAREST ×16，浅 / 深双底）：
+v4 是「蓝圆 + 黄帽 + 白块」（有帽无脸），v4.1 白脸上有两个清晰眼点 + 鼻杠。
+⚠️ 实验记录（勿重蹈）：在设计空间画五官（眼距 32 / 眼距 40 两轮参数）都会被
+超采样 + LANCZOS 涂抹成横带并切碎白脸 —— 16px 的表情只能在 16×16 网格上
+**直接贴像素**（`s16_pixel_face()`），实现与坐标反推依据见 `build_otter.py` 函数注释。
 
 ### 8.3 待办（依赖美术资源交付）
 

@@ -297,6 +297,31 @@ package.json → app.getVersion() → 'diag:get-info' → preload diag.getInfo
 | 验收 | ① 各尺寸产物齐全且校验通过；② `test_icon_assets.py` 全绿；③ 安装后任务栏 / 开始菜单 / 卸载项三处图标一致（真机截图留档） |
 | 风险 | **需要 Inkscape 手工绘制**，是本轮唯一无法纯代码完成的项。若时间紧，可**先只出 256/128/64/48/32/16 六档 PNG 覆盖打包需求**，矢量源补齐延后 |
 
+**实施记录（2026-10-12，v4.1 完成）**
+
+**任务前提在立项后已变**：图标不是占位版 —— v4「海獭」版已于 2026-10-07 按 §8.5
+验收落地（单一数据源 `frontend/build/icon-source/build_otter.py`：master 256~32 完整设计
++ 16/24px 独立剪影，**纯 Pillow + numpy，不需要 Inkscape**，本机也未装）。因此 v4.1
+不重画，做的是**小步美化**：解决 v4 遗留的唯一可见短板 —— 16px 剪影「有帽无脸」。
+
+| 项 | 内容 |
+|---|---|
+| 改动 | `build_otter.py` 新增 `s16_pixel_face()`：在 **16×16 网格上直接贴**「两眼 + 鼻」4 个墨点；`svg_small(16)` 用网格对齐 rect 同步表达（单一数据源不漂移）；16px/24px 以外的 6 档**零改动** |
+| 关键教训 | 16px 下白脸只有 ≈2px 高，设计空间坐标（眼距 32 / 40 两轮实测）经超采样 + LANCZOS 必然糊成横带并切碎白脸 ⇒ 16px 表情**只能像素级贴点**，坐标按 v4 实测网格反推（眼 y8 行 x6/x9、鼻 y10 行 x7+x8，对网格中心 x=7.5 对称） |
+| 覆盖 | 新 ico 已覆盖 `frontend/build/icon.ico`（82.1 KB，8 档不变） |
+
+实测（本机，2026-10-12）：
+
+- `python scripts/icon_assets.py check frontend/build/icon.ico` → **全部通过**（8 档、256 PNG）
+- `pytest backend/tests/test_icon_assets.py` → **12 passed**
+- 前端 `npm test` → **205 pass / 0 fail**（含 `onboarding-aumid` 的 ico 容器守卫）
+- 16px 可辨识性（§6.1 第 5 项，人眼）：像素级放大 ×16 浅 / 深双底对照 —— v4 无脸，
+  v4.1 眼点 + 鼻杠清晰；对照图留档 `安装空间/_icon_v41/compare_{light,dark}.png`
+
+**尚未完成**（属打包收尾，与 V6-7 / V6-1 / V6-2 同批）：§8.5 全流程 —— 清
+`release/` → 重新打包 → `audit` → 真机六处落点 + 安装向导目检。图标改动**必然改变
+安装包哈希**，v3.6.0 打包时一并验证。
+
 ---
 
 ### 2.5 D1 产品侧度量 · 繁体对术语高亮 / 生词本的影响
