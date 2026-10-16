@@ -614,7 +614,7 @@ package.json → app.getVersion() → 'diag:get-info' → preload diag.getInfo
 | **C-3** | 真机 e2e | 安装段 + 运行时 E1~E4 + 内容层 C1~C4 + **C5（V6-1 提示条可见性）** + **C6（V6-2 帮助面板）** | 全部 OK（基线 21 条 + C5 + C6）；繁体 **0**；低置信正确降级 |
 | **C-4** | L4 安装包验收 | `scripts/verify_install.py --installer <setup.exe> --hold 150 --expect-sha256 <hex> --report <out>` | **连跑 3 次全通过**（D6 修好后不应再出现阻断；若 V6-7 未修则此门禁不适用） |
 | **C-5** | 双副本对拍 | `_mirror_sync.py` → `_mirror_check.py` | `diff=0 miss=0`（基准 `git ls-files`，**不能用 `find`**） |
-| **C-6** | 换行符 | 逐文件核对 | 3 个 CRLF 例外保持 CRLF，其余 **loneLF 正常 / CRLF 0** |
+| **C-6** | 换行符 | `安装空间/_c6_eol_check.py` | 见下方「C-6 怎么判」（**原表述「其余 loneLF 正常 / CRLF 0」不可测，已修正**） |
 
 ### C-1b 怎么跑（2026-10-16 实测的运行约束，**不是可选项**）
 
@@ -671,6 +671,36 @@ Zustand 的 `view` 驱动（`App.tsx` 有意让路由只区分三个独立入口
 | 6 | 包内冒烟 | 引擎响应 / `version=3.6.0` / `preview` 不传 language ≡ 显式 `auto` / `zh` 繁体 0 |
 | 7 | 跑 C-1 ~ C-4 | 全部通过才继续 |
 | 8 | 文档 + 提交 + tag | `known_defects.md`（D6 关闭）+ `WER_REPORT_PLAN.md` §17 + `backlog_v350.md` §十四 + 本方案；commit 后 `git tag -a v3.6.0` |
+
+### C-6 怎么判（🔴 判据修正：原表述不可测）
+
+**原表述**：「3 个 CRLF 例外保持 CRLF，其余 loneLF 正常 / CRLF 0」。
+**执行时发现它不可测** —— 按字面判会报 **9 个违例**，但这 9 个证明不了任何事：
+
+| 侧 | 实测（2026-10-16，193 个跟踪文件） | 含义 |
+|---|---|---|
+| **index（提交内容）** | 184 个文本文件**全部 `i/lf`**，`i/crlf = 0` | `add` 时归一 ⇒ **CRLF 从来进不了仓库** |
+| **工作区** | `w/crlf` **12** / `w/lf` **172** / `w/mixed` **0** / 二进制 7 + `-text` 2 | EOL 只取决于「该文件最后一次怎么被写出来」 |
+
+根因：`core.autocrlf=true` 且**无 `.gitattributes`** ⇒ 任何一次 checkout 都会把文件写成 CRLF。
+所以「工作区是否全 LF」测的其实是「谁最后一次改过这个文件」，**与包的正确性无关**，
+而且会**同时假通过和假失败**。
+
+**改后的三条不变量**（`安装空间/_c6_eol_check.py` 逐条判，落盘 `_c6_eol_report.json`）：
+
+| # | 不变量 | 判据 |
+|---|---|---|
+| ① | 3 个有意例外：工作区**纯 CRLF** | `w/crlf` 且逐字节 `loneLF == 0` |
+| ② | **提交内容（index）侧**无 CRLF | 任何文本文件都不许 `i/crlf` / `i/mixed` |
+| ③ | 无 `mixed` | 任何文件都不许半 CRLF 半 LF |
+
+非例外却工作区 CRLF 的，记为**观察项**（报告里逐条标出「本轮是否改动 / 是否在冻结区 / index 值」）。
+
+**观察项里有 3 个是「本轮改动 + 在冻结区」，故意不修**：
+`backend/main.py`、`frontend/package.json`、`frontend/package-lock.json`。
+它们的 index 已是 LF；为了让工作区好看去重写它们 ⇒ **作废已冻结的 setup.exe 与全部 L4/e2e 结论**，
+代价远大于收益。根因（改写脚本没带 `newline=""`，Windows 上默认把 `\n` 翻成 CRLF）记入教训 61。
+⚠️ 其余 6 个是**历史遗留**（2026-10-09 基线里就有），不是本轮引入的 —— **归因前先取基线**。
 
 ### 打包怎么跑（2026-10-16 实测的运行约束，**不是可选项**）
 
