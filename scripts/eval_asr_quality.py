@@ -385,6 +385,12 @@ def wer(ref_text: str, hyp_text: str, language: str) -> dict:
 # ============ 采集器：把 VAD 分段与识别结果按时间对齐 ============
 
 
+# V6-6：词级恒等式的残差容差。恒等式两边都 round 到 3 位小数，两次舍入的
+# 极端情形合计 ±0.001；这里留 5 倍余量。**不要调大** —— 真实缺陷（锚点取反 /
+# 映射到相邻块 / 忘减静音尾巴）造成的偏差是秒级或符号为负，0.005 足够区分。
+IDENTITY_TOL = 0.005
+
+
 def word_end_seconds(words) -> float | None:
     """一组词级时间戳里最靠后的 `end`（音频内秒）；一个都取不到 → None。
 
@@ -528,6 +534,76 @@ class Recorder:
                 }
             )
         return out
+
+    def words_latency_by_block(self) -> dict:
+        """把**逐字幕**的新口径映射回它所属的 VAD 块，让 1:N 格也能校验恒等式。
+
+        ## 为什么需要它（D2 残留缺口）
+
+        `words_latency()` 不区分「这条字幕是首段还是续段」；而旧口径 `pair()`
+        要求条数 1:1 —— `long`(56 块→100 字幕) / `real`(63→86) 在原理上就配不上，
+        于是恒等式 `latency_新 - latency_旧 == 静音尾巴` **在这两格无法校验**。
+
+        本方法不去动配对（放宽配对只会产出「看似合理、实际错位」的数据），
+        而是换一个在 1:N 下**恒有答案**的问题：「这条字幕落在哪个 VAD 块里」。
+
+        ## 映射规则（必须先定义，否则不可测）
+
+        ① **归属**：字幕的词尾时刻 `audioWordsEnd` 落在哪个块的
+           `[audioStart, audioEnd]`（**闭区间**）内，就归给那个块；
+        ② **块尾静音归块内最后一条字幕** —— 这不是规定而是**结论**：
+           块内每条字幕的 `latency_新 - latency_旧` 都等于
+           `seg.audioEnd - 该字幕自己的 audioWordsEnd`；块尾那条差值最小，
+           其余字幕的差值等于「块尾 + 它自己词后的静音」之和，恒 >= 它；
+        ③ **落在所有块之外** ⇒ 记 `unmapped`，**不参与**恒等式校验，但**计入报告**。
+           绝不静默丢弃 —— 否则「验了几条 / 漏了几条」在报告里看不出来（教训 14）；
+        ④ 命中**多个块**（区间重叠，正常不该发生）⇒ 取**最早**那个并记
+           `overlapped`，供排查；而不是随便挑一个让数字看起来正常。
+
+        返回 `{"pairs": [...], "unmapped": [...], "overlapped": [...]}`。
+        每条 pair 带 `residual = (latency_新 - latency_旧) - 静音尾巴`，
+        理论上恒为 0（容差见 IDENTITY_TOL）。
+        """
+        if not self.feed_t0:
+            return {"pairs": [], "unmapped": [], "overlapped": []}
+        with self._lock:
+            segs, subs = list(self.segments), list(self.subtitles)
+        pairs: list[dict] = []
+        unmapped: list[dict] = []
+        overlapped: list[dict] = []
+        for sub in subs:
+            anchor = sub.get("audioWordsEnd")
+            if anchor is None:
+                continue
+            hits = [s for s in segs if s["audioStart"] <= anchor <= s["audioEnd"]]
+            if not hits:
+                unmapped.append({"index": sub["index"], "audioWordsEnd": anchor})
+                continue
+            if len(hits) > 1:
+                overlapped.append(
+                    {
+                        "index": sub["index"],
+                        "audioWordsEnd": anchor,
+                        "hitIndexes": [h["index"] for h in hits],
+                    }
+                )
+            seg = hits[0]
+            lat_new = round(sub["pushWall"] - (self.feed_t0 + anchor), 3)
+            lat_old = round(sub["pushWall"] - seg["readyWall"], 3)
+            tail = round(seg["audioEnd"] - anchor, 3)
+            pairs.append(
+                {
+                    "index": sub["index"],
+                    "segIndex": seg["index"],
+                    "audioWordsEnd": anchor,
+                    "segAudioEnd": seg["audioEnd"],
+                    "latencyNew": lat_new,
+                    "latencyOld": lat_old,
+                    "tail": tail,
+                    "residual": round((lat_new - lat_old) - tail, 3),
+                }
+            )
+        return {"pairs": pairs, "unmapped": unmapped, "overlapped": overlapped}
 
 
 class SubtitleRouter:
@@ -751,6 +827,20 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
     word_lat_values = [p["latency"] for p in word_lat]
     words_missing = len(recorder.subtitles) - len(word_lat)
 
+    # V6-6：把逐字幕的新口径**映射**回所属 VAD 块，让 `long`/`real`（1:N，
+    # 旧口径配不上）也能校验恒等式。规则与理由见 words_latency_by_block()。
+    lat_ident = (
+        recorder.words_latency_by_block()
+        if args.realtime
+        else {"pairs": [], "unmapped": [], "overlapped": []}
+    )
+    ident_residuals = [abs(p["residual"]) for p in lat_ident["pairs"]]
+    ident_violations = [
+        p
+        for p in lat_ident["pairs"]
+        if p["residual"] < -IDENTITY_TOL or abs(p["residual"]) > IDENTITY_TOL
+    ]
+
     # 累积滞后判定：把已配对片段按时间切成前后两半比均值。
     # 后半段明显更慢 = 背压没起作用/跟不上，这才是「越听越迟」的真实信号。
     half = len(latencies) // 2
@@ -845,6 +935,22 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
             # >0 说明新口径只覆盖了部分字幕，必须能从报告里看出来，不能静默。
             "missingWords": words_missing,
             "detail": word_lat[:args.detail_limit],
+        },
+        # V6-6：恒等式校验（补 D2 的 1:N 残留缺口）。`mapped` 是**能校验到的**
+        # 条数，它小于 subtitles 是正常的（缺锚点 / 落在块外），但必须能从报告
+        # 分辨 —— 否则「验了 96 条」会被读成「全部验过」。
+        "latency_identity": {
+            "blocks": len(recorder.segments),
+            "subtitles": len(recorder.subtitles),
+            "mapped": len(lat_ident["pairs"]),
+            "unmapped": len(lat_ident["unmapped"]),
+            "overlapped": len(lat_ident["overlapped"]),
+            "worstResidual": round(max(ident_residuals), 3) if ident_residuals else None,
+            "violations": len(ident_violations),
+            "toleranceSeconds": IDENTITY_TOL,
+            # 落几个样本，便于直接看出「落在块外」长什么样（而不是只给个计数）
+            "unmappedSample": lat_ident["unmapped"][:3],
+            "detail": lat_ident["pairs"][:args.detail_limit],
         },
     }
 
@@ -969,6 +1075,25 @@ def summarize(results: list[dict]) -> dict:
         ),
         "wordLatencyMissingWords": sum(
             r.get("latency_word_based", {}).get("missingWords", 0) for r in ok
+        ),
+        # V6-6 恒等式覆盖（跨文件合计）。**四个数必须一起看**：
+        # 只报 mapped 会掩盖 unmapped；violations=0 而 mapped=0 是「没验」不是「通过」。
+        "latencyIdentityMapped": sum(
+            r.get("latency_identity", {}).get("mapped", 0) for r in ok
+        ),
+        "latencyIdentityUnmapped": sum(
+            r.get("latency_identity", {}).get("unmapped", 0) for r in ok
+        ),
+        "latencyIdentityViolations": sum(
+            r.get("latency_identity", {}).get("violations", 0) for r in ok
+        ),
+        "latencyIdentityWorstResidual": max(
+            [
+                r["latency_identity"]["worstResidual"]
+                for r in ok
+                if r.get("latency_identity", {}).get("worstResidual") is not None
+            ],
+            default=None,
         ),
         "byScenario": {
             k: {
@@ -1183,6 +1308,12 @@ def print_report(results: list[dict], summary: dict, notes: list[str]) -> None:
         f"      词级延迟（新口径，不依赖配对）覆盖 {summary.get('wordLatencyFiles')} 个文件｜"
         f"最差 p95 {summary.get('wordLatencyP95Max')}s｜"
         f"缺词锚点 {summary.get('wordLatencyMissingWords')} 条"
+    )
+    print(
+        f"      恒等式校验（新−旧 == 静音尾巴，V6-6）映射 {summary.get('latencyIdentityMapped')} 条｜"
+        f"未映射 {summary.get('latencyIdentityUnmapped')} 条｜"
+        f"违例 {summary.get('latencyIdentityViolations')} 条｜"
+        f"最差残差 {summary.get('latencyIdentityWorstResidual')}s"
     )
     if summary.get("filesWithMoreSubtitlesThanSegments"):
         print(

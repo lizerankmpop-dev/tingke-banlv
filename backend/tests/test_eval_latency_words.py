@@ -317,7 +317,192 @@ def test_missing_words_guard_present(ev):
 
     用源码级断言守住这条 —— 行为级断言（测试 3.3）能证明现在的行为对，
     这条能证明「跳过」这个决定没有被改成「补 0」。
+
+    ⚠️ **判据必须是计数，不能是 `in`**：V6-6 新增的 `words_latency_by_block()`
+    里也有一行同样的守卫，于是 `"if anchor is None:" in src` 会被它**顺手满足** ——
+    把 `words_latency` 里的守卫改成 `is 0` 之后断言照样绿（探针 D5 实测漏掉，
+    正是教训 2 的又一次现形）。两处守卫都要在，所以要求计数 >= 2。
     """
     src = SCRIPT.read_text(encoding="utf-8")
-    assert "if anchor is None:" in src
+    n_guard = src.count("if anchor is None:")
+    assert n_guard >= 2, (
+        f"`if anchor is None:` 应同时出现在 words_latency 与 words_latency_by_block 里，"
+        f"实际只有 {n_guard} 处 —— 有一处守卫被改掉了"
+    )
     assert "return None" in src  # word_end_seconds 的「不可得」语义
+
+
+# ============ 6. V6-6：1:N 的「whisper 段 → VAD 块」时间包含映射 ============
+#
+# D2 的两条残留缺口（known_defects §五）：
+#   ❌ `long`(56 块→100 字幕) / `real`(63→86) 的恒等式不可校验（旧口径配不上）；
+#   ❌ 新口径逐字幕，不区分首段/续段，按块聚合需另加映射。
+#
+# 修法不是放宽 `pair()`（那会产出错位但看似合理的延迟，第 5 节已反向锁死），
+# 而是换一个在 1:N 下**恒有答案**的问题：「这条字幕落在哪个 VAD 块里」。
+
+
+def test_block_map_covers_one_to_many(ev):
+    """**V6-6 的核心断言**：1 个 VAD 块含 3 条 whisper 段时，三条都能映射回
+    同一个块，且恒等式**逐条**成立。
+
+    这是长样本唯一能校验恒等式的方式。同时验证映射规则②：
+    「块尾静音归块内最后一条字幕」是**结论**而不是规定 ——
+    块 [0, 6.0]，三条词尾 1.0 / 3.0 / 5.5 ⇒ tail = 5.0 / 3.0 / 0.5，
+    最后一条最小（其余两条的差值 = 块尾 + 它们各自词后的静音）。
+    """
+    r = ev.Recorder()
+    r.feed_t0 = 50.0
+    r.on_segment(None, 0.0, 6.0)
+    for i, (s, e) in enumerate([(0.5, 1.0), (2.0, 3.0), (4.0, 5.5)]):
+        r.on_subtitle(f"第{i}段", [{"start": s, "end": e}])
+    r.subtitles[0]["pushWall"] = 56.2
+    r.subtitles[1]["pushWall"] = 58.4
+    r.subtitles[2]["pushWall"] = 60.1
+
+    # 旧口径在 1:N 下返回空 —— 这正是长样本恒等式「原理上不可校验」的原因
+    assert r.pair() == []
+
+    m = r.words_latency_by_block()
+    assert len(m["pairs"]) == 3, "三条字幕都该映射到那一个块"
+    assert {p["segIndex"] for p in m["pairs"]} == {0}
+    assert m["unmapped"] == [] and m["overlapped"] == []
+
+    tails = [p["tail"] for p in m["pairs"]]
+    assert tails == pytest.approx([5.0, 3.0, 0.5])
+    assert min(tails) == tails[-1], "块尾静音应归块内**最后一条**字幕"
+
+    for p in m["pairs"]:
+        assert p["residual"] == pytest.approx(0.0), "恒等式逐条成立"
+        assert p["latencyNew"] >= p["latencyOld"], "方向性：新口径恒 >= 旧口径"
+        assert p["tail"] >= 0
+
+
+def test_block_map_marks_out_of_range_as_unmapped(ev):
+    """规则③：词尾落在**所有块之外** ⇒ unmapped，不参与恒等式，但**计入报告**。
+
+    不得静默丢弃 —— 否则「验了几条 / 漏了几条」在报告里看不出来（教训 14）。
+    """
+    r = ev.Recorder()
+    r.feed_t0 = 10.0
+    r.on_segment(None, 0.0, 2.0)
+    r.on_subtitle("块外", [{"start": 3.0, "end": 4.0}])  # 词尾 4.0 > 块尾 2.0
+    r.subtitles[0]["pushWall"] = 20.0
+
+    m = r.words_latency_by_block()
+    assert m["pairs"] == []
+    assert len(m["unmapped"]) == 1
+    assert m["unmapped"][0]["audioWordsEnd"] == pytest.approx(4.0)
+    # 反过来说明 unmapped 不是「没查到就跳过」：它是**有明确坐标**的落空
+    assert m["unmapped"][0]["index"] == 0
+
+
+def test_block_map_overlap_takes_earliest(ev):
+    """规则④：命中多个块（区间重叠，正常不该发生）⇒ 取**最早**那个并记 overlapped。
+
+    随便挑一个会让数字看起来正常 —— 那正是这类缺陷难被发现的原因。
+    """
+    r = ev.Recorder()
+    r.feed_t0 = 1000.0
+    r.on_segment(None, 0.0, 5.0)
+    r.on_segment(None, 3.0, 8.0)  # 与上一个在 [3, 5] 重叠
+    r.on_subtitle("重叠区", [{"start": 3.5, "end": 4.0}])
+    r.subtitles[0]["pushWall"] = 1010.0
+
+    m = r.words_latency_by_block()
+    assert len(m["pairs"]) == 1
+    assert m["pairs"][0]["segIndex"] == 0, "必须取最早那个块（可预测），而不是随机的"
+    assert len(m["overlapped"]) == 1
+    assert m["overlapped"][0]["hitIndexes"] == [0, 1]
+
+
+def test_block_map_skips_missing_anchor_without_counting_as_unmapped(ev):
+    """缺词级锚点的字幕：既不算 mapped 也不算 unmapped —— 它由 `missingWords` 单独计数。
+
+    两条路径**必须分开记**：混在一起会让「引擎没给词时间戳」（工具/引擎问题）
+    看起来像「映射规则不覆盖」（本项问题），把诊断引到错的方向。
+    """
+    r = ev.Recorder()
+    r.feed_t0 = 1.0
+    r.on_segment(None, 0.0, 3.0)
+    r.on_subtitle("有锚", [{"start": 1.0, "end": 2.0}])
+    r.on_subtitle("无锚", [])
+    r.subtitles[0]["pushWall"] = 5.0
+    r.subtitles[1]["pushWall"] = 5.1
+
+    m = r.words_latency_by_block()
+    assert len(m["pairs"]) == 1
+    assert m["unmapped"] == [], "缺锚不是「落在块外」，不该混进 unmapped"
+    # 与 words_latency 的口径一致：缺锚 = subtitles - words_latency
+    assert len(r.subtitles) - len(r.words_latency()) == 1
+
+
+def test_block_map_empty_before_feed_start(ev):
+    """边界：还没开始喂入（feed_t0 未设）⇒ 空结果，且结构与正常路径一致。
+
+    返回 `{}` 会让调用方 `.get("pairs")` 静默拿到 None；三个键必须在任何
+    路径下都存在（教训 22：形状不齐的返回值是隐藏的 None 炸弹）。
+
+    ⚠️ 顺带锁定一个**既有语义**：判据是 `if not self.feed_t0`（falsy），
+    所以 `feed_t0 == 0.0` 也会走这条空路径 —— 与 `words_latency()` 完全一致。
+    现实中 `feed_t0` 取自 `time.perf_counter()`，不可能恰好为 0，因此这不是
+    可达缺陷；但测试必须用**非零**值构造，否则会踩到它（本项首版就是这样红的）。
+    """
+    r = ev.Recorder()
+    r.on_segment(None, 0.0, 1.0)
+    r.on_subtitle("x", [{"start": 0.0, "end": 1.0}])
+    empty = {"pairs": [], "unmapped": [], "overlapped": []}
+    assert r.words_latency_by_block() == empty  # feed_t0 未设（None）
+    r.feed_t0 = 0.0
+    assert r.words_latency_by_block() == empty, "0.0 也是 falsy ⇒ 与未设同路径"
+    assert r.words_latency() == [], "两套方法在这条边界上口径必须一致"
+
+
+def test_block_map_tail_is_block_end_minus_anchor(ev):
+    """语义守卫：`tail` 必须是 `seg.audioEnd - audioWordsEnd`（块尾减词尾）。
+
+    若写成 `anchor - seg.audioEnd`（反了）会得到负 tail，进而把恒等式变成
+    「新 + 旧 == 0」这种荒唐、却可能悄悄通过的式子（教训 5：反向断言）。
+    """
+    r = ev.Recorder()
+    r.feed_t0 = 1000.0
+    r.on_segment(None, 0.0, 10.0)
+    r.on_subtitle("尾", [{"start": 6.0, "end": 7.5}])
+    r.subtitles[0]["pushWall"] = 1015.0
+
+    p = r.words_latency_by_block()["pairs"][0]
+    assert p["tail"] == pytest.approx(2.5)
+    assert p["tail"] >= 0, "tail 是静音尾巴，不可能为负"
+    assert p["latencyNew"] - p["latencyOld"] == pytest.approx(p["tail"])
+
+
+def test_identity_tolerance_is_tight(ev):
+    """容差守卫：`IDENTITY_TOL` 要**小到能抓真实缺陷**、**大到不误报舍入**。
+
+    真实缺陷（锚点取反 / 忘减静音尾巴 / 映射到相邻块）的偏差是**秒级**或
+    符号为负；而实现两边都 round 到 3 位小数 ⇒ 舍入余量 ≤ ±0.001。
+    容差一旦被调到 1.0，半秒的错位就会被放过 —— 那不是容差，是关掉校验。
+    """
+    assert 0.001 <= ev.IDENTITY_TOL <= 0.02, (
+        f"IDENTITY_TOL={ev.IDENTITY_TOL} 超出合理区间 [0.001, 0.02]"
+    )
+
+
+def test_identity_field_wired_into_report_and_summary(ev):
+    """接线守卫：`latency_identity` 必须**既落进单文件结果、又被顶层汇总消费**，
+    且四个汇总键都要出现在打印段（只在结果里写、汇总不读 ⇒ 报告首页看不见）。
+
+    ⚠️ **判据必须区分「结果字段」与「汇总读取」两处**：只数 `"latency_identity"`
+    的总出现次数是不够的 —— summarize 里有 4 处 `r.get(...)`，把**结果字段**改名后
+    总数仍有 4，断言照样绿（探针 E7 实测漏掉，教训 2）。所以两处分别判。
+    """
+    src = SCRIPT.read_text(encoding="utf-8")
+    assert '        "latency_identity": {' in src, (
+        "结果字段 `latency_identity` 丢了（改名 / 删掉）—— 汇总将永远读到空 dict"
+    )
+    n_read = src.count('r.get("latency_identity"')
+    assert n_read >= 4, f"汇总应读取 mapped/unmapped/violations/worstResidual 四项，实际 {n_read} 处"
+    for key in ("latencyIdentityMapped", "latencyIdentityUnmapped",
+                "latencyIdentityViolations", "latencyIdentityWorstResidual"):
+        assert src.count(key) >= 2, f"汇总键 {key} 应同时被定义与打印，实际 {src.count(key)} 处"
+    assert src.count("words_latency_by_block()") >= 1

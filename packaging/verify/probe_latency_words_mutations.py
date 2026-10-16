@@ -97,6 +97,40 @@ ANCHOR_GUARD_OFF = "            if anchor is 0:"
 WIRE_ANCHOR_OLD = "        audio_words_end = word_end_seconds(words)"
 WIRE_ANCHOR_ZERO = "        audio_words_end = 0.0"
 
+# --- E 组：V6-6 的「whisper 段 → VAD 块」时间包含映射（1:N 恒等式）---
+# 这一组的共同特征：**1:1 的格永远看不出问题**（lowvol / multi），
+# 只有 `long` / `real` 那样的 1:N 格才会暴露 —— 所以每条都必须有分辨力。
+HITS_OLD = "            seg = hits[0]"
+HITS_LAST = "            seg = hits[-1]"
+
+TAIL_OLD = '            tail = round(seg["audioEnd"] - anchor, 3)'
+TAIL_REVERSED = '            tail = round(anchor - seg["audioEnd"], 3)'
+
+RESIDUAL_OLD = '                    "residual": round((lat_new - lat_old) - tail, 3),'
+RESIDUAL_PLUS = '                    "residual": round((lat_new - lat_old) + tail, 3),'
+
+UNMAPPED_OLD = """            if not hits:
+                unmapped.append({"index": sub["index"], "audioWordsEnd": anchor})
+                continue"""
+UNMAPPED_SILENT = """            if not hits:
+                continue"""
+
+OVERLAP_OLD = """            if len(hits) > 1:
+                overlapped.append("""
+OVERLAP_SILENT = """            if False:
+                overlapped.append("""
+
+TOL_OLD = "IDENTITY_TOL = 0.005"
+TOL_LOOSE = "IDENTITY_TOL = 1.0"
+
+IDENT_FIELD_OLD = '        "latency_identity": {'
+IDENT_FIELD_RENAMED = '        "latency_identity_mutated": {'
+
+BLOCK_GUARD_OLD = """        if not self.feed_t0:
+            return {"pairs": [], "unmapped": [], "overlapped": []}"""
+BLOCK_GUARD_OFF = """        if False:
+            return {"pairs": [], "unmapped": [], "overlapped": []}"""
+
 # (变异名, 原文锚点, 替换成, 必须变红的用例)
 MUTATIONS: list[tuple[str, str, str, str]] = [
     (
@@ -179,6 +213,54 @@ MUTATIONS: list[tuple[str, str, str, str]] = [
         WIRE_ANCHOR_OLD,
         WIRE_ANCHOR_ZERO,
         "test_on_subtitle_without_words_marks_none_not_zero",
+    ),
+    (
+        "E1. 块映射取**最晚**命中的块而不是最早（区间重叠时结果不可预测）",
+        HITS_OLD,
+        HITS_LAST,
+        "test_block_map_overlap_takes_earliest",
+    ),
+    (
+        "E2. 静音尾巴算反（块尾−词尾 → 词尾−块尾，得到负尾巴）",
+        TAIL_OLD,
+        TAIL_REVERSED,
+        "test_block_map_tail_is_block_end_minus_anchor",
+    ),
+    (
+        "E3. 恒等式残差的符号写反（− 尾巴 → + 尾巴）—— 残差不再恒为 0",
+        RESIDUAL_OLD,
+        RESIDUAL_PLUS,
+        "test_block_map_covers_one_to_many",
+    ),
+    (
+        "E4. 落在块外的字幕被**静默丢弃**（「验了几条 / 漏了几条」从报告里消失）",
+        UNMAPPED_OLD,
+        UNMAPPED_SILENT,
+        "test_block_map_marks_out_of_range_as_unmapped",
+    ),
+    (
+        "E5. 区间重叠不再记录（最该排查的异常被吞掉）",
+        OVERLAP_OLD,
+        OVERLAP_SILENT,
+        "test_block_map_overlap_takes_earliest",
+    ),
+    (
+        "E6. 恒等式容差被放大到 1.0 秒（半秒的错位会被放过）",
+        TOL_OLD,
+        TOL_LOOSE,
+        "test_identity_tolerance_is_tight",
+    ),
+    (
+        "E7. `latency_identity` 字段改名（恒等式落了盘却没人读）",
+        IDENT_FIELD_OLD,
+        IDENT_FIELD_RENAMED,
+        "test_identity_field_wired_into_report_and_summary",
+    ),
+    (
+        "E8. 去掉块映射的 feed_t0 守卫（未开始喂入时算出假延迟）",
+        BLOCK_GUARD_OLD,
+        BLOCK_GUARD_OFF,
+        "test_block_map_empty_before_feed_start",
     ),
 ]
 
