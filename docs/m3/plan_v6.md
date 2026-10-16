@@ -608,13 +608,41 @@ package.json → app.getVersion() → 'diag:get-info' → preload diag.getInfo
 | # | 门禁 | 命令 / 口径 | 通过判据 |
 |---|---|---|---|
 | **C-1a** | 全量测试 | `pytest backend/tests/ -q` | 通过数 ≥ 445，**失败 0**，仅允许既有 1 skip |
-| **C-1b** | 变异探针 | `packaging/verify/probe_*.py`（9 个探针） | **全部捕获**（基线 22 条 + 本轮新增） |
+| **C-1b** | 变异探针 | `packaging/verify/probe_*.py`（**10 个探针 / 120 条变异**） | **全部捕获**（逐探针条数见下方运行记录） |
 | **C-1c** | 前端 | `npm --prefix frontend run test` + `npm --prefix frontend run build` | `tsc` 无错、前端测试全绿 |
 | **C-2** | 七格识别 | §16.3 口径，7 格 × {`zh`, `auto`}，`--realtime` | 七格全通过；`zh` 四格锚点**逐位复现**；`auto` 与 `zh` **提示词逐项同构** |
 | **C-3** | 真机 e2e | 安装段 + 运行时 E1~E4 + 内容层 C1~C4 + **C5（V6-1 提示条可见性）** + **C6（V6-2 帮助面板）** | 全部 OK（基线 21 条 + C5 + C6）；繁体 **0**；低置信正确降级 |
 | **C-4** | L4 安装包验收 | `scripts/verify_install.py --installer <setup.exe> --hold 150 --expect-sha256 <hex> --report <out>` | **连跑 3 次全通过**（D6 修好后不应再出现阻断；若 V6-7 未修则此门禁不适用） |
 | **C-5** | 双副本对拍 | `_mirror_sync.py` → `_mirror_check.py` | `diff=0 miss=0`（基准 `git ls-files`，**不能用 `find`**） |
 | **C-6** | 换行符 | 逐文件核对 | 3 个 CRLF 例外保持 CRLF，其余 **loneLF 正常 / CRLF 0** |
+
+### C-1b 怎么跑（2026-10-16 实测的运行约束，**不是可选项**）
+
+变异探针是**原地改被测文件、跑完还原**。本机有三个会把它误伤成「探针报红」的坑：
+
+| # | 坑 | 症状（会伪装成什么） | 修法 |
+|---|---|---|---|
+| 1 | **并发** | 另一读/写同一文件的操作插进来 ⇒ 读到中间态；探针内置的「真身本应全绿」守卫会如实报成**不变量失败** | **严格串行**；跑前要求 `git status --porcelain` 为空；跑后**必须**再查一次（非空即停） |
+| 2 | 🔴 **批量删除守卫按「回合」累计** | `CODEBUDDY_SAFE_DELETE_BULK_THRESHOLD=50`，计数存 `CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR`，**scope=turn（整个回合累计，不随命令重置）**。探针清理自己的临时模块到第 50 次删除就被拦 ⇒ 探针异常退出 ⇒ `finally` 还原**没执行** ⇒ 工作区留下 `backend/dictionary/_term_mut_*.py`（🔴 **在 `backend/` 打包作废区里**），同时「变红」被误读成「断言缺分辨力」 | **每个探针给一个全新的 `CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR`**：阈值仍是 50（守卫照旧生效），只是不让计数跨探针累加。实测修法有效（同一回合连跑时 `eval_source_kind` 会从 24/24 掉到 5/24，`phrases_and_truncate` 直接崩） |
+| 3 | **本机休眠** | 墙钟计时器照走 ⇒ 子进程 `subprocess.TimeoutExpired` 报出**离谱的耗时**（实测 **6341.8 s**）。与教训 16⑤ 同一形态 | 跑测期间保持机器唤醒；别把「耗时异常」当代码问题 |
+
+工具：`安装空间/_run_all_probes.py`（**串行 + 每探针独立计数状态目录 + 跑前跑后双查工作区 + 跑后查 `_term_mut_*` 残留**）。
+
+**逐探针实测（2026-10-16，全部 ✅）**
+
+| 探针 | 条数 | 探针 | 条数 |
+|---|---|---|---|
+| `ab_invalid_round` | 12/12 | `latency_words` | 21/21 |
+| `compat_relaunch` | 7/7 | `phrases_and_truncate` | 6/6 |
+| `eval_source_kind` | 24/24 | `preproof` | 9/9 |
+| `lang_simp` | 22/22 | `verify_install_artifact` | 5/5 |
+| `language_plumbing` | 7/7 ※ | `verify_install_log` | 7/7 |
+
+※ `language_plumbing` 的 M3 锚点曾**漂移**：`pipeline.py` 重构成 `backend/asr/pipeline.py`，
+且该调用点的 `language=` 实参从 `self.course_config.get("language","auto")` 换成
+`language if language is not None else self._terminology_language()`（V5-8 起语种另有来源）。
+探针如实报「**变异锚点未找到（源码已变，请更新探针）**」并把 M3 记成漏网 ——
+属**探针失配**（教训 13），不是断言缺分辨力、也不是生产代码漏传。锚点已同步更新。
 
 **C5 的定义（V6-1 引入，2026-10-12）**：真机点进课程配置页，断言
 ① `[data-testid="course-config-hint"]` 存在且可见；② 三项文案都在 DOM 里；

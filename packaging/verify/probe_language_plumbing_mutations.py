@@ -10,6 +10,16 @@
 让两个代码锚点下发的提示词 **md5 逐字节相同**，整组对照变成空实验，
 还被当成「修复已验证」写进了报告。
 
+⚠️ **2026-10-16 维护记录（教训 13：重构会让探针失效，且表现为「漏掉」）**
+`pipeline.py` 已重构成 **`backend/asr/pipeline.py`**，且 M3 那个调用点的 `language=`
+实参从 `self.course_config.get("language", "auto")` 换成了
+`language if language is not None else self._terminology_language()`（V5-8 起术语层语种
+另有来源，探测结果优先）。M3 的锚点文本因此匹配不上，探针如实报出
+「**变异锚点未找到（源码已变，请更新探针）**」并把 M3 记成漏网 —— 这是**探针失配**，
+不是断言缺分辨力，也不是生产代码少了透传。锚点与文件路径已同步更新。
+⇒ 判据：探针报「漏掉」时，**先看它是「改不动」还是「改得动但没红」** —— 前者是漂移，
+后者才是缺陷。
+
 所以本轮新增的断言必须逐条证明「变异它就会红」，否则它们只是好看的装饰。
 
 ## 探针怎么工作
@@ -72,10 +82,11 @@ MUTATIONS: list[tuple[str, str, str, str, str]] = [
         NODE_PREVIEW,
     ),
     (
-        "M3 术语热更新漏传 language（pipeline.py:143）",
+        "M3 术语热更新漏传 language（asr/pipeline.py:181）",
         "backend/asr/pipeline.py",
-        '                discovered_terms=self._discovered_terms,\n                language=self.course_config.get("language", "auto"),\n',
-        "                discovered_terms=self._discovered_terms,\n",
+        "            discovered_terms=self._discovered_terms,\n"
+        "            language=language if language is not None else self._terminology_language(),\n",
+        "            discovered_terms=self._discovered_terms,\n",
         NODE_HOTUPDATE,
     ),
     (
