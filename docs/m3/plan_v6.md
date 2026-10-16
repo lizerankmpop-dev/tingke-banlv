@@ -672,6 +672,32 @@ Zustand 的 `view` 驱动（`App.tsx` 有意让路由只区分三个独立入口
 | 7 | 跑 C-1 ~ C-4 | 全部通过才继续 |
 | 8 | 文档 + 提交 + tag | `known_defects.md`（D6 关闭）+ `WER_REPORT_PLAN.md` §17 + `backlog_v350.md` §十四 + 本方案；commit 后 `git tag -a v3.6.0` |
 
+### 打包怎么跑（2026-10-16 实测的运行约束，**不是可选项**）
+
+打包链路里有三件事**会静默产出错包**，与 C-1b 那三个坑同源（都是环境而不是代码）：
+
+| # | 坑 | 症状（会伪装成什么） | 修法 |
+|---|---|---|---|
+| 1 | 🔴 **PyInstaller `COLLECT` 被批量删除守卫打断** | 守卫统计**被删除的条目数**（`CODEBUDDY_SAFE_DELETE_BULK_THRESHOLD=50`，计数存 `CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR`，`scope=turn`）；触发有两条路：**单次巨量删除**（`COLLECT` 一次清 816 个旧条目 ⇒ 在 `count=815/816` 处被拦）或**同回合内多次小删除累计到 50**。**日志照样写 "completed successfully"**，但 `packaging/out/backend-server/` 里仍是**上一个版本**的 exe ⇒ 完全坐实教训 4（打包后必须查产物大小/md5，不能信日志） | **移动而不是删除**：`mv packaging/out/backend-server 安装空间/_stale_v350_backend`，让 `COLLECT` 从空目录开始（条目数 0 < 阈值），重跑 rc=0 |
+| 2 | 🔴 **`electron-builder` 会清 `frontend/release/win-unpacked`，`vite build` 会清 `frontend/dist`** | 这两个目录被清后，若需要回退对比就再也拿不到上一版的中间产物 | 打包前**先 `mv`** 成 `win-unpacked.pre360` / `dist.pre360`（同样移动不删除） |
+| 3 | 🔴 **`dist.pre360` 不在 `.gitignore` 覆盖范围内** | `.gitignore` 只写了 `dist`（精确匹配），`dist.pre360/` 会被 `git status` 报成未跟踪 ⇒ 看起来像「打包污染了仓库」 | 确认内容无价值后删除（仅 3 个文件，低于守卫阈值）；下次直接移出仓库 |
+
+⚠️ `mv` 会改变文件 mtime。Git 不记录 mtime，但**归档/对拍类校验若按时间戳判断会失真**（实测 `packaging/out/backend-server.pre360` 的 mtime 被 `cp -r` 改成打包当天）。
+
+**v3.6.0 实测数字（2026-10-16）**
+
+| 项 | 值 |
+|---|---|
+| `tingkebanlv-server.exe`（冻结后端） | **21,739,259 B** / md5 `712688224028d4e22b5b5f5511cf358a`（≠ v3.5.0 的 `34a75c44…`，**这就是轮子确实换了的证据**） |
+| 包内冒烟 | `/api/ping → {"ok":true,"pid":904,"version":"3.6.0"}`，2.6 s 就绪 ✅ |
+| `tingkebanlv-3.6.0-setup.exe` | **302,593,365 B** / md5 `7e87f7da47618b37b5a0e7dfbfa9e10e` / sha256 `631a5f4d…290df5` |
+| `…setup.exe.blockmap` | **314,484 B** / md5 `ac10725954167d40133d19718cf4beba` |
+| `app.asar` | 34,148,003 B / md5 `de54aae56ebc82cb1bd7de36a4d191e1` |
+| 归档 `_frozen_v360/` | `MANIFEST.json`，`archiveVerify.allMatch = true`（813 文件 / 278,538,359 B；whisper_models 6 文件 / 147,883,711 B） |
+| v3.5.0 归档未变 | `_frozen_v341/` md5 `bf0af680c3851e3513fe4a3294a4413f` ✅ |
+
+工具：`安装空间/_b360_archive.py`（由 `_b350_archive.py` 改 `VER` / `_frozen_v360` 而来）。
+
 🔴 **禁止事项**
 - 不改 v3.4.1 / v3.5.0 的已冻结交付物（任何改动都会作废其 L4 与 e2e 结论）；
 - 不把 `packaging/eval/` 转为跟踪；
