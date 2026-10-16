@@ -3,7 +3,7 @@
   "productName": "听课伴侣",
   "description": "实时识别视频音频并生成可点击学习单词的字幕",
   "author": "听课伴侣",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "private": true,
   "type": "module",
   "scripts": {
