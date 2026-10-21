@@ -605,16 +605,36 @@ package.json → app.getVersion() → 'diag:get-info' → preload diag.getInfo
 
 ## 5. 发布门禁（发布 v3.6.0 前必须全绿）
 
-| # | 门禁 | 命令 / 口径 | 通过判据 |
-|---|---|---|---|
-| **C-1a** | 全量测试 | `pytest backend/tests/ -q` | 通过数 ≥ 445，**失败 0**，仅允许既有 1 skip |
-| **C-1b** | 变异探针 | `packaging/verify/probe_*.py`（**10 个探针 / 120 条变异**） | **全部捕获**（逐探针条数见下方运行记录） |
-| **C-1c** | 前端 | `npm --prefix frontend run test` + `npm --prefix frontend run build` | `tsc` 无错、前端测试全绿 |
-| **C-2** | 七格识别 | §16.3 口径，7 格 × {`zh`, `auto`}，`--realtime` | 七格全通过；`zh` 四格锚点**逐位复现**；`auto` 与 `zh` **提示词逐项同构** |
-| **C-3** | 真机 e2e | 安装段 + 运行时 E1~E4 + 内容层 C1~C4 + **C5（V6-1 提示条可见性）** + **C6（V6-2 帮助面板）** | 全部 OK（基线 21 条 + C5 + C6）；繁体 **0**；低置信正确降级 |
-| **C-4** | L4 安装包验收 | `scripts/verify_install.py --installer <setup.exe> --hold 150 --expect-sha256 <hex> --report <out>` | **连跑 3 次全通过**（D6 修好后不应再出现阻断；若 V6-7 未修则此门禁不适用） |
-| **C-5** | 双副本对拍 | `_mirror_sync.py` → `_mirror_check.py` | `diff=0 miss=0`（基准 `git ls-files`，**不能用 `find`**） |
-| **C-6** | 换行符 | `安装空间/_c6_eol_check.py` | 见下方「C-6 怎么判」（**原表述「其余 loneLF 正常 / CRLF 0」不可测，已修正**） |
+> ✅ **实测状态（2026-10-21 收口）**：C-1a/C-1b/C-1c 打包前已过；**C-2 / C-3 / C-4 / C-6 全绿**；
+> C-5 提交前跑。完整记录见 [`WER_REPORT_PLAN.md`](../asr_eval/WER_REPORT_PLAN.md) **§17**。
+
+| # | 门禁 | 命令 / 口径 | 通过判据 | 实测 |
+|---|---|---|---|---|
+| **C-1a** | 全量测试 | `pytest backend/tests/ -q` | 通过数 ≥ 445，**失败 0**，仅允许既有 1 skip | ✅ **459 / 1 skip** |
+| **C-1b** | 变异探针 | `packaging/verify/probe_*.py`（**10 个探针 / 120 条变异**） | **全部捕获**（逐探针条数见下方运行记录） | ✅ **120/120** |
+| **C-1c** | 前端 | `npm --prefix frontend run test` + `npm --prefix frontend run build` | `tsc` 无错、前端测试全绿 | ✅ **205 / 0** |
+| **C-2** | 七格识别 | §16.3 口径，7 格 × {`zh`, `auto`}，`--realtime` | 七格全通过；`zh` 四格锚点**逐位复现**；`auto` 与 `zh` **提示词逐项同构** | ✅ **七格全对齐**（`clean` 稳态 0.1504 逐位复现 #175） |
+| **C-3** | 真机 e2e | 安装段 + 运行时 E1~E4 + 内容层 C1~C4 + **C5（V6-1 提示条可见性）** + **C6（V6-2 帮助面板）** | 全部 OK（基线 21 条 + C5 + C6）；繁体 **0**；低置信正确降级 | ✅ **全绿**（C1 基线改**同会话**对照；C5 关闭标记跨启动持久；C6 版本号 3.6.0 ≡ 安装包） |
+| **C-4** | L4 安装包验收 | `scripts/verify_install.py --installer <setup.exe> --hold 150 --expect-sha256 <hex> --report <out>` | **连跑 3 次全通过**（D6 修好后不应再出现阻断；若 V6-7 未修则此门禁不适用） | ✅ **3/3，关键失败 0**（62/59、61/58、58/55），**未注入 `TINGKEBANLV_ALLOW_MULTI`** |
+| **C-5** | 双副本对拍 | `_mirror_sync.py` → `_mirror_check.py` | `diff=0 miss=0`（基准 `git ls-files`，**不能用 `find`**） | ⏳ 提交前跑 |
+| **C-6** | 换行符 | `安装空间/_c6_eol_check.py` | 见下方「C-6 怎么判」（**原表述「其余 loneLF 正常 / CRLF 0」不可测，已修正**） | ✅ **通过** |
+| 图标 §8.5 | 产物层审计 | `scripts/icon_assets.py audit` | [1]–[4] 机器可判全绿；[5] 人工目检 5 项 | ✅ **[1]–[4]**；⏳ [5] 待人工 |
+
+### 5.1 本轮判据的两处修正（**教训 66 / 72**）
+
+🔴 **C-2 的 A2 判据从「含 `promptTokens`」改为「只看术语层配置」**：
+`promptTokens = prev_kept（上段识别文本）+ 术语层 + 简体引导语` 是**输出依赖量** ——
+它相等是**结果的副产品**，不能当「控制变量没变」的证据（教训 66）。
+`clean` 格实测 zh=74 / auto=42 两口径不一致，正是旧口径的缺陷。
+**新旧口径并列落盘**（`promptEquivalent` / `promptEquivalentLegacy`），A2 用术语层口径。
+
+🔴 **A2 必须有重复数据才成立，且重复格名单只有一份**：
+`long`/`real` 曾报「A1✗ A2✗ 未对齐」，根因是判定脚本的
+`if sc in ("clean","multi")` 白名单**写死**，读不到已跑完的 6 份重复产物 ⇒
+`spread=None` ⇒ 极差算成 `0.0` ⇒ 「|Δ| ≤ 0」必然否（教训 72）。
+**修法**：`REPEAT_SC` 从 `_c2_repeat_360.py` 直接 `import`，不在判定脚本里复述。
+补跑重复后：`long` 极差 0.0634 ≥ |Δ|=0.0283、`real` 极差 0.0644 ≥ |Δ|=0.0016 ⇒ **A2 通过**。
+⚠️ 「**极差 = 0**」与「跑过多次」矛盾时，先查读没读到，别解释成「这次特别稳定」。
 
 ### C-1b 怎么跑（2026-10-16 实测的运行约束，**不是可选项**）
 
