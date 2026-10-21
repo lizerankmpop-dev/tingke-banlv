@@ -1,0 +1,24 @@
+{
+  "kind": "REAL",
+  "sourceKind": "human-recording",
+  "note": "真人录音（高校课堂实录），含口音。kind=REAL 会被映射成 human-recording（scripts/eval_asr_quality.py:107）。🔴 accent 格刻意不合成 —— 合成集全是同一个 TTS 音源经信号处理劣化，无口音、无口误、无混响，测不出「口音」这个变量。",
+  "entries": [
+    {
+      "scenario": "accent",
+      "audio": "accent_zhlecture_bv117411m78e.wav",
+      "reference": "accent_zhlecture_bv117411m78e.preproof.txt",
+      "bvid": "BV117411m78E",
+      "clipRange": "00:30~11:00",
+      "part": "P1「第0章 课程介绍与基础知识」（1:26:18）",
+      "title": "偏微分方程（姜礼尚《数学物理方程讲义》第三版）",
+      "author": "马逍也",
+      "durationSeconds": 630.0,
+      "sampleRate": 16000,
+      "channels": 1,
+      "bitDepth": 16,
+      "silenceRatio": 0.22,
+      "consent": "仅用于本地项目内部评估，不再分发；含他人声音，故音频与逐字稿均不入库（见 .gitignore）",
+      "recordedAt": "2026-10-22"
+    }
+  ]
+}

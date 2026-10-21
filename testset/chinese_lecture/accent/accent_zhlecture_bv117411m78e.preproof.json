@@ -1,0 +1,817 @@
+{
+  "info": {
+    "audio": "accent_zhlecture_bv117411m78e.wav",
+    "durationSeconds": 630.0,
+    "durationMinutes": 10.5,
+    "vadSegments": 75,
+    "paragraphs": 26,
+    "mergedBlocks": 18,
+    "chars": 2338,
+    "elapsedSeconds": 155.9,
+    "promptEcho": {
+      "segmentsSeen": 70,
+      "segmentsDropped": 1,
+      "segmentsCleaned": 0,
+      "substringsRemoved": 0,
+      "charsRemoved": 0,
+      "enabled": true,
+      "inertReason": null,
+      "blacklistSize": 11
+    },
+    "engine": {
+      "model": "base",
+      "language": "zh",
+      "terms": "off",
+      "domain": "",
+      "promptChars": 0,
+      "degradeEvents": 0
+    },
+    "generatedAt": "2026-10-22T00:08:13",
+    "preproof": {
+      "fixes": [
+        {
+          "pattern": "是一往死写的",
+          "replacement": "是英文写的",
+          "count": 1,
+          "segments": [
+            0
+          ],
+          "note": "A档｜同段自证：前半句正在说「国外的一本英文教材」"
+        },
+        {
+          "pattern": "偏为方程",
+          "replacement": "偏微分方程",
+          "count": 2,
+          "segments": [
+            0,
+            1
+          ],
+          "note": "偏微分，本科/研究生阶段的通用叫法"
+        },
+        {
+          "pattern": "课程生物的内容",
+          "replacement": "课程本身的内容",
+          "count": 1,
+          "segments": [
+            1
+          ],
+          "note": "A档｜「生物」=「本身」同音崩坏；「对咱们这本课程本身」语法唯一"
+        },
+        {
+          "pattern": "计划独言",
+          "replacement": "计划读研",
+          "count": 1,
+          "segments": [
+            1
+          ],
+          "note": "dú yán 同音；上句刚说「研究生阶段」"
+        },
+        {
+          "pattern": "然后方程简称OD,对吧",
+          "replacement": "然后方程简称ODE,对吧",
+          "count": 1,
+          "segments": [
+            3
+          ],
+          "note": "A档｜补字，但常微分方程英文必是ODE；全稿仅此一处，pattern 含前后文以精确限定（实测原串标点是**半角逗号**，另有一版按全角写会零命中）"
+        },
+        {
+          "pattern": "就是一个议员。",
+          "replacement": "就是一个一元函数。",
+          "count": 1,
+          "segments": [
+            3
+          ],
+          "note": "同上，句末处独立出现"
+        },
+        {
+          "pattern": "偏微方程",
+          "replacement": "偏微分方程",
+          "count": 1,
+          "segments": [
+            3
+          ],
+          "note": "段4「什么是偏微方程」；偏「微分」缺「分」"
+        },
+        {
+          "pattern": "议员寒暑",
+          "replacement": "一元函数",
+          "count": 3,
+          "segments": [
+            3,
+            5
+          ],
+          "note": "长模式优先于上面的「寒暑」，避免留下「一元函数」"
+        },
+        {
+          "pattern": "长微方程",
+          "replacement": "常微分方程",
+          "count": 1,
+          "segments": [
+            3
+          ],
+          "note": "长 cháng → 常；下文明说「然后方程简称ODE」可证"
+        },
+        {
+          "pattern": "寒暑",
+          "replacement": "函数",
+          "count": 11,
+          "segments": [
+            3,
+            4,
+            5,
+            14
+          ],
+          "note": "口音把整个「函数」词族带偏，全篇 18 处；候选由领域上下文定死"
+        },
+        {
+          "pattern": "一个位置的议员,寒暑求解",
+          "replacement": "一个位置的一元函数求解",
+          "count": 1,
+          "segments": [
+            4
+          ],
+          "note": "同上"
+        },
+        {
+          "pattern": "形势化",
+          "replacement": "形式化",
+          "count": 3,
+          "segments": [
+            4
+          ],
+          "note": "长模式优先于「形势」"
+        },
+        {
+          "pattern": "电量T",
+          "replacement": "自变量 t",
+          "count": 1,
+          "segments": [
+            4
+          ],
+          "note": "A档｜「电量」=「自变量」音近；全篇讲 u=f(x,t)"
+        },
+        {
+          "pattern": "导术",
+          "replacement": "导数",
+          "count": 2,
+          "segments": [
+            4,
+            17
+          ],
+          "note": "dào shù"
+        },
+        {
+          "pattern": "形势",
+          "replacement": "形式",
+          "count": 2,
+          "segments": [
+            4
+          ],
+          "note": "xíng shì 同音"
+        },
+        {
+          "pattern": "PD议",
+          "replacement": "PDE",
+          "count": 1,
+          "segments": [
+            5
+          ],
+          "note": "偏微分方程英文缩写；同段紧跟「常微分方程简称ODE」"
+        },
+        {
+          "pattern": "行事化",
+          "replacement": "形式化",
+          "count": 2,
+          "segments": [
+            5
+          ],
+          "note": "xíng shì huà；段6「行事化的方程」「行事化函数」"
+        },
+        {
+          "pattern": "x 机上xxxxm",
+          "replacement": "x_1, x_2, …, x_m",
+          "count": 1,
+          "segments": [
+            6
+          ],
+          "note": "A档｜公式唯一 + 下句「这个 m 个变量」自证"
+        },
+        {
+          "pattern": "变了有关系",
+          "replacement": "变量有关系",
+          "count": 1,
+          "segments": [
+            6
+          ],
+          "note": "同音"
+        },
+        {
+          "pattern": "变导",
+          "replacement": "变量",
+          "count": 1,
+          "segments": [
+            6
+          ],
+          "note": "同音"
+        },
+        {
+          "pattern": "优",
+          "replacement": "u",
+          "count": 9,
+          "segments": [
+            6,
+            22,
+            23
+          ],
+          "note": "12 处，全部是未知函数 u（含「低优」「反优」）"
+        },
+        {
+          "pattern": "订了一个多重指标",
+          "replacement": "引入一个多重指标",
+          "count": 1,
+          "segments": [
+            7
+          ],
+          "note": "A档｜「订」=「引」同音；「订了一个」不成句"
+        },
+        {
+          "pattern": "这个地形",
+          "replacement": "这个形式",
+          "count": 1,
+          "segments": [
+            9
+          ],
+          "note": "A档｜「地形」=「形式」崩坏；本段讲记号形式"
+        },
+        {
+          "pattern": "偏导树",
+          "replacement": "偏导数",
+          "count": 2,
+          "segments": [
+            9
+          ],
+          "note": "piān dǎo shù"
+        },
+        {
+          "pattern": "第1零",
+          "replacement": "α",
+          "count": 2,
+          "segments": [
+            9
+          ],
+          "note": "A档｜本段讲多重指标；前面已出现「阿尔法」"
+        },
+        {
+          "pattern": "省恋这个地的上角标1",
+          "replacement": "省略这个 α 的上角标 1",
+          "count": 1,
+          "segments": [
+            10
+          ],
+          "note": "A档｜α 的上标省略是标准记号"
+        },
+        {
+          "pattern": "R2的结束都等于你",
+          "replacement": "|α| 的阶数都等于 n",
+          "count": 1,
+          "segments": [
+            11
+          ],
+          "note": "A档｜同上；下句「一阶偏导」自证"
+        },
+        {
+          "pattern": "XI",
+          "replacement": "x_i",
+          "count": 1,
+          "segments": [
+            11
+          ],
+          "note": "下标；多重指标记号"
+        },
+        {
+          "pattern": "片脑",
+          "replacement": "偏导",
+          "count": 1,
+          "segments": [
+            11
+          ],
+          "note": "piān dǎo；「关于XI的一阶片脑」"
+        },
+        {
+          "pattern": "形式还函数",
+          "replacement": "形式化函数",
+          "count": 1,
+          "segments": [
+            14
+          ],
+          "note": "A档｜全篇统一用「形式化」（段4/5 已 fix 过）"
+        },
+        {
+          "pattern": "PD1",
+          "replacement": "PDE",
+          "count": 2,
+          "segments": [
+            14
+          ],
+          "note": "同「PD议」，变体；段15"
+        },
+        {
+          "pattern": "形声",
+          "replacement": "形式",
+          "count": 1,
+          "segments": [
+            14
+          ],
+          "note": "xíng shēng → 形 shì"
+        },
+        {
+          "pattern": "Sigma",
+          "replacement": "Σ",
+          "count": 3,
+          "segments": [
+            16,
+            17,
+            18
+          ],
+          "note": "同一个符号的另一写法"
+        },
+        {
+          "pattern": "技术",
+          "replacement": "系数",
+          "count": 2,
+          "segments": [
+            16
+          ],
+          "note": "「前面加上一个技术」——线性方程的标准说法是系数"
+        },
+        {
+          "pattern": "球盒",
+          "replacement": "求和",
+          "count": 5,
+          "segments": [
+            16,
+            17,
+            18,
+            21
+          ],
+          "note": "qiú hé 同音（Sigma球盒 / C 码球盒）"
+        },
+        {
+          "pattern": "编辆",
+          "replacement": "变量",
+          "count": 1,
+          "segments": [
+            16
+          ],
+          "note": "biàn liàng"
+        },
+        {
+          "pattern": "韩术",
+          "replacement": "函数",
+          "count": 1,
+          "segments": [
+            16
+          ],
+          "note": "函数词族的另一支"
+        },
+        {
+          "pattern": "细术",
+          "replacement": "系数",
+          "count": 1,
+          "segments": [
+            17
+          ],
+          "note": "「偏导术前面的细术」"
+        },
+        {
+          "pattern": "线线组合",
+          "replacement": "线性组合",
+          "count": 1,
+          "segments": [
+            18
+          ],
+          "note": "同音"
+        },
+        {
+          "pattern": "一支",
+          "replacement": "已知",
+          "count": 2,
+          "segments": [
+            18,
+            19
+          ],
+          "note": "yī zhī 已知；「GX也是一支的」"
+        },
+        {
+          "pattern": "幽",
+          "replacement": "u",
+          "count": 3,
+          "segments": [
+            18
+          ],
+          "note": "「跟幽没有关系」；未知函数 u"
+        },
+        {
+          "pattern": "PVE",
+          "replacement": "PDE",
+          "count": 1,
+          "segments": [
+            19
+          ],
+          "note": "同「PD议」，变体；段20"
+        },
+        {
+          "pattern": "3mm零礼尔",
+          "replacement": "semi-linear",
+          "count": 2,
+          "segments": [
+            20
+          ],
+          "note": "零礼尔 líng lǐ ěr → linear；ASR 把semi 听成 3mm"
+        },
+        {
+          "pattern": "寒罪高阶导数",
+          "replacement": "含有高阶导数",
+          "count": 1,
+          "segments": [
+            20
+          ],
+          "note": "A档｜「寒罪」=「含有」；下句即「最高阶导数的部分」"
+        },
+        {
+          "pattern": "半线型",
+          "replacement": "半线性",
+          "count": 1,
+          "segments": [
+            20
+          ],
+          "note": "数学术语"
+        },
+        {
+          "pattern": "主步",
+          "replacement": "主部",
+          "count": 3,
+          "segments": [
+            20
+          ],
+          "note": "数学术语 principal part"
+        },
+        {
+          "pattern": "现行",
+          "replacement": "线性",
+          "count": 3,
+          "segments": [
+            20,
+            21
+          ],
+          "note": "xiàn xíng → 线性；含「现行表出」「现行的」「跟现行相比」"
+        },
+        {
+          "pattern": "所有的大恩街的偏导数是线性的一个形式",
+          "replacement": "所有 n 阶的偏导数是线性的形式",
+          "count": 1,
+          "segments": [
+            22
+          ],
+          "note": "A档｜`大恩街`=「n 阶的」；同句「是线性的」自证"
+        },
+        {
+          "pattern": "现性",
+          "replacement": "线性",
+          "count": 1,
+          "segments": [
+            22
+          ],
+          "note": "xiàn xíng 变体（段22）"
+        },
+        {
+          "pattern": "韩数",
+          "replacement": "函数",
+          "count": 1,
+          "segments": [
+            22
+          ],
+          "note": "函数词族的另一支"
+        },
+        {
+          "pattern": "低因减一u",
+          "replacement": "低 n 减一 n",
+          "count": 2,
+          "segments": [
+            23
+          ],
+          "note": "A档｜「低 n 减一阶」是线性 PDE 标准说法；上句刚定义「低 u」"
+        },
+        {
+          "pattern": "一阶岛",
+          "replacement": "一阶导",
+          "count": 2,
+          "segments": [
+            23
+          ],
+          "note": "dǎo 同音"
+        },
+        {
+          "pattern": "导述",
+          "replacement": "导数",
+          "count": 1,
+          "segments": [
+            23
+          ],
+          "note": "同「导术」"
+        }
+      ],
+      "suspects": []
+    }
+  },
+  "segments": [
+    {
+      "index": 0,
+      "audioStart": 0.352,
+      "audioEnd": 28.384,
+      "text": "另外,有一个教材,按我的叫做数学物理方程这本书。这本书,它对于模型的推导更为细致一点。另外一个很有价值的参考书,是国外的一本英文教材,它受得分手也可以繩子,是英文写的。而这本书的分为上下两部分,上半部分基本上就是偏微分方程本科阶段内容。",
+      "merged": true,
+      "blockEnd": 30.0,
+      "segmentsInBlock": 3,
+      "subtitlesInBlock": 5,
+      "rawText": "另外,有一个教材,按我的叫做数学物理方程这本书。这本书,它对于模型的推导更为细致一点。另外一个很有价值的参考书,是国外的一本英文教材,它受得分手也可以繩子,是一往死写的。而这本书的分为上下两部分,上半部分基本上就是偏为方程本科阶段内容。",
+      "suspects": []
+    },
+    {
+      "index": 1,
+      "audioStart": 28.704,
+      "audioEnd": 45.472,
+      "text": "下半部分就是研究生阶段的偏微分方程内容。 如果你计划读研,或者是对咱们这本课程本身的内容比较感兴趣。",
+      "merged": false,
+      "rawText": "下半部分就是研究生阶段的偏为方程内容。 如果你计划独言,或者是对咱们这本课程生物的内容比较感兴趣。",
+      "suspects": []
+    },
+    {
+      "index": 2,
+      "audioStart": 45.504,
+      "audioEnd": 50.08,
+      "text": "想要更加系统化的来接触这个。",
+      "merged": false,
+      "rawText": "想要更加系统化的来接触这个。",
+      "suspects": []
+    },
+    {
+      "index": 3,
+      "audioStart": 49.92,
+      "audioEnd": 83.776,
+      "text": "课程内容的话,我建议一下这本书,大概的翻译一下看一看。我们先来介绍一下这本什么是偏微分方程。大家都接触过这常微分方程,然后方程简称ODE,对吧。它一般就是来求一个位置函数,这个位置函数是一个一元函数。这个一元函数的变量可能是T,或者是T的表示太,对吧。时间有可能是X,X表示空间,对吧。所以它就是一个一元函数。",
+      "merged": true,
+      "blockEnd": 90.0,
+      "segmentsInBlock": 3,
+      "subtitlesInBlock": 2,
+      "rawText": "课程内容的话,我建议一下这本书,大概的翻译一下看一看。我们先来介绍一下这本什么是偏微方程。大家都接触过这长微方程,然后方程简称OD,对吧。它一般就是来求一个位置寒暑,这个位置寒暑是一个议员寒暑。这个议员寒暑的变量可能是T,或者是T的表示太,对吧。时间有可能是X,X表示空间,对吧。所以它就是一个议员。",
+      "suspects": []
+    },
+    {
+      "index": 4,
+      "audioStart": 83.616,
+      "audioEnd": 113.696,
+      "text": "函数,一个位置的一元函数求解的问题。 那么这个方程形式化上,我们可以把它...啊,写成这种形式,对吧?形式化上,我们已经用形式化。用一大F来表示这个函数。这大F呢,它是一个关于自变量 t,以及这个位置函数F,以及这个F关于T的这个某些导数的这么一个形式的一个函数。",
+      "merged": true,
+      "blockEnd": 120.0,
+      "segmentsInBlock": 4,
+      "subtitlesInBlock": 2,
+      "rawText": "寒暑,一个位置的议员,寒暑求解的问题。 那么这个方程形势化上,我们可以把它...啊,写成这种形势,对吧?形势化上,我们已经用形势化。用一大F来表示这个寒暑。这大F呢,它是一个关于电量T,以及这个位置寒暑F,以及这个F关于T的这个某些导术的这么一个形势的一个寒暑。",
+      "suspects": []
+    },
+    {
+      "index": 5,
+      "audioStart": 114.112,
+      "audioEnd": 147.872,
+      "text": "那么PDE的话,它唯一的不同,就是我们现在这个位置的函数,它不是个一元函数,它一定是一个多元函数。那一定是个多元函数,有可能跟时间有关系,T,还有可能还跟空间有关系,对吧。或者说它只是跟多元空间有关系。形式化的方程的话,这个时候形式化函数F,它就跟我们这个。",
+      "merged": true,
+      "blockEnd": 150.0,
+      "segmentsInBlock": 5,
+      "subtitlesInBlock": 4,
+      "rawText": "那么PD议的话,它唯一的不同,就是我们现在这个位置的寒暑,它不是个议员寒暑,它一定是一个多元寒暑。那一定是个多元寒暑,有可能跟时间有关系,T,还有可能还跟空间有关系,对吧。或者说它只是跟多元空间有关系。行事化的方程的话,这个时候行事化寒暑F,它就跟我们这个。",
+      "suspects": []
+    },
+    {
+      "index": 6,
+      "audioStart": 148.0,
+      "audioEnd": 167.264,
+      "text": "这个u,跟这个u的这个。这个m 个变量,对吧? 我们现在把这个x_1, x_2, …, x_m,跟这些变量有关系,还跟这位置还说有关系,以及那更有的这些变量有关系。对吧? 我们现在为了这个表达的。",
+      "merged": true,
+      "blockEnd": 180.0,
+      "segmentsInBlock": 2,
+      "subtitlesInBlock": 3,
+      "rawText": "这个优,跟这个优的这个。这个m 个变量,对吧? 我们现在把这个x 机上xxxxm,跟这些变了有关系,还跟这位置还说有关系,以及那更有的这些变导有关系。对吧? 我们现在为了这个表达的。",
+      "suspects": []
+    },
+    {
+      "index": 7,
+      "audioStart": 168.608,
+      "audioEnd": 207.232,
+      "text": "比较简洁,我们可以引入一个多重指标。 。 。 。 。 。 。 。 。 。。 。 。 。 。。 。 。。 。 。 。。 。 。。 。 。 。 。 。。 。 。。 。 。。 。 。 。 。 。 。 。。 。 。 。 。",
+      "merged": true,
+      "blockEnd": 210.0,
+      "segmentsInBlock": 4,
+      "subtitlesInBlock": 10,
+      "rawText": "比较简洁,我们可以订了一个多重指标。 。 。 。 。 。 。 。 。 。。 。 。 。 。。 。 。。 。 。 。。 。 。。 。 。 。 。 。。 。 。。 。 。。 。 。 。 。 。 。 。。 。 。 。 。",
+      "suspects": []
+    },
+    {
+      "index": 8,
+      "audioStart": 207.936,
+      "audioEnd": 233.888,
+      "text": "。 。 。 。 。 。。 。 。。 。 。。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。那樣的地方",
+      "merged": true,
+      "blockEnd": 240.0,
+      "segmentsInBlock": 4,
+      "subtitlesInBlock": 5,
+      "rawText": "。 。 。 。 。 。。 。 。。 。 。。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。 。那樣的地方",
+      "suspects": []
+    },
+    {
+      "index": 9,
+      "audioStart": 233.472,
+      "audioEnd": 268.32,
+      "text": "阿尔法 接的偏导数,对吧?把接的偏导数。那么句个例子 比如说这个形式。α α又是什么?是很简单。 对吧?非常简单。 不用写这么长了。那么第2个 第2个 第2个 第1就是什么?",
+      "merged": true,
+      "blockEnd": 270.0,
+      "segmentsInBlock": 5,
+      "subtitlesInBlock": 4,
+      "rawText": "阿尔法 接的偏导树,对吧?把接的偏导树。那么句个例子 比如说这个地形。第1零 第1零又是什么?是很简单。 对吧?非常简单。 不用写这么长了。那么第2个 第2个 第2个 第1就是什么?",
+      "suspects": []
+    },
+    {
+      "index": 10,
+      "audioStart": 274.208,
+      "audioEnd": 296.128,
+      "text": "对吧 非常简单。非常简单。那另外的话,有时候你们也可能会看到这种符号,就是比如说第1。第1,其实就是省略这个 α 的上角标 1,对吧?它表示的是什么呢?是表示的是所有的。",
+      "merged": true,
+      "blockEnd": 300.0,
+      "segmentsInBlock": 4,
+      "subtitlesInBlock": 2,
+      "rawText": "对吧 非常简单。非常简单。那另外的话,有时候你们也可能会看到这种符号,就是比如说第1。第1,其实就是省恋这个地的上角标1,对吧?它表示的是什么呢?是表示的是所有的。",
+      "suspects": []
+    },
+    {
+      "index": 11,
+      "audioStart": 301.504,
+      "audioEnd": 326.912,
+      "text": "这些第2和有。|α| 的阶数都等于 n。 那么你想想这里面会有些什么。 如果我们这个那里面会有些什么呢。 所有的这些什么呢。有关于x_i的一阶偏导。 对吧。",
+      "merged": true,
+      "blockEnd": 330.0,
+      "segmentsInBlock": 6,
+      "subtitlesInBlock": 3,
+      "rawText": "这些第2和有。R2的结束都等于你。 那么你想想这里面会有些什么。 如果我们这个那里面会有些什么呢。 所有的这些什么呢。有关于XI的一阶片脑。 对吧。",
+      "suspects": []
+    },
+    {
+      "index": 12,
+      "audioStart": 329.696,
+      "audioEnd": 339.648,
+      "text": "就这样。 下面我们再来介绍一些相关的概念。 一些相关的概念。",
+      "merged": false,
+      "rawText": "就这样。 下面我们再来介绍一些相关的概念。 一些相关的概念。",
+      "suspects": []
+    },
+    {
+      "index": 13,
+      "audioStart": 339.552,
+      "audioEnd": 347.712,
+      "text": "嗯, 我们来看一下这个。",
+      "merged": false,
+      "rawText": "嗯, 我们来看一下这个。",
+      "suspects": []
+    },
+    {
+      "index": 14,
+      "audioStart": 350.368,
+      "audioEnd": 362.368,
+      "text": "先来看这个线性的PDE是怎么定义的。 线性的PDE是说呢, 我们上面这个 f 这个形式化函数。",
+      "merged": false,
+      "rawText": "先来看这个线性的PD1是怎么定义的。 线性的PD1是说呢, 我们上面这个 f 这个形声还寒暑。",
+      "suspects": []
+    },
+    {
+      "index": 15,
+      "audioStart": 363.04,
+      "audioEnd": 378.208,
+      "text": "它可以写上什么形式, 可以写上这么一个形式。 这个形式看上去有点废解。 但是你仔细地去看就能很清楚地就能明白它的含义了。",
+      "merged": false,
+      "rawText": "它可以写上什么形式, 可以写上这么一个形式。 这个形式看上去有点废解。 但是你仔细地去看就能很清楚地就能明白它的含义了。",
+      "suspects": []
+    },
+    {
+      "index": 16,
+      "audioStart": 378.208,
+      "audioEnd": 414.56,
+      "text": "这个方程左边是什么? 左边是Σ求和。 每一项是什么的? 每一项是一个DRVU,就是U的一个RVG的偏导。前面加上一个系数。 这个系数我们用大ARVX表示了。 是吧?所以就说大ARV它是依赖于X的一个变量。 它是个遗智的函数。 这东西遗智。",
+      "merged": true,
+      "blockEnd": 420.0,
+      "segmentsInBlock": 6,
+      "subtitlesInBlock": 3,
+      "rawText": "这个方程左边是什么? 左边是Sigma球盒。 每一项是什么的? 每一项是一个DRVU,就是U的一个RVG的偏导。前面加上一个技术。 这个技术我们用大ARVX表示了。 是吧?所以就说大ARV它是依赖于X的一个编辆。 它是个遗智的韩术。 这东西遗智。",
+      "suspects": []
+    },
+    {
+      "index": 17,
+      "audioStart": 415.36,
+      "audioEnd": 446.144,
+      "text": "ARVX它是遗智的。 然后我们用这儿加一个下角标, 而法表示它是这个地。ARV有这么一个偏导数前面的系数。 这是遗智的。然后这个RV多少接呢? 它接触是小一点一个大恩的。 这是方程的左边,就是一个Σ求和的一个形式。",
+      "merged": true,
+      "blockEnd": 450.0,
+      "segmentsInBlock": 4,
+      "subtitlesInBlock": 3,
+      "rawText": "ARVX它是遗智的。 然后我们用这儿加一个下角标, 而法表示它是这个地。ARV有这么一个偏导术前面的细术。 这是遗智的。然后这个RV多少接呢? 它接触是小一点一个大恩的。 这是方程的左边,就是一个Sigma球盒的一个形式。",
+      "suspects": []
+    },
+    {
+      "index": 18,
+      "audioStart": 446.912,
+      "audioEnd": 474.336,
+      "text": "Σ求和的形式。 它其实是什么? 其实是RV。 第RV有的线性组合,对吧?因为这个时候,大ARVX可以看成一个细处。 你知道吗? 你知道,只是依赖RX跟u没有关系。 跟这个位置还是u没有关系。 然后方程u端GX也是已知的。",
+      "merged": true,
+      "blockEnd": 480.0,
+      "segmentsInBlock": 3,
+      "subtitlesInBlock": 2,
+      "rawText": "Sigma球盒的形式。 它其实是什么? 其实是RV。 第RV有的线线组合,对吧?因为这个时候,大ARVX可以看成一个细处。 你知道吗? 你知道,只是依赖RX跟幽没有关系。 跟这个位置还是幽没有关系。 然后方程幽端GX也是一支的。",
+      "suspects": []
+    },
+    {
+      "index": 19,
+      "audioStart": 476.128,
+      "audioEnd": 510.048,
+      "text": "GX也是已知的。 这就是线性的PDE。 它形式上有满足这么的形式,才叫线性。 然后再来看这个非线性。当然,不满足的形式,所有不满足的形式,都叫做非线性。在非线性里头,我们也可以再进行从简单到复杂的分类。",
+      "merged": true,
+      "blockEnd": 510.0,
+      "segmentsInBlock": 4,
+      "subtitlesInBlock": 3,
+      "rawText": "GX也是一支的。 这就是线性的PVE。 它形式上有满足这么的形式,才叫线性。 然后再来看这个非线性。当然,不满足的形式,所有不满足的形式,都叫做非线性。在非线性里头,我们也可以再进行从简单到复杂的分类。",
+      "suspects": []
+    },
+    {
+      "index": 20,
+      "audioStart": 509.92,
+      "audioEnd": 540.096,
+      "text": "从简单的复杂的分类。 非线性里最简单的叫做半线性。semi-linear。semi-linear,它定义是主部。主部的定义是含有高阶导数的部分。最高阶导数的部分。主部是线性的。我们如果用数学公式来表示这么一个形式。你们来观察一下。",
+      "merged": true,
+      "blockEnd": 540.0,
+      "segmentsInBlock": 3,
+      "subtitlesInBlock": 2,
+      "rawText": "从简单的复杂的分类。 非线性里最简单的叫做半线型。3mm零礼尔。3mm零礼尔,它定义是主步。主步的定义是寒罪高阶导数的部分。最高阶导数的部分。主步是现行的。我们如果用数学公式来表示这么一个形式。你们来观察一下。",
+      "suspects": []
+    },
+    {
+      "index": 21,
+      "audioStart": 541.152,
+      "audioEnd": 566.88,
+      "text": "方程的左端分为两部分, 第一部分还是一个C 码求和。第二部分是一个盘处。我们先来看C 码求和的部分。这个部分里头的话, 我们来看,跟线性相比它这个是要求什么的。而接触等于大恩, 也就是最高阶,最高阶的部分。 这部分是可以线性表出的。",
+      "merged": true,
+      "blockEnd": 570.0,
+      "segmentsInBlock": 2,
+      "subtitlesInBlock": 3,
+      "rawText": "方程的左端分为两部分, 第一部分还是一个C 码球盒。第二部分是一个盘处。我们先来看C 码球盒的部分。这个部分里头的话, 我们来看,跟现行相比它这个是要求什么的。而接触等于大恩, 也就是最高阶,最高阶的部分。 这部分是可以现行表出的。",
+      "suspects": []
+    },
+    {
+      "index": 22,
+      "audioStart": 567.232,
+      "audioEnd": 594.016,
+      "text": "也是地而反u的,就是u的。所有 n 阶的偏导数是线性的形式。这是它的第一部分。第二部分是一个形式化的一个函数。A0,它是依赖于什么呢?依赖于X,依赖于U,以及呢?",
+      "merged": true,
+      "blockEnd": 600.0,
+      "segmentsInBlock": 4,
+      "subtitlesInBlock": 3,
+      "rawText": "也是地而反优的,就是优的。所有的大恩街的偏导数是现性的一个形式。这是它的第一部分。第二部分是一个形式化的一个韩数。A0,它是依赖于什么呢?依赖于X,依赖于U,以及呢?",
+      "suspects": []
+    },
+    {
+      "index": 23,
+      "audioStart": 594.848,
+      "audioEnd": 611.712,
+      "text": "这是u的低于大阳阶的导数。刚才我们说了这个低u,低u就是所有的一阶导,对吧?一阶导总共起来。那么,低 n 减一 n是什么呢?低 n 减一 n是什么呢?",
+      "merged": false,
+      "rawText": "这是优的低于大阳阶的导述。刚才我们说了这个低优,低优就是所有的一阶岛,对吧?一阶岛总共起来。那么,低因减一优是什么呢?低因减一优是什么呢?",
+      "suspects": []
+    },
+    {
+      "index": 24,
+      "audioStart": 611.904,
+      "audioEnd": 620.0,
+      "text": "那当然了,你累退一下,它就是什么呢?所有的。",
+      "merged": false,
+      "rawText": "那当然了,你累退一下,它就是什么呢?所有的。",
+      "suspects": []
+    },
+    {
+      "index": 25,
+      "audioStart": 622.912,
+      "audioEnd": 630.464,
+      "text": "温解一阶的频道数了,对吧?做温解一阶频道数。那如果我把这个温解一换成任意一个整数。",
+      "merged": true,
+      "segmentsInBlock": 1,
+      "subtitlesInBlock": 2,
+      "rawText": "温解一阶的频道数了,对吧?做温解一阶频道数。那如果我把这个温解一换成任意一个整数。",
+      "suspects": []
+    }
+  ]
+}

@@ -49,8 +49,25 @@ REPORT_OUT = REPO / "packaging" / "eval" / "accent_baseline.json"
 EXPECTED_SR = 16000
 EXPECTED_CHANNELS = 1
 MIN_SECONDS = 30.0          # 下界放宽到 30s：短素材也能反映口音，只是统计更抖
-MAX_SECONDS = 300.0
+MAX_SECONDS = 700.0         # 🔴 V6-4 从 300 放宽到 700（原因见下）
 SOURCE_KIND = "human-recording"
+
+# 🔴 为什么上界从 300 放宽到 700（V6-4，2026-10-22）
+#
+# V5-7 设 300 是因为当时设想 accent 会用**短样本**（对齐 clean/noise 那批 60~130s）。
+# 实际拿到的素材 `accent_zhlecture_bv117411m78e.wav`（BV117411m78E 00:30~11:00）是
+# **630.0 s** —— 恰好等于 P3 真实数据 `real/real_zhlecture_origin_plot.wav` 的长度。
+#
+# 放宽而不是裁剪，理由三条：
+#   1. **同长即可并排**。accent 与 real 都是真人课堂实录、同为630 s、同为16 kHz 单声道，
+#      两格的 CER 能直接对照；裁到 300 s 会让它和谁都不齐，只能孤零零看绝对值。
+#   2. **长样本统计更稳**。accent 的定位是「如实报告口音下的表现」，CER 预期本就高于
+#      clean（README §五已钉死这是场景属性、不是缺陷）。样本越短，口音造成的抖动越难
+#      和测量噪声区分开 —— 而这恰好是本套评估最忌讳的失效形态。
+#   3. 300这个数字本来就不是从数据推出来的，是「对齐短样本集」这条已经作废的设定。
+#
+# ⚠️ 上界只放宽**不取消**：仍然拒收超长素材，避免哪天有人丢个 3 小时的音频进来
+# （--realtime 下那要跑 3 小时）。700 留了 70 s 余量给剪辑误差。
 
 STATUS_OK = "ok"
 STATUS_NO_MATERIAL = "no-material"
