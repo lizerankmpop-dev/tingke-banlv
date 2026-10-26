@@ -1,0 +1,51 @@
+﻿# 预校对修正表 · en_lecture_mit6034_p1（MIT 6.034 Fall 2010 Lec-1，UP 汤臣安保大队长，02:00~12:30）
+#
+# 格式：kind <TAB> pattern <TAB> replacement <TAB> note
+#   fix     高置信误识别，候选由文内自证 / 语法唯一定死 → 直接替换
+#   suspect 无法唯一确定的碎片 → 原样保留，前后插 【?】 标红，留人工对音频核验
+#   note    只登记、文本一字不动（终态留白：查过了、确实定不死）
+#
+# ## ⚠️ 这份表修的不是 ASR 的错，是**官方稿自己的错**
+#
+# 中文格（`accent` / `real`）的参考稿是「ASR 草稿 + 人工校对」，
+# 错字来自 ASR。英文格不一样：**MIT OCW 为本讲提供了带时间码的官方 VTT 字幕**，
+# 参考稿主体是**权威官方稿**，零人工转写成本。
+#
+# 但官方稿是**人工转写**的，它自己也有疏漏 —— 而这些疏漏的**方向是
+# 「参考稿比音频少/错词」**（漏掉 is / a / the，把 why 转成 whey……）。
+# 这会让 WER **系统性偏向 ASR 不利**：音频里老师说的是 "This is a Course six class"，
+# 参考稿写的是 "This a Course six class" ⇒ ASR 说对了反而被判错。
+#
+# 所以这张表的作用是**把参考稿校回音频**。每条 fix 都有**文内自证或语法唯一**的依据，
+# 不是凭我的语感。
+#
+# ## 边界（与中文格一致）
+#   不润色、不改断句/分段、不补口头语/语气词。
+#   补词只做「语法上唯一可能」的那几处（如 "This a Course six class" → "This is a ..."），
+#   拿不准的一律 `suspect`。
+#
+# ## 已知但**故意不改**的一处
+#   官方稿第 130~131 行 "So it would be two to the fourth she says aggressively
+#   and without hesitation." —— 这是字幕员把「Winston 提问 → 学生 Tanya 回答 →
+#   Winston 确认」串成了一行。**词序其实与音频一致**（Tanya 的话就在中间），
+#   缺的只是说话人标记。而 `normalize()` 对英文只按**词**计、标点被剥掉，
+#   所以**加标点/加说话人标签对 WER 毫无影响** ⇒ 改了也没用，不改。
+#
+# 作者：V7 自动起草（2026-10-26）｜ 所有 `suspect` 均未替人工做决定
+fix	This a Course six class.	This is a Course six class.	官方稿漏 "is"；同段连着三句 "This/It's ... class." 句式唯一
+fix	Even in humanities class, MIT approach is to make models	Even in humanities class, the MIT approach is to make models	漏 "the"；固定说法 "the MIT approach"，本讲第 121 行同源
+fix	It's very powerful feeling.	It's a very powerful feeling.	漏 "a"；不定冠词唯一
+fix	So that's powerful pull, isn't it.	So that's a powerful pull, isn't it.	漏 "a"；同上
+fix	the right representation most	the right representation must	most → must；"must involve" 是唯一合语法的搭配。⚠️ pattern 只能落在**一行内**（VTT 按字幕行断句，修正表逐段匹配，跨行必然零命中）
+fix	So now we're getting somewhere where with the problem.	So now we're getting somewhere with the problem.	"somewhere where with" 不成句，多余的 "where"；句式唯一
+fix	This is at MIT approach to the farmer, fox,	This is the MIT approach to the farmer, fox,	at → the；同「the MIT approach」
+fix	That's whey you algebra in high school,	That's why you learned algebra in high school,	"whey"（乳清）→ "why" 同音错；"you algebra" 漏 "learned"；下句 "because algebraic notation exposes the constraints" 自证是「学了代数」
+fix	generated test.	generate and test.	官方稿错；**本讲后文自己就写了 "we're going to call it generate and test"** ⇒ 同段自证
+fix	Maybe I can explain to best by starting off with an example.	Maybe I can explain it best by starting off with an example.	to → it 同音错
+fix	all four of individuals can be on one	all four of the individuals can be on one	漏 "the"；句式唯一
+fix	representations that support models targeted to thinking--	representations that support models targeted at thinking--	at → to 漏 "at"；本讲第 162~164 行的完整句式作证
+fix	by representations that model targeted thinking, perception,	by representations that model targeted at thinking, perception,	同上
+note	Let me do some ground f here just to be sure.		终态留白：候选定不死（"ground f" 疑为 "ground it" 或 "a ground for this"；候选不唯一，需对着音频确认），保留原文不猜
+note	I don't anybody think that I'm cheating, here.		终态留白：候选定不死（官方稿语序错；候选 "I don't think anybody thinks that I'm cheating here"（改写幅度大，不自行拍板）），保留原文不猜
+note	representing our algae infested rivers is the river		终态留白：候选定不死（疑 "algae-infested river"（单数）；官方稿写的是复数 rivers，音频里未验证），保留原文不猜
+note	Why are there not 16?		终态留白：候选定不死（此句 Winston 自问自答，前一句 "Because the other--" 用破折号中断；疑有词被漏。不改），保留原文不猜

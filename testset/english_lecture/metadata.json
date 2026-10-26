@@ -1,0 +1,33 @@
+{
+  "kind": "REAL",
+  "sourceKind": "human-recording",
+  "note": "英文真人课堂实录（MIT 6.034 人工智能入门课第一讲）。🔴 本格测的是「英文语种 + 领域术语」，**不是**中文口音（那是 accent 格，两者不可混淆、不可互相替代）。kind=REAL 会被映射成 human-recording（scripts/eval_asr_quality.py:107）。",
+  "entries": [
+    {
+      "scenario": "en_lecture",
+      "audio": "en_lecture_mit6034_p1.wav",
+      "reference": "en_lecture_mit6034_p1.preproof.txt",
+      "bvid": "BV1dM411U7qK",
+      "clipRange": "02:00~12:30",
+      "part": "P1「1.-什么是人工智能（课程介绍）」（47:14）",
+      "title": "【麻省理工-人工智能入门课】MIT世界顶级人工智能课程分享",
+      "author": "汤臣安保大队长",
+      "upstream": "MIT OpenCourseWare 6-034 Artificial Intelligence, Fall 2010, Lecture 1 (Patrick H. Winston)",
+      "referenceSource": "MIT OCW 官方 VTT 字幕（c392f6e074945c7488e5835ed9a74b7d_TjZBTDzGeGg.vtt）",
+      "referenceAlignment": {
+        "ocwClipStart": 125.12,
+        "ocwClipEnd": 755.12,
+        "offsetSeconds": 125.12,
+        "method": "27 点锚点拟合（ASR 草稿每段首 8 词在官方稿里找最长公共子串 → 反查 cue 时间）；中位数 124.89s、标准差 2.63s",
+        "boundary": "语义边界校验：cue『I'll explain why we have these covenants at the end.』120.90~125.62s 在切片外（ASR 也没识别到），cue『So what is it?』125.62~127.36s 是切片首句"
+      },
+      "durationSeconds": 630.0,
+      "sampleRate": 16000,
+      "channels": 1,
+      "bitDepth": 16,
+      "silenceRatio": 0.14,
+      "consent": "仅用于本地项目内部评估，不再分发；含他人声音，故音频与逐字稿均不入库（见 .gitignore）",
+      "recordedAt": "2026-10-26"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+kind	pattern	replacement	count	segments	note
+fix	This a Course six class.	This is a Course six class.	1	14	官方稿漏 "is"；同段连着三句 "This/It's ... class." 句式唯一
+fix	Even in humanities class, MIT approach is to make models	Even in humanities class, the MIT approach is to make models	1	30	漏 "the"；固定说法 "the MIT approach"，本讲第 121 行同源
+fix	It's very powerful feeling.	It's a very powerful feeling.	1	81	漏 "a"；不定冠词唯一
+fix	So that's powerful pull, isn't it.	So that's a powerful pull, isn't it.	1	86	漏 "a"；同上
+fix	the right representation most	the right representation must	1	105	most → must；"must involve" 是唯一合语法的搭配。⚠️ pattern 只能落在**一行内**（VTT 按字幕行断句，修正表逐段匹配，跨行必然零命中）
+fix	So now we're getting somewhere where with the problem.	So now we're getting somewhere with the problem.	1	119	"somewhere where with" 不成句，多余的 "where"；句式唯一
+fix	This is at MIT approach to the farmer, fox,	This is the MIT approach to the farmer, fox,	1	120	at → the；同「the MIT approach」
+fix	all four of individuals can be on one	all four of the individuals can be on one	1	125	漏 "the"；句式唯一
+fix	That's whey you algebra in high school,	That's why you learned algebra in high school,	1	151	"whey"（乳清）→ "why" 同音错；"you algebra" 漏 "learned"；下句 "because algebraic notation exposes the constraints" 自证是「学了代数」
+fix	representations that support models targeted to thinking--	representations that support models targeted at thinking--	1	157	at → to 漏 "at"；本讲第 162~164 行的完整句式作证
+fix	by representations that model targeted thinking, perception,	by representations that model targeted at thinking, perception,	1	162	同上
+fix	generated test.	generate and test.	1	171	官方稿错；**本讲后文自己就写了 "we're going to call it generate and test"** ⇒ 同段自证
+fix	Maybe I can explain to best by starting off with an example.	Maybe I can explain it best by starting off with an example.	1	178	to → it 同音错

@@ -641,7 +641,7 @@ package.json → app.getVersion() → 'diag:get-info' → preload diag.getInfo
 | **C-4** | L4 安装包验收 | `scripts/verify_install.py --installer <setup.exe> --hold 150 --expect-sha256 <hex> --report <out>` | **连跑 3 次全通过**（D6 修好后不应再出现阻断；若 V6-7 未修则此门禁不适用） | ✅ **3/3，关键失败 0**（62/59、61/58、58/55），**未注入 `TINGKEBANLV_ALLOW_MULTI`** |
 | **C-5** | 双副本对拍 | `_mirror_sync.py` → `_mirror_check.py` | `diff=0 miss=0`（基准 `git ls-files`，**不能用 `find`**） | ⏳ 提交前跑 |
 | **C-6** | 换行符 | `安装空间/_c6_eol_check.py` | 见下方「C-6 怎么判」（**原表述「其余 loneLF 正常 / CRLF 0」不可测，已修正**） | ✅ **通过** |
-| 图标 §8.5 | 产物层审计 | `scripts/icon_assets.py audit` | [1]–[4] 机器可判全绿；[5] 人工目检 5 项 | ✅ **[1]–[4]**；⏳ [5] 待人工 |
+| 图标 §8.5 | 产物层审计 | `scripts/icon_assets.py audit` | [1]–[4] 机器可判全绿；[5] 人工目检 5 项 | ✅ **[1]–[4]**；⏸ **[5] 推迟**（2026-10-26 用户决定：美术问题留到产品功能完善阶段，见 `icon_asset_spec.md` §8.5.5 推迟说明） |
 
 ### 5.1 本轮判据的两处修正（**教训 66 / 72**）
 

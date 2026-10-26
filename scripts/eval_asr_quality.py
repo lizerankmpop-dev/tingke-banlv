@@ -84,7 +84,8 @@ SAMPLE_RATE = 16000
 # 这里若用别的块大小，VAD 会因为内部对齐而产生与真实运行不同的分段边界。
 CHUNK_SIZE = 512
 
-SCENARIOS = ("clean", "accent", "noise", "multi", "lowvol", "fast", "long")
+SCENARIOS = ("clean", "accent", "en_lecture", "noise", "multi",
+              "lowvol", "fast", "long")
 
 
 

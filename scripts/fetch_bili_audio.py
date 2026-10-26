@@ -279,42 +279,102 @@ def get_dash_audio(bvid: str, cid: int) -> tuple[list[dict], str | None]:
     return streams, fallback
 
 
-def download(url: str, dest: Path, referer: str = REFERER) -> int:
-    """流式下载（带 Referer）。返回字节数。"""
+def download(url: str, dest: Path, referer: str = REFERER,
+             min_bytes: int = 0, max_bytes: int = 0, retries: int = 3) -> int:
+    """流式下载（带 Referer）。返回字节数。
+
+    🔴 **完整性校验 + 续传 + 够用即停**（2026-10-26）
+
+    这三件事是配套的，因为**「整流下载」这个前提本身是错的**：
+
+    * 本工具只要**目标区间**那几百秒音频。B 站 DASH 音频轨是**整集**（P1 = 47 分钟
+      ⇒ 48 MB），而 630 秒按 135 kbps 算**只要约 10.7 MB**。
+      为了 10% 的内容下 100% 的流，既慢又更容易被截断。
+    * 实测这个 CDN **会稳定地在 20,971,520 B 处切断**（连试 3 次，每次断点完全相同）——
+      所以「下完整个流」这个目标**经常达不到**，而**够切片用的那部分每次都拿得到**。
+
+    因此改成：
+    * **够用即停**：`max_bytes` 给出上限，`min_bytes` 给出「够切片用」的下限；
+      拿到 `min_bytes` 就可以停，不必等 `Content-Length`。
+    * **Range 续传**：断了从断点续（`Range: bytes=N-`），重试若干次。
+    * **校验**：以 `min_bytes` 为准，**不再**要求 `written == Content-Length`。
+      仍然拦「明显不够」的情况（否则会拿一个连切片都做不出来的文件去解码）。
+
+    保留的那道闸门（`written == Content-Length` 时才判失败）在 `min_bytes == 0`
+    时依然生效 —— 即「要求完整」的老用法不受影响。
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    req = urllib.request.Request(url)
-    req.add_header("User-Agent", USER_AGENT)
-    req.add_header("Referer", referer)
-    req.add_header("Accept", "*/*")
     tmp = dest.with_suffix(dest.suffix + ".part")
-    written = 0
+    total = 0
     t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx()) as resp:
-            total = int(resp.headers.get("Content-Length") or 0)
-            with open(tmp, "wb") as fh:
-                while True:
-                    chunk = resp.read(256 * 1024)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    written += len(chunk)
-                    if total:
-                        pct = written * 100 // total
-                        print(f"\r  下载中 {pct:3d}%  {written/1e6:6.2f}/{total/1e6:.2f} MB",
-                              end="", flush=True)
-        print(f"\r  下载完成 {written/1e6:.2f} MB，用时 {time.time()-t0:.1f}s"
-              + " " * 20)
-        tmp.replace(dest)
-    except urllib.error.HTTPError as exc:
+
+    for attempt in range(1, retries + 1):
+        have = tmp.stat().st_size if tmp.is_file() else 0
+        req = urllib.request.Request(url)
+        req.add_header("User-Agent", USER_AGENT)
+        req.add_header("Referer", referer)
+        req.add_header("Accept", "*/*")
+        if have:
+            req.add_header("Range", f"bytes={have}-")
+        try:
+            with urllib.request.urlopen(req, timeout=60, context=_ssl_ctx()) as resp:
+                code = getattr(resp, "status", 200)
+                clen = int(resp.headers.get("Content-Length") or 0)
+                # 续传时 Content-Length 是**剩余**长度 ⇒ 还原成总长
+                full = (have + clen) if (code == 206 and clen) else clen
+                if not have and clen:
+                    print(f"  远端总长 {clen/1e6:.2f} MB")
+                with open(tmp, "ab" if have else "wb") as fh:
+                    while True:
+                        chunk = resp.read(256 * 1024)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        have += len(chunk)
+                        if max_bytes and have >= max_bytes:
+                            break
+                        if min_bytes and have >= min_bytes and max_bytes == 0:
+                            break
+                        if full and have >= full:
+                            break
+                        if clen:
+                            pct = have * 100 // full
+                            print(f"\r  下载中 {pct:3d}%  {have/1e6:6.2f}/{full/1e6:.2f} MB",
+                                  end="", flush=True)
+            if max_bytes and have > max_bytes:
+                # 截到上限：把多余部分截掉
+                with open(tmp, "r+b") as fh:
+                    fh.truncate(max_bytes)
+                have = max_bytes
+            print(f"\r  下载完成 {have/1e6:.2f} MB，用时 {time.time()-t0:.1f}s" + " " * 20)
+            total = have
+            break
+        except urllib.error.HTTPError as exc:
+            tmp.unlink(missing_ok=True)
+            raise SystemExit(
+                f"下载失败 HTTP {exc.code}。音频直链需带 Referer 且会过期，请重跑本工具。"
+            )
+        except Exception as exc:
+            print(f"  ⚠ 第 {attempt}/{retries} 次中断：{type(exc).__name__}: {exc}")
+            if attempt >= retries:
+                tmp.unlink(missing_ok=True)
+                raise SystemExit(
+                    f"下载连续 {retries} 次中断（已得 {have/1e6:.2f} MB）。已放弃。"
+                    f"请重跑本工具 —— **会从 `.part` 断点续传**，不会从头来。"
+                )
+            time.sleep(2)
+
+    if min_bytes and total < min_bytes:
         tmp.unlink(missing_ok=True)
         raise SystemExit(
-            f"下载失败 HTTP {exc.code}。音频直链需带 Referer 且会过期，请重跑本工具。"
+            f"下载不足：实得 {total:,} B < 需要的 {min_bytes:,} B（够切片用的下限）。"
+            f"**缓存未写入**。请重跑本工具。"
         )
-    except Exception:
+    if not min_bytes and total == 0:
         tmp.unlink(missing_ok=True)
-        raise
-    return written
+        raise SystemExit("下载得到 0 字节。请重跑本工具（音频直链可能已过期）。")
+    tmp.replace(dest)
+    return total
 
 
 # ============ 主流程 ============
@@ -443,8 +503,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"    id={s.get('id')} codec={s.get('codecs')} bw={s.get('bandwidth')}")
 
     src: Path
-    if streams:
-        chosen = pick_audio_stream(streams)
+    # 🔴 下载策略（2026-10-26，两轮修正后定稿）
+    #
+    # ① **必须下完整**：`need_bytes`（按码率估的「够切片用」字节数）**只作参考打印，
+    #    不作停止条件**。实测：B 站 DASH 的音频是 fMP4，**moov atom 在文件尾部**，
+    #    截断到 30% 时 PyAV 解码直接炸在 `avcodec_send_packet()`。
+    #    ⇒ 「够用即停」在这条链路上**不成立**。
+    #
+    # ② **靠 Range 续传把多次尝试累积起来**：这个 CDN **稳定地在 20,971,520 B 处切断**
+    #    （连试 3 次，断点完全相同），但**能下到 46.1 MB / 48.0 MB（96%）**。
+    #    ⇒ 单次下不完是常态，**续传**才是解药：每次从 `.part` 的长度继续 Range 请求，
+    #    累积到 `Content-Length` 为止。
+    #
+    # ③ 因此 `min_bytes=0` ⇒ 语义是「下到 Content-Length 完整为止」，
+    #    配合 `download()` 里的 Range 续传 + 重试。
+    chosen = pick_audio_stream(streams) if streams else None
+    need_s = end_s
+    bw = int(chosen.get("bandwidth") or 0) if chosen else 0
+    if bw:
+        need_bytes = int(need_s * bw / 8 * 1.35)
+        print(f"  目标区间到 {need_s:.0f}s ⇒ 码率 {bw/1000:.0f} kbps ⇒ "
+              f"切片本身约需 {need_bytes/1e6:.1f} MB（仅参考；moov 在尾部，必须下完整）")
+    if chosen:
         print(f"  选用 id={chosen.get('id')} bandwidth={chosen.get('bandwidth')}")
         src = Path(args.cache_dir) / f"{bvid}_{cid}.m4s"
         if not src.is_absolute():

@@ -36,6 +36,17 @@ ROOT = Path(__file__).resolve().parent.parent
 
 MIN_CHARS = 200
 CPS_RANGE = (1.2, 8.0)          # 字/秒 合理区间（中文讲稿实测约 2.5~6；含英文术语会更低）
+# 🔴 英文稿必须换一套口径（2026-10-26，V7 · en_lecture 格）
+#
+# 为什么不能沿用「字/秒」：英文稿的**字符数**天然远大于词数
+# （MIT 6.034 那段 630 s 实测 1471 词 / ≈8000 字符 ⇒ 12.7 字符/秒），
+# 直接套 1.2~8.0 会**稳定误判 FAIL** —— 而它测的其实是「时长与文本量是否匹配」，
+# 这个意图对英文同样成立，只是单位该换成**词/分钟**。
+#
+# 区间取 70~200 wpm：课堂讲授（含演示、提问、停顿）实测普遍 100~170 wpm，
+# 留出上下余量。⚠️ 这套区间是**从「课堂讲授」这一档素材推出来的**，
+# 若以后拿到播客/新闻（语速 150~200）或慢速讲解（<70 wpm），需重新标定。
+WPM_RANGE = (70.0, 200.0)
 REPEAT_MIN_LEN = 8              # 参与「重复段」判定的最短行
 REPEAT_MAX_HITS = 3             # 同一行出现达到此次数即判 FAIL
 TAIL_MIN_CHARS = 2
@@ -45,6 +56,23 @@ PLACEHOLDERS = ("待校对", "待补", "TODO", "todo", "???", "***", "固定为"
                 # 这一项会打印「无占位标记」而**静默放过** —— 一个自以为校对完了的
                 # 定稿会把「猜不出来的地方」当正常内容带进基准。
                 "【?")
+# 英文稿里的说话人标签残留（官方 VTT 的 `PATRICK WINSTON:`）。
+# 它必须被剥掉 —— 否则 15 个词的标签会变成 15 个词的「插入错误」，
+# 凭空把 WER 抬高一大截。同理 `[INAUDIBLE]` 是**要保留**的：
+# Whisper 训练数据里大量出现这个 token，模型真输出 inaudible 时两边才对得上。
+SPEAKER_PREFIX_RE = re.compile(r"^\s*[A-Z][A-Z .'-]{2,40}:\s*")
+
+
+def strip_speaker_labels(text: str) -> tuple[str, int]:
+    """剥掉每行开头的说话人标签，返回 (处理后的文本, 剥掉几处)"""
+    n = 0
+    out = []
+    for line in text.splitlines():
+        new = SPEAKER_PREFIX_RE.sub("", line)
+        if new != line:
+            n += 1
+        out.append(new)
+    return "\n".join(out), n
 
 
 class Finding:
@@ -96,10 +124,26 @@ def audit(
         out.append(Finding("OK", "字数下限", f"{chars} 字 ≥ {MIN_CHARS}"))
 
     if audio_seconds:
-        cps = chars / audio_seconds
-        lo, hi = CPS_RANGE
-        detail = f"{chars} 字 / {audio_seconds / 60:.2f} 分钟 = {cps:.2f} 字/秒（合理区间 {lo}~{hi}）"
-        out.append(Finding("OK" if lo <= cps <= hi else "FAIL", "语速区间", detail))
+        # 🔴 语速检查按语言换口径（2026-10-26）：中文字/秒，英文词/分钟。
+        # 判据是「文本量与时长是否匹配」，不是「字符密度」——
+        # 用错单位会让英文稿稳定误判 FAIL（见 CPS_RANGE 上方说明）。
+        cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+        is_zh = cjk * 6 >= max(1, chars)      # 六分之一以上的非空白字符是汉字 ⇒ 判中文稿
+        if is_zh:
+            rate = chars / audio_seconds
+            lo, hi = CPS_RANGE
+            out.append(Finding(
+                "OK" if lo <= rate <= hi else "FAIL", "语速区间",
+                f"{chars} 字 / {audio_seconds / 60:.2f} 分钟 = {rate:.2f} 字/秒"
+                f"（中文合理区间 {lo}~{hi}）"))
+        else:
+            words = len(re.findall(r"[A-Za-z0-9']+", text))
+            wpm = words / audio_seconds * 60
+            lo, hi = WPM_RANGE
+            out.append(Finding(
+                "OK" if lo <= wpm <= hi else "FAIL", "语速区间",
+                f"{words} 词 / {audio_seconds / 60:.2f} 分钟 = {wpm:.1f} 词/分"
+                f"（英文合理区间 {lo:.0f}~{hi:.0f} wpm）"))
     else:
         out.append(Finding("WARN", "语速区间", "未提供音频，跳过（时长对不上通常是截断或串稿）"))
 
@@ -109,15 +153,49 @@ def audit(
         else Finding("OK", "未校对痕迹", "无占位标记")
     )
 
+    # 🔴 「重复段」只抓**连续重复**（2026-10-26 修正）
+    #
+    # 原规则是「同一行出现 ≥3 次即 FAIL」，它把两种完全不同的东西混为一谈：
+    #   ① **ASR 重复循环** —— 故障。特征是**连续**：同一位置反复吐出同一串
+    #      （accent 格段 7/8 的「。 。 。 。」就是这样），
+    #      必须抓。
+    #   ② **刻意的修辞重复** —— 正常内容。MIT 6.034 那讲里 Winston 反复念
+    #      "models targeted at thinking, perception, and action"（他那课的核心定义句）
+    #      共 4 次，是**有意重复**。按老规则会把官方稿判成 FAIL。
+    #
+    # 区分点就在**相邻性**：循环是连续的，重复是隔开的。
+    # 所以改成：① 连续 N 行相同 ⇒ FAIL（保留抓循环的能力）；
+    #          ② 同一行在全文出现 ≥REPEAT_MAX_HITS 次但**不连续** ⇒ 只报 WARN。
     counter: dict[str, int] = {}
     for ln in lines:
         if len(ln) >= REPEAT_MIN_LEN:
             counter[ln] = counter.get(ln, 0) + 1
     repeats = {k: v for k, v in counter.items() if v >= REPEAT_MAX_HITS}
-    out.append(
-        Finding("FAIL", "重复段", f"{len(repeats)} 段重复 ≥{REPEAT_MAX_HITS} 次，例：{list(repeats)[:1]}") if repeats
-        else Finding("OK", "重复段", "无异常重复")
-    )
+
+    # 连续重复：同一行连续出现
+    best_run, run, run_text = 1, 1, ""
+    for i in range(1, len(lines)):
+        if lines[i] == lines[i - 1] and len(lines[i]) >= REPEAT_MIN_LEN:
+            run += 1
+            if run > best_run:
+                best_run, run_text = run, lines[i]
+        else:
+            run = 1
+
+    if best_run >= REPEAT_MAX_HITS:
+        out.append(
+            Finding("FAIL", "重复段",
+                    f"检测到**连续**重复 {best_run} 次 —— 疑似 ASR 重复循环，"
+                    f"例：{run_text[:60]!r}")
+        )
+    elif repeats:
+        out.append(
+            Finding("WARN", "重复段",
+                    f"{len(repeats)} 段重复 ≥{REPEAT_MAX_HITS} 次但**不连续** —— "
+                    f"按「刻意重复的修辞」处理（例：{list(repeats)[0][:60]!r}）")
+        )
+    else:
+        out.append(Finding("OK", "重复段", "无异常重复"))
 
     out.append(
         Finding("WARN", "尾部完整性", f"末段仅 {len(lines[-1])} 字，疑似截断")
