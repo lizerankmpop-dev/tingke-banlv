@@ -6,6 +6,23 @@
 
 ---
 
+## 〇、当前有三格（同一门课的不同讲次）
+
+| 素材 | B 站 | OCW 对应讲次 | 内容 | 参考稿 | 状态 |
+|---|---|---|---|---|---|
+| `en_lecture_mit6034_p1.wav` | P1 `02:00~12:30` | **Lecture 1** Introduction and Scope | AI 的定义 → 模型 → 表示（陀螺仪 / 农民狐狸鹅） | 官方稿 + **13 处人工修正** | ✅ 基线 WER 0.1130 |
+| `en_lecture_mit6034_p4.wav` | P4 `10:00~20:30` | **Lecture 4** Search: Depth-First, Hill Climbing, Beam | 搜索算法 | **官方稿原文**（模式扫描零命中） | ⏳ 基线在跑 |
+| `en_lecture_mit6034_p20.wav` | P20 `05:00~15:30` | **Lecture 21** Probabilistic Inference I | 概率推理 | **官方稿原文**（模式扫描零命中） | ⏳ 基线在跑 |
+
+🔴 **B 站分 P 与 OCW 讲次不是一一对应**（实测）：
+- OCW 把神经网络**拆成 12A / 12B**（12A=Neural Nets，12B=Deep Neural Nets）
+- OCW 多了 **Lecture 20: The AI business**（B 站没有对应）
+⇒ **B 站 P12 ↔ OCW Lecture 12A；B 站 P20 ↔ OCW Lecture 21**（偏移 1）。
+**这个偏移不是假设，是用时间轴对齐独立验证出来的**（P20 的对齐记录在
+`en_lecture_mit6034_p20.align.json`）。
+
+---
+
 ## 一、这一格为什么单独存在
 
 产品要解决的是「国外课程没字幕 + 专业名词听不懂」。
@@ -42,63 +59,121 @@ B 站匿名访问拿不到字幕（`fetch_bili_audio.py` 模块头第 2 条）�
 
 ### 🔴 三个必须知道的坑
 
-1. **时间轴有偏移，必须多点锚点拟合**
-   B 站搬运版比 OCW 原版**多约 5 秒片头** ⇒ 切片起点 `02:00` 对应 OCW **125.12 s**。
-   实测方法：拿 ASR 草稿每段的首 8 个词在官方稿里找最长公共子串 → 反查 cue 时间
-   → 27 个锚点拟合，**中位数 124.89 s、σ = 2.63 s**。
+1. **时间轴有偏移，必须逐格独立对齐**
+   B 站搬运版比 OCW 原版**多约 5 秒片头**（P1 实测；**每格可能不同**）。
+   实测方法（`scripts/align_en_clip.py`）：
+   - **首尾双重定位**（最强）：首段与尾锚点各找匹配位置，**间距已知 = 切片时长**
+     ⇒ 两个独立锚点 + 已知间距这个三重约束，几乎不可能被偶然满足
+   - **n-gram 索引 + 投票**（每段独立定位）
+   - **锚点投票**（众数而非中位数 —— 离群点会拉偏中位数）
+   - 最后的窗起点取「**ASR 首段匹配所在 cue 的起点**」，保证首句完整包含
 
-2. **对齐质量要用 WER 兜底**
-   窗口错 200 秒 ⇒ WER 从 0.14 飙到 **0.72**。
+2. **对齐质量要用「词级差」兜底**
+   窗口错 200 秒 ⇒ 词级差从 0.15 飙到 **0.72**。
    🔴 **但不能用「WER 最小」选窗口** —— 那是作弊解（多包一句能稀释分母）。
-   正确判据是**语义边界**：切片首句是 `So what is it?`（OCW 125.62 s），
-   上一句 `I'll explain why we have these covenants at the end.`（120.90~125.62 s）
-   **在切片外**，且 ASR 侧也没识别到它。
+   正确判据是**语义边界**：切片首句必须在窗内、上一句必须在窗外。
 
-3. **官方稿自己会错，且方向对 ASR 不利**
-   官方转写漏了 `is` / `a` / `the`，把 `why` 转成 `whey`。
-   这会让 WER **系统性偏高**（音频说对了、参考稿没写 ⇒ ASR 被判错）。
+3. **官方稿自己会错，且方向对 ASR 不利**（漏 `is`/`a`/`the`、`why`→`whey`）⇒
+   WER 会**系统性偏高**（音频说对了、参考稿没写 ⇒ ASR 被判错）。
    ⇒ **逐字稿必须对着音频校，不能对着「权威稿」照抄。**
+   ⇒ 校对用 `scripts/scan_official_typos.py`（模式扫描，把 P1 人工发现的 13 类
+   疏漏**泛化**成扫描器；P1 复现 19 处，P4/P20 **零命中** ⇒ 讲次之间质量差异明显）。
+
+### 🔴 第四个坑（后来才发现的）：**官方 VTT 的详略度逐讲不同**
+
+SVM 讲（Lecture 16）的官方转写里 `margin` / `hyperplane` 出现 **0 次**，
+神经网络讲里 `backpropagation` / `hidden unit` / `activation` 也是 **0 次** ——
+而这些必然是那两讲的核心内容。
+
+⇒ **MIT OCW 的 VTT 不是逐字稿，是「详略不一的字幕」**。
+拿**某讲偏简略的转写**当逐字稿基准 ⇒ 音频里说了的词参考稿里没有
+⇒ ASR 识别出来反被判插入错误 ⇒ **WER 系统性偏高且对 ASR 不利**。
+
+⇒ **纪律：每一格用官方 VTT 做参考稿前，先验「详略度」。**
+判据 = 「官方稿 vs ASR 草稿」的**词数与词级差**：
+
+| 格 | 官方稿词 | ASR 词 | 词级差 |
+|---|---|---|---|
+| P1（Lec-1） | 1478 | 1526 | 0.1421 |
+| P4（Lec-4） | 1547 | 1495 | **0.1500** |
+| P20（Lec-21） | 1578 | 1607 | **0.1546** |
+
+⇒ 三讲**词数相近、词级差一致（0.14~0.15）** ⇒ 详略度正常，参考稿可用。
+
+## 三之三、术语库（副产品）
+
+`mit6034_terms.md` —— 从 24 个讲次的大纲 + 官方 VTT 构建的**中英文对照术语库**
+（76 条，52 条已验证 / 8 条「该讲字幕未提及但其它讲出现」/ 16 条真猜错已剔除）。
+
+🔑 **方法教训**：第一版试图「纯统计抽术语」（跨讲次共现 × 词频），**失败** ——
+产出全是课堂口语（work/equal/problem/stuff/actually），
+因为口语词在**每讲都高频出现** ⇒ 跨讲次共现这个判据对它们一样成立。
+**统计方法抽不出领域术语 —— 缺的是「领域先验」，不是「统计力度」。**
+替代方案：**课程大纲当种子 + 转写验证**（讲次标题本身就是术语表）。
+（失败版的产物保留在 `mit6034_terms_candidates.md`，文件头已标注废弃。）
 
 ## 四、复现步骤
 
 ```bash
-# 1) 抓素材（BV + 区间）
-<venv>/Scripts/python.exe scripts/fetch_bili_audio.py BV1dM411U7qK \
-    --start 2:00 --end 12:30 --name en_lecture_mit6034_p1 \
+# 1) 抓素材（BV + 分P + 区间）
+<venv>/Scripts/python.exe scripts/fetch_bili_audio.py BV1dM411U7qK --page <P> \
+    --start MM:SS --end MM:SS --name en_lecture_mit6034_<p> \
     --out-dir testset/english_lecture
 
-# 2) 取官方 VTT（外部资源，不入库）
-#    https://ocw.mit.edu/courses/6-034-artificial-intelligence-fall-2010/
-#      c392f6e074945c7488e5835ed9a74b7d_TjZBTDzGeGg.vtt
+# 2) 取该讲的官方 VTT（外部资源，不入库）
+<venv>/Scripts/python.exe scripts/fetch_ocw_vtt.py \
+    --slug lecture-<N>-<title> --out-dir packaging/eval/ocw_vtt
 
-# 3) 交叉验证对齐（官方稿 vs ASR 草稿的词级差）
-<venv>/Scripts/python.exe scripts/build_en_reference.py \
-    --vtt <lec1.vtt> --draft testset/english_lecture/en_lecture_mit6034_p1.draft.json \
-    --clip-start 125.12 --clip-end 755.12
+# 3) 出 ASR 草稿（用于交叉验证对齐 + 找官方稿疏漏）
+<venv>/Scripts/python.exe scripts/asr_draft_transcript.py \
+    --audio testset/english_lecture/en_lecture_mit6034_<p>.wav --language en --terms off
 
-# 4) 包装成校对链能吃的形状
+# 4) 时间轴对齐（产出切窗 + 对齐记录 + 候选稿）
+<venv>/Scripts/python.exe scripts/align_en_clip.py \
+    --vtt packaging/eval/ocw_vtt/ocw_lecture-<N>-<title>.vtt \
+    --draft testset/english_lecture/en_lecture_mit6034_<p>.draft.json \
+    --clip-start <B站切片起点> --clip-end <B站切片终点> \
+    --out-dir testset/english_lecture --stem en_lecture_mit6034_<p>
+#    ⚠️ 看「词级差」：>0.30 ⇒ 窗口多半错了，先查偏移
+#    ⚠️ 自动定位失败时可用 --offset <人工确认的偏移> 兜底
+
+# 5) 官方稿疏漏扫描（只产线索，不改文本）
+<venv>/Scripts/python.exe scripts/scan_official_typos.py \
+    --official testset/english_lecture/en_lecture_mit6034_<p>.official.txt \
+    --out testset/english_lecture/en_lecture_mit6034_<p>.typos.md
+
+# 6) 包装成校对链能吃的形状 → 预校对 → 定稿
 <venv>/Scripts/python.exe scripts/wrap_official_as_draft.py \
-    --vtt <lec1.vtt> --audio en_lecture_mit6034_p1.wav \
-    --clip-start 125.12 --clip-end 755.12 \
-    --out testset/english_lecture/en_lecture_mit6034_p1.official.draft.json
-
-# 5) 预校对（修正表逐条改官方稿自己的错）
+    --vtt packaging/eval/ocw_vtt/ocw_lecture-<N>-<title>.vtt \
+    --audio en_lecture_mit6034_<p>.wav \
+    --clip-start <对齐得到的起点> --clip-end <对齐得到的终点> \
+    --out testset/english_lecture/en_lecture_mit6034_<p>.official.draft.json
 <venv>/Scripts/python.exe scripts/preproof_transcript.py \
-    --draft testset/english_lecture/en_lecture_mit6034_p1.official.draft.json \
-    --corrections testset/english_lecture/en_lecture_mit6034_p1.corrections.tsv
-#    ⇒ 产出 en_lecture_mit6034_p1.official.preproof.txt
-#    ⇒ 复制为 en_lecture_mit6034_p1.preproof.txt（这是 resolve_reference() 认的名字）
+    --draft testset/english_lecture/en_lecture_mit6034_<p>.official.draft.json \
+    --corrections testset/english_lecture/en_lecture_mit6034_<p>.corrections.tsv
+#    ⇒ 复制为 en_lecture_mit6034_<p>.preproof.txt（resolve_reference() 认这个名字）
 
-# 6) 合规校验
+# 7) 合规校验
 <venv>/Scripts/python.exe scripts/check_transcript.py \
-    --audio testset/english_lecture/en_lecture_mit6034_p1.wav \
-    --transcript testset/english_lecture/en_lecture_mit6034_p1.preproof.txt
+    --audio testset/english_lecture/en_lecture_mit6034_<p>.wav \
+    --transcript testset/english_lecture/en_lecture_mit6034_<p>.preproof.txt
 
-# 7) 跑基线
+# 8) 跑基线
 <venv>/Scripts/python.exe scripts/eval_asr_quality.py \
-    --audio testset/english_lecture/en_lecture_mit6034_p1.wav \
+    --audio testset/english_lecture/en_lecture_mit6034_<p>.wav \
     --realtime --language en --source-kind human-recording \
-    --report packaging/eval/en_lecture_baseline.json
+    --report packaging/eval/en_lecture_<p>_baseline.json
+```
+
+### 术语库（P5）
+
+```bash
+# 抓全部 24 讲的 VTT
+<venv>/Scripts/python.exe scripts/fetch_ocw_vtt.py --slug <slug> --out-dir packaging/eval/ocw_vtt
+
+# 构建中英文对照术语库（大纲种子 + 转写验证）
+<venv>/Scripts/python.exe scripts/build_mit6034_terms.py \
+    --vtt-dir packaging/eval/ocw_vtt --out testset/english_lecture/mit6034_terms.md
 ```
 
 ## 五、口径纪律

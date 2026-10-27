@@ -27,7 +27,58 @@
       "bitDepth": 16,
       "silenceRatio": 0.14,
       "consent": "仅用于本地项目内部评估，不再分发；含他人声音，故音频与逐字稿均不入库（见 .gitignore）",
-      "recordedAt": "2026-10-26"
+      "recordedAt": "2026-10-26",
+      "sha256": "229381234daf3e9dd21e206a0b660527071ee89532276d9d3b6125bd8e55cc3c"
+    },
+    {
+      "scenario": "en_lecture",
+      "audio": "en_lecture_mit6034_p4.wav",
+      "reference": "en_lecture_mit6034_p4.preproof.txt",
+      "bvid": "BV1dM411U7qK",
+      "clipRange": "10:00~20:30",
+      "page": 4,
+      "part": "P4「4.-搜索：深度优先、爬山、束搜索」",
+      "upstream": "MIT OCW 6-034 Fall 2010, Lecture 4: Search: Depth-First, Hill Climbing, Beam",
+      "referenceSource": "MIT OCW 官方 VTT（e39058e630fe5f1f8c012d7c7abe474c_j1H3jAAGlEA.vtt）",
+      "referenceAlignment": {
+        "ocwClipStart": 593.42,
+        "ocwClipEnd": 1223.42,
+        "offsetSeconds": 594.5,
+        "method": "锚点投票 + 首句 cue 定位；独立自检：ASR 首段与官方稿首句逐字对应",
+        "crossCheckWer": 0.15
+      },
+      "durationSeconds": 630.0,
+      "sampleRate": 16000,
+      "channels": 1,
+      "bitDepth": 16,
+      "consent": "仅用于本地项目内部评估，不再分发；含他人声音，故音频与逐字稿均不入库",
+      "recordedAt": "2026-10-26",
+      "sha256": "d9ab7a3f6b67ff63f4e1d4b0f04b74791fb86f81a28849a2945dc70e28629f9c"
+    },
+    {
+      "scenario": "en_lecture",
+      "audio": "en_lecture_mit6034_p20.wav",
+      "reference": "en_lecture_mit6034_p20.preproof.txt",
+      "bvid": "BV1dM411U7qK",
+      "clipRange": "05:00~15:30",
+      "page": 20,
+      "part": "P20「20.-概率推理I」",
+      "upstream": "MIT OCW 6-034 Fall 2010, **Lecture 21**: Probabilistic Inference I（⚠️ OCW 多了「Lecture 20: The AI business」，故 B 站 P20 对应 OCW Lecture 21，偏移 1 —— 已用时间轴对齐独立验证）",
+      "referenceSource": "MIT OCW 官方 VTT（873e6972906c5be98d0452072b5253eb_A6Ud6oUCRak.vtt）",
+      "referenceAlignment": {
+        "ocwClipStart": 296.33,
+        "ocwClipEnd": 926.33,
+        "offsetSeconds": 296.5,
+        "method": "首尾双重定位（两个独立锚点 + 已知间距 630s）；独立自检通过",
+        "crossCheckWer": 0.1546
+      },
+      "durationSeconds": 630.0,
+      "sampleRate": 16000,
+      "channels": 1,
+      "bitDepth": 16,
+      "consent": "仅用于本地项目内部评估，不再分发；含他人声音，故音频与逐字稿均不入库",
+      "recordedAt": "2026-10-26",
+      "sha256": "f3fe0b27b38a57d8cfb9ad8a040fcf544a89ca4812ed6e9aa21e80f89a722487"
     }
   ]
 }

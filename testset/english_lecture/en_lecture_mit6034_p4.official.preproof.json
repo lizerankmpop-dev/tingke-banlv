@@ -1,0 +1,1505 @@
+{
+  "info": {
+    "audio": "en_lecture_mit6034_p4.wav",
+    "durationSeconds": 630.0,
+    "durationMinutes": 10.5,
+    "vadSegments": 185,
+    "paragraphs": 185,
+    "chars": 7033,
+    "engine": {
+      "model": "official-vtt",
+      "language": "en",
+      "terms": "off",
+      "domain": ""
+    },
+    "source": "MIT OpenCourseWare 6-034 Fall 2010, Lecture 1 (official VTT)",
+    "note": "本文件的 text 是**官方 VTT 字幕**（不是 ASR 输出）。audioStart/audioEnd 已换算成切片内相对时间（OCW 绝对时间 − 593.42）。用它驱动 preproof_transcript.py，让校对链与中文格完全同构。",
+    "generatedAt": "2026-10-26",
+    "preproof": {
+      "fixes": [],
+      "suspects": []
+    }
+  },
+  "segments": [
+    {
+      "index": 0,
+      "audioStart": 0.0,
+      "audioEnd": 2.26,
+      "text": "with is this backtracking idea.",
+      "rawText": "with is this backtracking idea.",
+      "suspects": []
+    },
+    {
+      "index": 1,
+      "audioStart": 8.28,
+      "audioEnd": 10.99,
+      "text": "Now, backtrack is not relevant to the British Museum",
+      "rawText": "Now, backtrack is not relevant to the British Museum",
+      "suspects": []
+    },
+    {
+      "index": 2,
+      "audioStart": 10.99,
+      "audioEnd": 13.7,
+      "text": "algorithm, because you've got to find everything.",
+      "rawText": "algorithm, because you've got to find everything.",
+      "suspects": []
+    },
+    {
+      "index": 3,
+      "audioStart": 13.7,
+      "audioEnd": 16.58,
+      "text": "You can't quit when you've found one path.",
+      "rawText": "You can't quit when you've found one path.",
+      "suspects": []
+    },
+    {
+      "index": 4,
+      "audioStart": 16.58,
+      "audioEnd": 19.52,
+      "text": "But you'd always want to use backtracking with Depth-first",
+      "rawText": "But you'd always want to use backtracking with Depth-first",
+      "suspects": []
+    },
+    {
+      "index": 5,
+      "audioStart": 19.52,
+      "audioEnd": 22.72,
+      "text": "Search, because you may plunge on down and miss the path that",
+      "rawText": "Search, because you may plunge on down and miss the path that",
+      "suspects": []
+    },
+    {
+      "index": 6,
+      "audioStart": 22.72,
+      "audioEnd": 24.63,
+      "text": "gets to the goal.",
+      "rawText": "gets to the goal.",
+      "suspects": []
+    },
+    {
+      "index": 7,
+      "audioStart": 24.63,
+      "audioEnd": 29.06,
+      "text": "Now, you might ask me, is backtracking, therefore,",
+      "rawText": "Now, you might ask me, is backtracking, therefore,",
+      "suspects": []
+    },
+    {
+      "index": 8,
+      "audioStart": 29.06,
+      "audioEnd": 31.91,
+      "text": "always part of Depth-first Search?",
+      "rawText": "always part of Depth-first Search?",
+      "suspects": []
+    },
+    {
+      "index": 9,
+      "audioStart": 31.91,
+      "audioEnd": 34.93,
+      "text": "And you can read textbooks that do it either way.",
+      "rawText": "And you can read textbooks that do it either way.",
+      "suspects": []
+    },
+    {
+      "index": 10,
+      "audioStart": 34.93,
+      "audioEnd": 35.77,
+      "text": "Count on it.",
+      "rawText": "Count on it.",
+      "suspects": []
+    },
+    {
+      "index": 11,
+      "audioStart": 35.77,
+      "audioEnd": 39.08,
+      "text": "If we give you a Search problem on a quiz, we'll tell",
+      "rawText": "If we give you a Search problem on a quiz, we'll tell",
+      "suspects": []
+    },
+    {
+      "index": 12,
+      "audioStart": 39.08,
+      "audioEnd": 40.98,
+      "text": "you whether or not your Search is supposed to use",
+      "rawText": "you whether or not your Search is supposed to use",
+      "suspects": []
+    },
+    {
+      "index": 13,
+      "audioStart": 40.98,
+      "audioEnd": 41.57,
+      "text": "backtracking.",
+      "rawText": "backtracking.",
+      "suspects": []
+    },
+    {
+      "index": 14,
+      "audioStart": 41.57,
+      "audioEnd": 44.78,
+      "text": "We consider it to be an optional thing.",
+      "rawText": "We consider it to be an optional thing.",
+      "suspects": []
+    },
+    {
+      "index": 15,
+      "audioStart": 44.78,
+      "audioEnd": 46.9,
+      "text": "You'd be pretty stupid not to use this optional thing when",
+      "rawText": "You'd be pretty stupid not to use this optional thing when",
+      "suspects": []
+    },
+    {
+      "index": 16,
+      "audioStart": 46.9,
+      "audioEnd": 48.505,
+      "text": "you're doing Depth-first Search.",
+      "rawText": "you're doing Depth-first Search.",
+      "suspects": []
+    },
+    {
+      "index": 17,
+      "audioStart": 48.505,
+      "audioEnd": 51.38,
+      "text": "But we'll separate these ideas out and call",
+      "rawText": "But we'll separate these ideas out and call",
+      "suspects": []
+    },
+    {
+      "index": 18,
+      "audioStart": 51.38,
+      "audioEnd": 53.88,
+      "text": "it an optional add-on.",
+      "rawText": "it an optional add-on.",
+      "suspects": []
+    },
+    {
+      "index": 19,
+      "audioStart": 53.88,
+      "audioEnd": 58.18,
+      "text": "so, that's Depth-first Search, very simple.",
+      "rawText": "so, that's Depth-first Search, very simple.",
+      "suspects": []
+    },
+    {
+      "index": 20,
+      "audioStart": 58.18,
+      "audioEnd": 62.25,
+      "text": "Now, the natural companion to Depth-first Search will be",
+      "rawText": "Now, the natural companion to Depth-first Search will be",
+      "suspects": []
+    },
+    {
+      "index": 21,
+      "audioStart": 62.25,
+      "audioEnd": 69.034,
+      "text": "Breadth-first Search, Breadth-first.",
+      "rawText": "Breadth-first Search, Breadth-first.",
+      "suspects": []
+    },
+    {
+      "index": 22,
+      "audioStart": 74.22,
+      "audioEnd": 78.2,
+      "text": "And the way it works is you build up this tree level by",
+      "rawText": "And the way it works is you build up this tree level by",
+      "suspects": []
+    },
+    {
+      "index": 23,
+      "audioStart": 78.2,
+      "audioEnd": 82.74,
+      "text": "level, and at some point, when you scan across a level,",
+      "rawText": "level, and at some point, when you scan across a level,",
+      "suspects": []
+    },
+    {
+      "index": 24,
+      "audioStart": 82.74,
+      "audioEnd": 84.37,
+      "text": "you'll find that you've completed a path",
+      "rawText": "you'll find that you've completed a path",
+      "suspects": []
+    },
+    {
+      "index": 25,
+      "audioStart": 84.37,
+      "audioEnd": 86.68,
+      "text": "that goes to the goal.",
+      "rawText": "that goes to the goal.",
+      "suspects": []
+    },
+    {
+      "index": 26,
+      "audioStart": 86.68,
+      "audioEnd": 93.89,
+      "text": "So, level by level, s can go to either a or b.",
+      "rawText": "So, level by level, s can go to either a or b.",
+      "suspects": []
+    },
+    {
+      "index": 27,
+      "audioStart": 93.89,
+      "audioEnd": 97.25,
+      "text": "a can go either to b or d.",
+      "rawText": "a can go either to b or d.",
+      "suspects": []
+    },
+    {
+      "index": 28,
+      "audioStart": 97.25,
+      "audioEnd": 101.2,
+      "text": "And b can go to either a or c.",
+      "rawText": "And b can go to either a or c.",
+      "suspects": []
+    },
+    {
+      "index": 29,
+      "audioStart": 101.2,
+      "audioEnd": 102.06,
+      "text": "So, you see what we're doing.",
+      "rawText": "So, you see what we're doing.",
+      "suspects": []
+    },
+    {
+      "index": 30,
+      "audioStart": 102.06,
+      "audioEnd": 104.61,
+      "text": "We're going level by level.",
+      "rawText": "We're going level by level.",
+      "suspects": []
+    },
+    {
+      "index": 31,
+      "audioStart": 104.61,
+      "audioEnd": 106.94,
+      "text": "And we haven't hit a level with a goal in it yet, so",
+      "rawText": "And we haven't hit a level with a goal in it yet, so",
+      "suspects": []
+    },
+    {
+      "index": 32,
+      "audioStart": 106.94,
+      "audioEnd": 109.09,
+      "text": "we've got to keep going.",
+      "rawText": "we've got to keep going.",
+      "suspects": []
+    },
+    {
+      "index": 33,
+      "audioStart": 109.09,
+      "audioEnd": 111.38,
+      "text": "Note that we're building up quite a bit of stuff here,",
+      "rawText": "Note that we're building up quite a bit of stuff here,",
+      "suspects": []
+    },
+    {
+      "index": 34,
+      "audioStart": 111.38,
+      "audioEnd": 115.94,
+      "text": "quite a lot of growth in the size of the path set that",
+      "rawText": "quite a lot of growth in the size of the path set that",
+      "suspects": []
+    },
+    {
+      "index": 35,
+      "audioStart": 115.94,
+      "audioEnd": 118.12,
+      "text": "we're keeping in mind.",
+      "rawText": "we're keeping in mind.",
+      "suspects": []
+    },
+    {
+      "index": 36,
+      "audioStart": 118.12,
+      "audioEnd": 123.43,
+      "text": "At the next level, we have b going to c, d going to g, a",
+      "rawText": "At the next level, we have b going to c, d going to g, a",
+      "suspects": []
+    },
+    {
+      "index": 37,
+      "audioStart": 123.43,
+      "audioEnd": 127.61,
+      "text": "going to d, and c going to e.",
+      "rawText": "going to d, and c going to e.",
+      "suspects": []
+    },
+    {
+      "index": 38,
+      "audioStart": 127.61,
+      "audioEnd": 132.04,
+      "text": "And now, when we scan across, we do hit g.",
+      "rawText": "And now, when we scan across, we do hit g.",
+      "suspects": []
+    },
+    {
+      "index": 39,
+      "audioStart": 132.04,
+      "audioEnd": 135.11,
+      "text": "So, we found a path with Breadth-first Search, just as",
+      "rawText": "So, we found a path with Breadth-first Search, just as",
+      "suspects": []
+    },
+    {
+      "index": 40,
+      "audioStart": 135.11,
+      "audioEnd": 136.565,
+      "text": "we found a path with Depth-first Search.",
+      "rawText": "we found a path with Depth-first Search.",
+      "suspects": []
+    },
+    {
+      "index": 41,
+      "audioStart": 139.23,
+      "audioEnd": 140.94,
+      "text": "Now, you might say, well, why didn't you just quit",
+      "rawText": "Now, you might say, well, why didn't you just quit",
+      "suspects": []
+    },
+    {
+      "index": 42,
+      "audioStart": 140.94,
+      "audioEnd": 142.0,
+      "text": "when you hit g?",
+      "rawText": "when you hit g?",
+      "suspects": []
+    },
+    {
+      "index": 43,
+      "audioStart": 142.0,
+      "audioEnd": 144.92,
+      "text": "Implementation detail.",
+      "rawText": "Implementation detail.",
+      "suspects": []
+    },
+    {
+      "index": 44,
+      "audioStart": 144.92,
+      "audioEnd": 147.41,
+      "text": "We'll talk about a sample implementation.",
+      "rawText": "We'll talk about a sample implementation.",
+      "suspects": []
+    },
+    {
+      "index": 45,
+      "audioStart": 147.41,
+      "audioEnd": 149.57,
+      "text": "You can write it in any way you want.",
+      "rawText": "You can write it in any way you want.",
+      "suspects": []
+    },
+    {
+      "index": 46,
+      "audioStart": 149.57,
+      "audioEnd": 152.66,
+      "text": "But now that we know what these searches are, let's",
+      "rawText": "But now that we know what these searches are, let's",
+      "suspects": []
+    },
+    {
+      "index": 47,
+      "audioStart": 152.66,
+      "audioEnd": 158.14,
+      "text": "speed things up a little bit here and do a couple searches",
+      "rawText": "speed things up a little bit here and do a couple searches",
+      "suspects": []
+    },
+    {
+      "index": 48,
+      "audioStart": 158.14,
+      "audioEnd": 161.11,
+      "text": "that now have names.",
+      "rawText": "that now have names.",
+      "suspects": []
+    },
+    {
+      "index": 49,
+      "audioStart": 161.11,
+      "audioEnd": 165.17,
+      "text": "The first type will be Depth-first, boom.",
+      "rawText": "The first type will be Depth-first, boom.",
+      "suspects": []
+    },
+    {
+      "index": 50,
+      "audioStart": 165.17,
+      "audioEnd": 170.45,
+      "text": "That's the one that produces the thief path.",
+      "rawText": "That's the one that produces the thief path.",
+      "suspects": []
+    },
+    {
+      "index": 51,
+      "audioStart": 170.45,
+      "audioEnd": 172.65,
+      "text": "And then we can also do a Breadth-first Search, which we",
+      "rawText": "And then we can also do a Breadth-first Search, which we",
+      "suspects": []
+    },
+    {
+      "index": 52,
+      "audioStart": 172.65,
+      "audioEnd": 173.89,
+      "text": "haven't tried yet.",
+      "rawText": "haven't tried yet.",
+      "suspects": []
+    },
+    {
+      "index": 53,
+      "audioStart": 173.89,
+      "audioEnd": 175.93,
+      "text": "What do you suppose is going to happen?",
+      "rawText": "What do you suppose is going to happen?",
+      "suspects": []
+    },
+    {
+      "index": 54,
+      "audioStart": 175.93,
+      "audioEnd": 179.61,
+      "text": "Is it going to be fast, slow, produce a good path,",
+      "rawText": "Is it going to be fast, slow, produce a good path,",
+      "suspects": []
+    },
+    {
+      "index": 55,
+      "audioStart": 179.61,
+      "audioEnd": 180.42,
+      "text": "produce a bad path?",
+      "rawText": "produce a bad path?",
+      "suspects": []
+    },
+    {
+      "index": 56,
+      "audioStart": 180.42,
+      "audioEnd": 182.675,
+      "text": "I don't know, let's try it.",
+      "rawText": "I don't know, let's try it.",
+      "suspects": []
+    },
+    {
+      "index": 57,
+      "audioStart": 182.675,
+      "audioEnd": 184.99,
+      "text": "I had to speed it up, you see, because it's doing an awful",
+      "rawText": "I had to speed it up, you see, because it's doing an awful",
+      "suspects": []
+    },
+    {
+      "index": 58,
+      "audioStart": 184.99,
+      "audioEnd": 186.25,
+      "text": "lot of Search.",
+      "rawText": "lot of Search.",
+      "suspects": []
+    },
+    {
+      "index": 59,
+      "audioStart": 186.25,
+      "audioEnd": 187.99,
+      "text": "It's generating an awful lot of paths.",
+      "rawText": "It's generating an awful lot of paths.",
+      "suspects": []
+    },
+    {
+      "index": 60,
+      "audioStart": 195.0,
+      "audioEnd": 196.86,
+      "text": "Finally, you got a path.",
+      "rawText": "Finally, you got a path.",
+      "suspects": []
+    },
+    {
+      "index": 61,
+      "audioStart": 196.86,
+      "audioEnd": 197.61,
+      "text": "Is it the best path?",
+      "rawText": "Is it the best path?",
+      "suspects": []
+    },
+    {
+      "index": 62,
+      "audioStart": 197.61,
+      "audioEnd": 198.26,
+      "text": "I don't think so.",
+      "rawText": "I don't think so.",
+      "suspects": []
+    },
+    {
+      "index": 63,
+      "audioStart": 198.26,
+      "audioEnd": 200.28,
+      "text": "But we're not going to talk about optimal paths today.",
+      "rawText": "But we're not going to talk about optimal paths today.",
+      "suspects": []
+    },
+    {
+      "index": 64,
+      "audioStart": 200.28,
+      "audioEnd": 202.31,
+      "text": "We're just going to talk about pretty good",
+      "rawText": "We're just going to talk about pretty good",
+      "suspects": []
+    },
+    {
+      "index": 65,
+      "audioStart": 202.31,
+      "audioEnd": 204.91,
+      "text": "paths, heuristic paths.",
+      "rawText": "paths, heuristic paths.",
+      "suspects": []
+    },
+    {
+      "index": 66,
+      "audioStart": 204.91,
+      "audioEnd": 208.125,
+      "text": "Let's move the starting position here in the middle.",
+      "rawText": "Let's move the starting position here in the middle.",
+      "suspects": []
+    },
+    {
+      "index": 67,
+      "audioStart": 208.125,
+      "audioEnd": 211.63,
+      "text": "Do you think Breadth-first Search is going to be stupid?",
+      "rawText": "Do you think Breadth-first Search is going to be stupid?",
+      "suspects": []
+    },
+    {
+      "index": 68,
+      "audioStart": 211.63,
+      "audioEnd": 212.89,
+      "text": "I think it's going to be pretty stupid.",
+      "rawText": "I think it's going to be pretty stupid.",
+      "suspects": []
+    },
+    {
+      "index": 69,
+      "audioStart": 212.89,
+      "audioEnd": 215.31,
+      "text": "Let's see what happens.",
+      "rawText": "Let's see what happens.",
+      "suspects": []
+    },
+    {
+      "index": 70,
+      "audioStart": 215.31,
+      "audioEnd": 217.42,
+      "text": "This Search is a lot to the left, which you would never do",
+      "rawText": "This Search is a lot to the left, which you would never do",
+      "suspects": []
+    },
+    {
+      "index": 71,
+      "audioStart": 217.42,
+      "audioEnd": 218.375,
+      "text": "with you eye.",
+      "rawText": "with you eye.",
+      "suspects": []
+    },
+    {
+      "index": 72,
+      "audioStart": 218.375,
+      "audioEnd": 221.63,
+      "text": "Let me slow that down just to demonstrate it.",
+      "rawText": "Let me slow that down just to demonstrate it.",
+      "suspects": []
+    },
+    {
+      "index": 73,
+      "audioStart": 221.63,
+      "audioEnd": 223.77,
+      "text": "It finds a shorter path, because it's right there in",
+      "rawText": "It finds a shorter path, because it's right there in",
+      "suspects": []
+    },
+    {
+      "index": 74,
+      "audioStart": 223.77,
+      "audioEnd": 225.05,
+      "text": "the middle.",
+      "rawText": "the middle.",
+      "suspects": []
+    },
+    {
+      "index": 75,
+      "audioStart": 225.05,
+      "audioEnd": 228.39,
+      "text": "But it spends a lot of its time looking off to the left.",
+      "rawText": "But it spends a lot of its time looking off to the left.",
+      "suspects": []
+    },
+    {
+      "index": 76,
+      "audioStart": 228.39,
+      "audioEnd": 231.32,
+      "text": "It's pretty stupid.",
+      "rawText": "It's pretty stupid.",
+      "suspects": []
+    },
+    {
+      "index": 77,
+      "audioStart": 231.32,
+      "audioEnd": 233.39,
+      "text": "But that's how it works.",
+      "rawText": "But that's how it works.",
+      "suspects": []
+    },
+    {
+      "index": 78,
+      "audioStart": 233.39,
+      "audioEnd": 236.34,
+      "text": "So, now that we've got two examples of searches on the",
+      "rawText": "So, now that we've got two examples of searches on the",
+      "suspects": []
+    },
+    {
+      "index": 79,
+      "audioStart": 236.34,
+      "audioEnd": 239.04,
+      "text": "table, I'd like to just write a little flow chart for how",
+      "rawText": "table, I'd like to just write a little flow chart for how",
+      "suspects": []
+    },
+    {
+      "index": 80,
+      "audioStart": 239.04,
+      "audioEnd": 241.38,
+      "text": "the search might work.",
+      "rawText": "the search might work.",
+      "suspects": []
+    },
+    {
+      "index": 81,
+      "audioStart": 241.38,
+      "audioEnd": 245.29,
+      "text": "Because if I do that, then it'll be easier for us to see",
+      "rawText": "Because if I do that, then it'll be easier for us to see",
+      "suspects": []
+    },
+    {
+      "index": 82,
+      "audioStart": 245.29,
+      "audioEnd": 247.18,
+      "text": "what kind of small differences there are between the",
+      "rawText": "what kind of small differences there are between the",
+      "suspects": []
+    },
+    {
+      "index": 83,
+      "audioStart": 247.18,
+      "audioEnd": 251.13,
+      "text": "implementations of these various searches.",
+      "rawText": "implementations of these various searches.",
+      "suspects": []
+    },
+    {
+      "index": 84,
+      "audioStart": 251.13,
+      "audioEnd": 254.08,
+      "text": "So, what we're going to do is we're going to develop a",
+      "rawText": "So, what we're going to do is we're going to develop a",
+      "suspects": []
+    },
+    {
+      "index": 85,
+      "audioStart": 254.08,
+      "audioEnd": 257.6,
+      "text": "waiting list, a queue, a line, whatever you'd",
+      "rawText": "waiting list, a queue, a line, whatever you'd",
+      "suspects": []
+    },
+    {
+      "index": 86,
+      "audioStart": 257.6,
+      "audioEnd": 257.76,
+      "text": "like to call it.",
+      "rawText": "like to call it.",
+      "suspects": []
+    },
+    {
+      "index": 87,
+      "audioStart": 257.76,
+      "audioEnd": 258.96,
+      "text": "Let's call if a queue.",
+      "rawText": "Let's call if a queue.",
+      "suspects": []
+    },
+    {
+      "index": 88,
+      "audioStart": 258.96,
+      "audioEnd": 261.17,
+      "text": "We're going to develop a queue of paths that are under",
+      "rawText": "We're going to develop a queue of paths that are under",
+      "suspects": []
+    },
+    {
+      "index": 89,
+      "audioStart": 261.17,
+      "audioEnd": 263.54,
+      "text": "consideration.",
+      "rawText": "consideration.",
+      "suspects": []
+    },
+    {
+      "index": 90,
+      "audioStart": 263.54,
+      "audioEnd": 266.7,
+      "text": "So, the first step in our algorithm will be to",
+      "rawText": "So, the first step in our algorithm will be to",
+      "suspects": []
+    },
+    {
+      "index": 91,
+      "audioStart": 266.7,
+      "audioEnd": 272.822,
+      "text": "initialize our queue.",
+      "rawText": "initialize our queue.",
+      "suspects": []
+    },
+    {
+      "index": 92,
+      "audioStart": 275.99,
+      "audioEnd": 280.13,
+      "text": "And I think what I'll do is I'll simulate Depth-first",
+      "rawText": "And I think what I'll do is I'll simulate Depth-first",
+      "suspects": []
+    },
+    {
+      "index": 93,
+      "audioStart": 280.13,
+      "audioEnd": 284.36,
+      "text": "Search on this problem up there on the",
+      "rawText": "Search on this problem up there on the",
+      "suspects": []
+    },
+    {
+      "index": 94,
+      "audioStart": 284.36,
+      "audioEnd": 287.08,
+      "text": "left using this algorithm.",
+      "rawText": "left using this algorithm.",
+      "suspects": []
+    },
+    {
+      "index": 95,
+      "audioStart": 287.08,
+      "audioEnd": 290.47,
+      "text": "I need to have some way of representing my paths.",
+      "rawText": "I need to have some way of representing my paths.",
+      "suspects": []
+    },
+    {
+      "index": 96,
+      "audioStart": 290.47,
+      "audioEnd": 293.54,
+      "text": "And what I want to do is I'm going to betray my heritage as",
+      "rawText": "And what I want to do is I'm going to betray my heritage as",
+      "suspects": []
+    },
+    {
+      "index": 97,
+      "audioStart": 293.54,
+      "audioEnd": 296.3,
+      "text": "a list programmer, because I'm just going to put these up as",
+      "rawText": "a list programmer, because I'm just going to put these up as",
+      "suspects": []
+    },
+    {
+      "index": 98,
+      "audioStart": 296.3,
+      "audioEnd": 298.9,
+      "text": "if there were lisp s-expressions.",
+      "rawText": "if there were lisp s-expressions.",
+      "suspects": []
+    },
+    {
+      "index": 99,
+      "audioStart": 298.9,
+      "audioEnd": 301.72,
+      "text": "To begin with, I just have one path.",
+      "rawText": "To begin with, I just have one path.",
+      "suspects": []
+    },
+    {
+      "index": 100,
+      "audioStart": 301.72,
+      "audioEnd": 305.29,
+      "text": "And it has only one node in it, s.",
+      "rawText": "And it has only one node in it, s.",
+      "suspects": []
+    },
+    {
+      "index": 101,
+      "audioStart": 305.29,
+      "audioEnd": 307.98,
+      "text": "That's the whole path.",
+      "rawText": "That's the whole path.",
+      "suspects": []
+    },
+    {
+      "index": 102,
+      "audioStart": 307.98,
+      "audioEnd": 313.47,
+      "text": "The next thing I do after I initialize the queue is I",
+      "rawText": "The next thing I do after I initialize the queue is I",
+      "suspects": []
+    },
+    {
+      "index": 103,
+      "audioStart": 313.47,
+      "audioEnd": 324.995,
+      "text": "extend first path on the queue.",
+      "rawText": "extend first path on the queue.",
+      "suspects": []
+    },
+    {
+      "index": 104,
+      "audioStart": 331.33,
+      "audioEnd": 334.365,
+      "text": "OK, when I extend s, I get two paths.",
+      "rawText": "OK, when I extend s, I get two paths.",
+      "suspects": []
+    },
+    {
+      "index": 105,
+      "audioStart": 336.88,
+      "audioEnd": 345.25,
+      "text": "I get s goes to a, and I get s goes to b.",
+      "rawText": "I get s goes to a, and I get s goes to b.",
+      "suspects": []
+    },
+    {
+      "index": 106,
+      "audioStart": 345.25,
+      "audioEnd": 348.04,
+      "text": "I take the first one off the front of the queue.",
+      "rawText": "I take the first one off the front of the queue.",
+      "suspects": []
+    },
+    {
+      "index": 107,
+      "audioStart": 348.04,
+      "audioEnd": 350.9,
+      "text": "And I put back the two that are produced by",
+      "rawText": "And I put back the two that are produced by",
+      "suspects": []
+    },
+    {
+      "index": 108,
+      "audioStart": 350.9,
+      "audioEnd": 353.65,
+      "text": "extending that path.",
+      "rawText": "extending that path.",
+      "suspects": []
+    },
+    {
+      "index": 109,
+      "audioStart": 353.65,
+      "audioEnd": 356.71,
+      "text": "Now, after I've extended the first path on the queue, I",
+      "rawText": "Now, after I've extended the first path on the queue, I",
+      "suspects": []
+    },
+    {
+      "index": 110,
+      "audioStart": 356.71,
+      "audioEnd": 363.4,
+      "text": "have to but those extended paths on to the queue.",
+      "rawText": "have to but those extended paths on to the queue.",
+      "suspects": []
+    },
+    {
+      "index": 111,
+      "audioStart": 363.4,
+      "audioEnd": 365.78,
+      "text": "In here there's an explicit step where I've checked to see",
+      "rawText": "In here there's an explicit step where I've checked to see",
+      "suspects": []
+    },
+    {
+      "index": 112,
+      "audioStart": 365.78,
+      "audioEnd": 368.2,
+      "text": "if that first path is a winner.",
+      "rawText": "if that first path is a winner.",
+      "suspects": []
+    },
+    {
+      "index": 113,
+      "audioStart": 368.2,
+      "audioEnd": 370.29,
+      "text": "If it's not, I extend it.",
+      "rawText": "If it's not, I extend it.",
+      "suspects": []
+    },
+    {
+      "index": 114,
+      "audioStart": 370.29,
+      "audioEnd": 374.53,
+      "text": "And I have to put those paths onto the queue.",
+      "rawText": "And I have to put those paths onto the queue.",
+      "suspects": []
+    },
+    {
+      "index": 115,
+      "audioStart": 374.53,
+      "audioEnd": 376.76,
+      "text": "So, I'll say that what I do is I end queue.",
+      "rawText": "So, I'll say that what I do is I end queue.",
+      "suspects": []
+    },
+    {
+      "index": 116,
+      "audioStart": 384.97,
+      "audioEnd": 386.53,
+      "text": "Now, I've done one step.",
+      "rawText": "Now, I've done one step.",
+      "suspects": []
+    },
+    {
+      "index": 117,
+      "audioStart": 386.53,
+      "audioEnd": 387.74,
+      "text": "And let's let me do another step.",
+      "rawText": "And let's let me do another step.",
+      "suspects": []
+    },
+    {
+      "index": 118,
+      "audioStart": 387.74,
+      "audioEnd": 390.77,
+      "text": "I'm going to take this first path off.",
+      "rawText": "I'm going to take this first path off.",
+      "suspects": []
+    },
+    {
+      "index": 119,
+      "audioStart": 390.77,
+      "audioEnd": 394.16,
+      "text": "I'm going to extend that path.",
+      "rawText": "I'm going to extend that path.",
+      "suspects": []
+    },
+    {
+      "index": 120,
+      "audioStart": 394.16,
+      "audioEnd": 397.34,
+      "text": "And where do I put these new paths on the queue if I'm",
+      "rawText": "And where do I put these new paths on the queue if I'm",
+      "suspects": []
+    },
+    {
+      "index": 121,
+      "audioStart": 397.34,
+      "audioEnd": 400.9,
+      "text": "doing Depth-first Search?",
+      "rawText": "doing Depth-first Search?",
+      "suspects": []
+    },
+    {
+      "index": 122,
+      "audioStart": 400.9,
+      "audioEnd": 404.97,
+      "text": "Well, I want to work with the path that I've just generated.",
+      "rawText": "Well, I want to work with the path that I've just generated.",
+      "suspects": []
+    },
+    {
+      "index": 123,
+      "audioStart": 404.97,
+      "audioEnd": 410.38,
+      "text": "I'm taking this plunge down deep into the search tree.",
+      "rawText": "I'm taking this plunge down deep into the search tree.",
+      "suspects": []
+    },
+    {
+      "index": 124,
+      "audioStart": 410.38,
+      "audioEnd": 413.87,
+      "text": "So, since I want to keep going down into the stuff that I",
+      "rawText": "So, since I want to keep going down into the stuff that I",
+      "suspects": []
+    },
+    {
+      "index": 125,
+      "audioStart": 413.87,
+      "audioEnd": 418.02,
+      "text": "just generated, where then do I want to put these two paths?",
+      "rawText": "just generated, where then do I want to put these two paths?",
+      "suspects": []
+    },
+    {
+      "index": 126,
+      "audioStart": 418.02,
+      "audioEnd": 418.94,
+      "text": "At the end of the queue?",
+      "rawText": "At the end of the queue?",
+      "suspects": []
+    },
+    {
+      "index": 127,
+      "audioStart": 418.94,
+      "audioEnd": 421.01,
+      "text": "I don't think so, because it'll be a long",
+      "rawText": "I don't think so, because it'll be a long",
+      "suspects": []
+    },
+    {
+      "index": 128,
+      "audioStart": 421.01,
+      "audioEnd": 421.95,
+      "text": "time getting there.",
+      "rawText": "time getting there.",
+      "suspects": []
+    },
+    {
+      "index": 129,
+      "audioStart": 421.95,
+      "audioEnd": 423.2,
+      "text": "I want to put them on the front of the queue.",
+      "rawText": "I want to put them on the front of the queue.",
+      "suspects": []
+    },
+    {
+      "index": 130,
+      "audioStart": 427.5,
+      "audioEnd": 439.438,
+      "text": "For Depth-first Search, I want to put them on the",
+      "rawText": "For Depth-first Search, I want to put them on the",
+      "suspects": []
+    },
+    {
+      "index": 131,
+      "audioStart": 439.438,
+      "audioEnd": 441.8,
+      "text": "front of the queue.",
+      "rawText": "front of the queue.",
+      "suspects": []
+    },
+    {
+      "index": 132,
+      "audioStart": 441.8,
+      "audioEnd": 451.09,
+      "text": "And that's why s, a, b goes here, and s, a, d, and then",
+      "rawText": "And that's why s, a, b goes here, and s, a, d, and then",
+      "suspects": []
+    },
+    {
+      "index": 133,
+      "audioStart": 451.09,
+      "audioEnd": 452.38,
+      "text": "that's s, b.",
+      "rawText": "that's s, b.",
+      "suspects": []
+    },
+    {
+      "index": 134,
+      "audioStart": 456.35,
+      "audioEnd": 457.68,
+      "text": "So, s, b is still there.",
+      "rawText": "So, s, b is still there.",
+      "suspects": []
+    },
+    {
+      "index": 135,
+      "audioStart": 457.68,
+      "audioEnd": 460.13,
+      "text": "That's still a valid possibility.",
+      "rawText": "That's still a valid possibility.",
+      "suspects": []
+    },
+    {
+      "index": 136,
+      "audioStart": 460.13,
+      "audioEnd": 462.41,
+      "text": "But now I've stuck two paths in front of it, both of the",
+      "rawText": "But now I've stuck two paths in front of it, both of the",
+      "suspects": []
+    },
+    {
+      "index": 137,
+      "audioStart": 462.41,
+      "audioEnd": 465.64,
+      "text": "ones I generated by taking a path off the front of the",
+      "rawText": "ones I generated by taking a path off the front of the",
+      "suspects": []
+    },
+    {
+      "index": 138,
+      "audioStart": 465.64,
+      "audioEnd": 468.89,
+      "text": "queue, discovering that it doesn't go to the goal,",
+      "rawText": "queue, discovering that it doesn't go to the goal,",
+      "suspects": []
+    },
+    {
+      "index": 139,
+      "audioStart": 468.89,
+      "audioEnd": 472.71,
+      "text": "extending it and putting those back on the queue.",
+      "rawText": "extending it and putting those back on the queue.",
+      "suspects": []
+    },
+    {
+      "index": 140,
+      "audioStart": 472.71,
+      "audioEnd": 475.79,
+      "text": "I might as well complete this illustration here.",
+      "rawText": "I might as well complete this illustration here.",
+      "suspects": []
+    },
+    {
+      "index": 141,
+      "audioStart": 475.79,
+      "audioEnd": 483.65,
+      "text": "While I'm at it, I take the s, a, b off, s, a, b, and I can",
+      "rawText": "While I'm at it, I take the s, a, b off, s, a, b, and I can",
+      "suspects": []
+    },
+    {
+      "index": 142,
+      "audioStart": 483.65,
+      "audioEnd": 486.42,
+      "text": "go only there to c.",
+      "rawText": "go only there to c.",
+      "suspects": []
+    },
+    {
+      "index": 143,
+      "audioStart": 486.42,
+      "audioEnd": 492.912,
+      "text": "But, of course, I keep s, a, d and s, b on the queue.",
+      "rawText": "But, of course, I keep s, a, d and s, b on the queue.",
+      "suspects": []
+    },
+    {
+      "index": 144,
+      "audioStart": 495.75,
+      "audioEnd": 499.44,
+      "text": "Now, I take the front off the queue again, and I get s, a,",
+      "rawText": "Now, I take the front off the queue again, and I get s, a,",
+      "suspects": []
+    },
+    {
+      "index": 145,
+      "audioStart": 499.44,
+      "audioEnd": 507.081,
+      "text": "b, c, e, and not to forget s, a, d and s, b.",
+      "rawText": "b, c, e, and not to forget s, a, d and s, b.",
+      "suspects": []
+    },
+    {
+      "index": 146,
+      "audioStart": 509.91,
+      "audioEnd": 511.92,
+      "text": "I take the first one off the queue.",
+      "rawText": "I take the first one off the queue.",
+      "suspects": []
+    },
+    {
+      "index": 147,
+      "audioStart": 511.92,
+      "audioEnd": 514.48,
+      "text": "It doesn't go to the goal.",
+      "rawText": "It doesn't go to the goal.",
+      "suspects": []
+    },
+    {
+      "index": 148,
+      "audioStart": 514.48,
+      "audioEnd": 516.58,
+      "text": "I try to extend it, but there's nothing there.",
+      "rawText": "I try to extend it, but there's nothing there.",
+      "suspects": []
+    },
+    {
+      "index": 149,
+      "audioStart": 516.58,
+      "audioEnd": 518.66,
+      "text": "I've reached a dead end.",
+      "rawText": "I've reached a dead end.",
+      "suspects": []
+    },
+    {
+      "index": 150,
+      "audioStart": 518.66,
+      "audioEnd": 521.25,
+      "text": "So, in this operation, all I'm doing is taking the front one",
+      "rawText": "So, in this operation, all I'm doing is taking the front one",
+      "suspects": []
+    },
+    {
+      "index": 151,
+      "audioStart": 521.25,
+      "audioEnd": 523.2,
+      "text": "off the queue and shortening the queue.",
+      "rawText": "off the queue and shortening the queue.",
+      "suspects": []
+    },
+    {
+      "index": 152,
+      "audioStart": 528.61,
+      "audioEnd": 530.44,
+      "text": "We're almost home.",
+      "rawText": "We're almost home.",
+      "suspects": []
+    },
+    {
+      "index": 153,
+      "audioStart": 530.44,
+      "audioEnd": 532.45,
+      "text": "I take s, a,d off of queue.",
+      "rawText": "I take s, a,d off of queue.",
+      "suspects": []
+    },
+    {
+      "index": 154,
+      "audioStart": 532.45,
+      "audioEnd": 536.74,
+      "text": "And I get s, a, d, c.",
+      "rawText": "And I get s, a, d, c.",
+      "suspects": []
+    },
+    {
+      "index": 155,
+      "audioStart": 536.74,
+      "audioEnd": 540.88,
+      "text": "And, of course, I still have s, b.",
+      "rawText": "And, of course, I still have s, b.",
+      "suspects": []
+    },
+    {
+      "index": 156,
+      "audioStart": 540.88,
+      "audioEnd": 547.23,
+      "text": "Now, the next time I visit the situation, buried in that",
+      "rawText": "Now, the next time I visit the situation, buried in that",
+      "suspects": []
+    },
+    {
+      "index": 157,
+      "audioStart": 547.23,
+      "audioEnd": 550.73,
+      "text": "first step, I discover a path that actually does get to",
+      "rawText": "first step, I discover a path that actually does get to",
+      "suspects": []
+    },
+    {
+      "index": 158,
+      "audioStart": 550.73,
+      "audioEnd": 553.5,
+      "text": "goal, and I'm done.",
+      "rawText": "goal, and I'm done.",
+      "suspects": []
+    },
+    {
+      "index": 159,
+      "audioStart": 553.5,
+      "audioEnd": 557.39,
+      "text": "So, each time around I visualize the queue.",
+      "rawText": "So, each time around I visualize the queue.",
+      "suspects": []
+    },
+    {
+      "index": 160,
+      "audioStart": 557.39,
+      "audioEnd": 558.9,
+      "text": "I check to see if I'm done.",
+      "rawText": "I check to see if I'm done.",
+      "suspects": []
+    },
+    {
+      "index": 161,
+      "audioStart": 558.9,
+      "audioEnd": 562.42,
+      "text": "If not, I take the extensions and put them",
+      "rawText": "If not, I take the extensions and put them",
+      "suspects": []
+    },
+    {
+      "index": 162,
+      "audioStart": 562.42,
+      "audioEnd": 564.186,
+      "text": "somewhere on the queue.",
+      "rawText": "somewhere on the queue.",
+      "suspects": []
+    },
+    {
+      "index": 163,
+      "audioStart": 564.186,
+      "audioEnd": 571.58,
+      "text": "And then I go back in.",
+      "rawText": "And then I go back in.",
+      "suspects": []
+    },
+    {
+      "index": 164,
+      "audioStart": 571.58,
+      "audioEnd": 576.48,
+      "text": "And then here there's a varied test which checks to see if",
+      "rawText": "And then here there's a varied test which checks to see if",
+      "suspects": []
+    },
+    {
+      "index": 165,
+      "audioStart": 576.48,
+      "audioEnd": 578.86,
+      "text": "we're done.",
+      "rawText": "we're done.",
+      "suspects": []
+    },
+    {
+      "index": 166,
+      "audioStart": 578.86,
+      "audioEnd": 583.23,
+      "text": "That's how the Depth-first Search algorithm works.",
+      "rawText": "That's how the Depth-first Search algorithm works.",
+      "suspects": []
+    },
+    {
+      "index": 167,
+      "audioStart": 583.23,
+      "audioEnd": 585.65,
+      "text": "And now, would we have to start all over again if we did",
+      "rawText": "And now, would we have to start all over again if we did",
+      "suspects": []
+    },
+    {
+      "index": 168,
+      "audioStart": 585.65,
+      "audioEnd": 588.36,
+      "text": "Breadth-first Search?",
+      "rawText": "Breadth-first Search?",
+      "suspects": []
+    },
+    {
+      "index": 169,
+      "audioStart": 588.36,
+      "audioEnd": 588.89,
+      "text": "Nope.",
+      "rawText": "Nope.",
+      "suspects": []
+    },
+    {
+      "index": 170,
+      "audioStart": 588.89,
+      "audioEnd": 590.8,
+      "text": "Same algorithm.",
+      "rawText": "Same algorithm.",
+      "suspects": []
+    },
+    {
+      "index": 171,
+      "audioStart": 590.8,
+      "audioEnd": 592.69,
+      "text": "All the code we've got needs one line",
+      "rawText": "All the code we've got needs one line",
+      "suspects": []
+    },
+    {
+      "index": 172,
+      "audioStart": 592.69,
+      "audioEnd": 595.64,
+      "text": "replaced, one line changed.",
+      "rawText": "replaced, one line changed.",
+      "suspects": []
+    },
+    {
+      "index": 173,
+      "audioStart": 595.64,
+      "audioEnd": 597.66,
+      "text": "What do I have to do different in order to get a",
+      "rawText": "What do I have to do different in order to get a",
+      "suspects": []
+    },
+    {
+      "index": 174,
+      "audioStart": 597.66,
+      "audioEnd": 599.38,
+      "text": "Breadth-first Search out of this instead of",
+      "rawText": "Breadth-first Search out of this instead of",
+      "suspects": []
+    },
+    {
+      "index": 175,
+      "audioStart": 599.38,
+      "audioEnd": 601.16,
+      "text": "a Depth-first Search?",
+      "rawText": "a Depth-first Search?",
+      "suspects": []
+    },
+    {
+      "index": 176,
+      "audioStart": 601.16,
+      "audioEnd": 602.02,
+      "text": "Tanya?",
+      "rawText": "Tanya?",
+      "suspects": []
+    },
+    {
+      "index": 177,
+      "audioStart": 602.02,
+      "audioEnd": 603.51,
+      "text": "Change [INAUDIBLE] on the queue.",
+      "rawText": "Change [INAUDIBLE] on the queue.",
+      "suspects": []
+    },
+    {
+      "index": 178,
+      "audioStart": 603.51,
+      "audioEnd": 604.52,
+      "text": "And where do I put it on the queue?",
+      "rawText": "And where do I put it on the queue?",
+      "suspects": []
+    },
+    {
+      "index": 179,
+      "audioStart": 604.52,
+      "audioEnd": 605.42,
+      "text": "She says to change it.",
+      "rawText": "She says to change it.",
+      "suspects": []
+    },
+    {
+      "index": 180,
+      "audioStart": 605.42,
+      "audioEnd": 606.3,
+      "text": "On the back?",
+      "rawText": "On the back?",
+      "suspects": []
+    },
+    {
+      "index": 181,
+      "audioStart": 606.3,
+      "audioEnd": 608.61,
+      "text": "Put it on the back.",
+      "rawText": "Put it on the back.",
+      "suspects": []
+    },
+    {
+      "index": 182,
+      "audioStart": 608.61,
+      "audioEnd": 621.39,
+      "text": "So, with Breadth-first Search all I have to do",
+      "rawText": "So, with Breadth-first Search all I have to do",
+      "suspects": []
+    },
+    {
+      "index": 183,
+      "audioStart": 621.39,
+      "audioEnd": 622.64,
+      "text": "is put on the back.",
+      "rawText": "is put on the back.",
+      "suspects": []
+    },
+    {
+      "index": 184,
+      "audioStart": 627.87,
+      "audioEnd": 635.57,
+      "text": "Now, if we were content with a inefficient search, and didn't",
+      "rawText": "Now, if we were content with a inefficient search, and didn't",
+      "suspects": []
+    }
+  ]
+}

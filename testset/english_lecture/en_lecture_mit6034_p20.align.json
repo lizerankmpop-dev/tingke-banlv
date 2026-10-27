@@ -1,0 +1,23 @@
+{
+  "vtt": "packaging/eval/ocw_vtt/ocw_lecture-21-probabilistic-inference-i.vtt",
+  "draft": "testset/english_lecture/en_lecture_mit6034_p20.draft.json",
+  "biliClipStart": 300.0,
+  "biliClipEnd": 930.0,
+  "ocwClipStart": 296.33,
+  "ocwClipEnd": 926.33,
+  "offsetSeconds": 296.5,
+  "offsetSigma": 0.0,
+  "anchorCount": 16974,
+  "firstCue": {
+    "start": 296.33,
+    "text": "So that's the probability for each of these events."
+  },
+  "prevCue": {
+    "start": 291.76,
+    "text": "So that would be a number between 0 and 1."
+  },
+  "crossCheckWer": 0.1546,
+  "refWords": 1578,
+  "hypWords": 1607,
+  "edits": 244
+}

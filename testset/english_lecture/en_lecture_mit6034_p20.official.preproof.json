@@ -1,0 +1,1609 @@
+{
+  "info": {
+    "audio": "en_lecture_mit6034_p20.wav",
+    "durationSeconds": 630.0,
+    "durationMinutes": 10.5,
+    "vadSegments": 198,
+    "paragraphs": 198,
+    "chars": 7675,
+    "engine": {
+      "model": "official-vtt",
+      "language": "en",
+      "terms": "off",
+      "domain": ""
+    },
+    "source": "MIT OpenCourseWare 6-034 Fall 2010, Lecture 1 (official VTT)",
+    "note": "本文件的 text 是**官方 VTT 字幕**（不是 ASR 输出）。audioStart/audioEnd 已换算成切片内相对时间（OCW 绝对时间 − 296.33）。用它驱动 preproof_transcript.py，让校对链与中文格完全同构。",
+    "generatedAt": "2026-10-26",
+    "preproof": {
+      "fixes": [],
+      "suspects": []
+    }
+  },
+  "segments": [
+    {
+      "index": 0,
+      "audioStart": 0.0,
+      "audioEnd": 4.66,
+      "text": "So that's the probability for each of these events.",
+      "rawText": "So that's the probability for each of these events.",
+      "suspects": []
+    },
+    {
+      "index": 1,
+      "audioStart": 4.66,
+      "audioEnd": 7.36,
+      "text": "And it's readily calculated from my data.",
+      "rawText": "And it's readily calculated from my data.",
+      "suspects": []
+    },
+    {
+      "index": 2,
+      "audioStart": 7.36,
+      "audioEnd": 12.69,
+      "text": "And once I do that, then I can say that I got myself a joint",
+      "rawText": "And once I do that, then I can say that I got myself a joint",
+      "suspects": []
+    },
+    {
+      "index": 3,
+      "audioStart": 12.69,
+      "audioEnd": 17.83,
+      "text": "probability table, and I could perform all manner of miracles",
+      "rawText": "probability table, and I could perform all manner of miracles",
+      "suspects": []
+    },
+    {
+      "index": 4,
+      "audioStart": 17.83,
+      "audioEnd": 20.89,
+      "text": "using that joint probability table.",
+      "rawText": "using that joint probability table.",
+      "suspects": []
+    },
+    {
+      "index": 5,
+      "audioStart": 20.89,
+      "audioEnd": 22.62,
+      "text": "So let me perform a few of those miracles,",
+      "rawText": "So let me perform a few of those miracles,",
+      "suspects": []
+    },
+    {
+      "index": 6,
+      "audioStart": 22.62,
+      "audioEnd": 23.87,
+      "text": "while we're at it.",
+      "rawText": "while we're at it.",
+      "suspects": []
+    },
+    {
+      "index": 7,
+      "audioStart": 31.91,
+      "audioEnd": 33.4,
+      "text": "There's the table.",
+      "rawText": "There's the table.",
+      "suspects": []
+    },
+    {
+      "index": 8,
+      "audioStart": 33.4,
+      "audioEnd": 39.68,
+      "text": "And now, what I want to do is I want to count up the",
+      "rawText": "And now, what I want to do is I want to count up the",
+      "suspects": []
+    },
+    {
+      "index": 9,
+      "audioStart": 39.68,
+      "audioEnd": 42.95,
+      "text": "probability in all the rows where the statue appears.",
+      "rawText": "probability in all the rows where the statue appears.",
+      "suspects": []
+    },
+    {
+      "index": 10,
+      "audioStart": 42.95,
+      "audioEnd": 45.41,
+      "text": "So that's going to be the probability",
+      "rawText": "So that's going to be the probability",
+      "suspects": []
+    },
+    {
+      "index": 11,
+      "audioStart": 45.41,
+      "audioEnd": 47.44,
+      "text": "of the statue appearing.",
+      "rawText": "of the statue appearing.",
+      "suspects": []
+    },
+    {
+      "index": 12,
+      "audioStart": 47.44,
+      "audioEnd": 51.66,
+      "text": "So I'll just check off those four boxes there.",
+      "rawText": "So I'll just check off those four boxes there.",
+      "suspects": []
+    },
+    {
+      "index": 13,
+      "audioStart": 51.66,
+      "audioEnd": 53.47,
+      "text": "And it looks like the probability of the statue",
+      "rawText": "And it looks like the probability of the statue",
+      "suspects": []
+    },
+    {
+      "index": 14,
+      "audioStart": 53.47,
+      "audioEnd": 57.88,
+      "text": "appearing is about 0.355 in my model.",
+      "rawText": "appearing is about 0.355 in my model.",
+      "suspects": []
+    },
+    {
+      "index": 15,
+      "audioStart": 57.88,
+      "audioEnd": 59.99,
+      "text": "I don't think it's quite that frequent, but this is a",
+      "rawText": "I don't think it's quite that frequent, but this is a",
+      "suspects": []
+    },
+    {
+      "index": 16,
+      "audioStart": 59.99,
+      "audioEnd": 61.26,
+      "text": "classroom exercise, right?",
+      "rawText": "classroom exercise, right?",
+      "suspects": []
+    },
+    {
+      "index": 17,
+      "audioStart": 61.26,
+      "audioEnd": 65.34,
+      "text": "So I can make up whatever numbers I want.",
+      "rawText": "So I can make up whatever numbers I want.",
+      "suspects": []
+    },
+    {
+      "index": 18,
+      "audioStart": 68.23,
+      "audioEnd": 72.84,
+      "text": "Now, I could say, well, what's the probability of a statue",
+      "rawText": "Now, I could say, well, what's the probability of a statue",
+      "suspects": []
+    },
+    {
+      "index": 19,
+      "audioStart": 72.84,
+      "audioEnd": 78.89,
+      "text": "occurring given that there's an art show?",
+      "rawText": "occurring given that there's an art show?",
+      "suspects": []
+    },
+    {
+      "index": 20,
+      "audioStart": 78.89,
+      "audioEnd": 81.85,
+      "text": "Well, I can limit my tallies to those in which art show is",
+      "rawText": "Well, I can limit my tallies to those in which art show is",
+      "suspects": []
+    },
+    {
+      "index": 21,
+      "audioStart": 81.85,
+      "audioEnd": 85.7,
+      "text": "true, like so.",
+      "rawText": "true, like so.",
+      "suspects": []
+    },
+    {
+      "index": 22,
+      "audioStart": 85.7,
+      "audioEnd": 86.88,
+      "text": "And in that case, the probability",
+      "rawText": "And in that case, the probability",
+      "suspects": []
+    },
+    {
+      "index": 23,
+      "audioStart": 86.88,
+      "audioEnd": 88.08,
+      "text": "has just zoomed up.",
+      "rawText": "has just zoomed up.",
+      "suspects": []
+    },
+    {
+      "index": 24,
+      "audioStart": 88.08,
+      "audioEnd": 90.16,
+      "text": "So if I know there's an art show, there's a much higher",
+      "rawText": "So if I know there's an art show, there's a much higher",
+      "suspects": []
+    },
+    {
+      "index": 25,
+      "audioStart": 90.16,
+      "audioEnd": 94.555,
+      "text": "probability that a statue will appear.",
+      "rawText": "probability that a statue will appear.",
+      "suspects": []
+    },
+    {
+      "index": 26,
+      "audioStart": 97.21,
+      "audioEnd": 101.07,
+      "text": "And if I know there's a hack as well as an art show going",
+      "rawText": "And if I know there's a hack as well as an art show going",
+      "suspects": []
+    },
+    {
+      "index": 27,
+      "audioStart": 101.07,
+      "audioEnd": 105.42,
+      "text": "on, it goes up higher still to 0.9.",
+      "rawText": "on, it goes up higher still to 0.9.",
+      "suspects": []
+    },
+    {
+      "index": 28,
+      "audioStart": 105.42,
+      "audioEnd": 106.85,
+      "text": "We can also do other kinds of things.",
+      "rawText": "We can also do other kinds of things.",
+      "suspects": []
+    },
+    {
+      "index": 29,
+      "audioStart": 106.85,
+      "audioEnd": 109.73,
+      "text": "For example, we can go back to the original table.",
+      "rawText": "For example, we can go back to the original table.",
+      "suspects": []
+    },
+    {
+      "index": 30,
+      "audioStart": 109.73,
+      "audioEnd": 117.12,
+      "text": "And instead of counting up the probability we've got a",
+      "rawText": "And instead of counting up the probability we've got a",
+      "suspects": []
+    },
+    {
+      "index": 31,
+      "audioStart": 117.12,
+      "audioEnd": 119.98,
+      "text": "statue, as we just did, we're going to calculate the",
+      "rawText": "statue, as we just did, we're going to calculate the",
+      "suspects": []
+    },
+    {
+      "index": 32,
+      "audioStart": 119.98,
+      "audioEnd": 123.35,
+      "text": "probability that there is an art show.",
+      "rawText": "probability that there is an art show.",
+      "suspects": []
+    },
+    {
+      "index": 33,
+      "audioStart": 123.35,
+      "audioEnd": 126.47,
+      "text": "I guess that would be that one and that one, not that one,",
+      "rawText": "I guess that would be that one and that one, not that one,",
+      "suspects": []
+    },
+    {
+      "index": 34,
+      "audioStart": 126.47,
+      "audioEnd": 127.56,
+      "text": "but that one.",
+      "rawText": "but that one.",
+      "suspects": []
+    },
+    {
+      "index": 35,
+      "audioStart": 127.56,
+      "audioEnd": 132.98,
+      "text": "So the probability there's an art show is one chance in 10.",
+      "rawText": "So the probability there's an art show is one chance in 10.",
+      "suspects": []
+    },
+    {
+      "index": 36,
+      "audioStart": 132.98,
+      "audioEnd": 134.7,
+      "text": "Or we can do the same thing with a hack.",
+      "rawText": "Or we can do the same thing with a hack.",
+      "suspects": []
+    },
+    {
+      "index": 37,
+      "audioStart": 134.7,
+      "audioEnd": 139.755,
+      "text": "In that case, we get that one off, that one on, that one",
+      "rawText": "In that case, we get that one off, that one on, that one",
+      "suspects": []
+    },
+    {
+      "index": 38,
+      "audioStart": 139.755,
+      "audioEnd": 141.235,
+      "text": "off, that one on, that one off, that one",
+      "rawText": "off, that one on, that one off, that one",
+      "suspects": []
+    },
+    {
+      "index": 39,
+      "audioStart": 141.235,
+      "audioEnd": 142.6,
+      "text": "on, that one off.",
+      "rawText": "on, that one off.",
+      "suspects": []
+    },
+    {
+      "index": 40,
+      "audioStart": 142.6,
+      "audioEnd": 145.09,
+      "text": "So the probability of a hack on any given time period is",
+      "rawText": "So the probability of a hack on any given time period is",
+      "suspects": []
+    },
+    {
+      "index": 41,
+      "audioStart": 145.09,
+      "audioEnd": 148.9,
+      "text": "about 50-50.",
+      "rawText": "about 50-50.",
+      "suspects": []
+    },
+    {
+      "index": 42,
+      "audioStart": 148.9,
+      "audioEnd": 151.42,
+      "text": "So I've cooked up this little demo so it does the \"ands\" of",
+      "rawText": "So I've cooked up this little demo so it does the \"ands\" of",
+      "suspects": []
+    },
+    {
+      "index": 43,
+      "audioStart": 151.42,
+      "audioEnd": 151.91,
+      "text": "all these things.",
+      "rawText": "all these things.",
+      "suspects": []
+    },
+    {
+      "index": 44,
+      "audioStart": 151.91,
+      "audioEnd": 153.65,
+      "text": "It could do \"ors,\" too, with a little more work.",
+      "rawText": "It could do \"ors,\" too, with a little more work.",
+      "suspects": []
+    },
+    {
+      "index": 45,
+      "audioStart": 153.65,
+      "audioEnd": 156.8,
+      "text": "But these are just the \"ands\" of these various combinations.",
+      "rawText": "But these are just the \"ands\" of these various combinations.",
+      "suspects": []
+    },
+    {
+      "index": 46,
+      "audioStart": 156.8,
+      "audioEnd": 158.94,
+      "text": "Then you can ask more complicated questions, like",
+      "rawText": "Then you can ask more complicated questions, like",
+      "suspects": []
+    },
+    {
+      "index": 47,
+      "audioStart": 158.94,
+      "audioEnd": 161.8,
+      "text": "for example, you could say, what is the probability of a",
+      "rawText": "for example, you could say, what is the probability of a",
+      "suspects": []
+    },
+    {
+      "index": 48,
+      "audioStart": 161.8,
+      "audioEnd": 167.21,
+      "text": "hack given that there's a statue?",
+      "rawText": "hack given that there's a statue?",
+      "suspects": []
+    },
+    {
+      "index": 49,
+      "audioStart": 167.21,
+      "audioEnd": 172.29,
+      "text": "And that would be limiting the calculations to those rows in",
+      "rawText": "And that would be limiting the calculations to those rows in",
+      "suspects": []
+    },
+    {
+      "index": 50,
+      "audioStart": 172.29,
+      "audioEnd": 173.745,
+      "text": "which the statue thing is true.",
+      "rawText": "which the statue thing is true.",
+      "suspects": []
+    },
+    {
+      "index": 51,
+      "audioStart": 176.51,
+      "audioEnd": 181.1,
+      "text": "And then what I get is 0.781.",
+      "rawText": "And then what I get is 0.781.",
+      "suspects": []
+    },
+    {
+      "index": 52,
+      "audioStart": 181.1,
+      "audioEnd": 187.68,
+      "text": "Now, what would happen to the probability that it's a hack",
+      "rawText": "Now, what would happen to the probability that it's a hack",
+      "suspects": []
+    },
+    {
+      "index": 53,
+      "audioStart": 187.68,
+      "audioEnd": 189.045,
+      "text": "if I know that there's an art show?",
+      "rawText": "if I know that there's an art show?",
+      "suspects": []
+    },
+    {
+      "index": 54,
+      "audioStart": 191.6,
+      "audioEnd": 192.95,
+      "text": "Will that number go up or down?",
+      "rawText": "Will that number go up or down?",
+      "suspects": []
+    },
+    {
+      "index": 55,
+      "audioStart": 196.25,
+      "audioEnd": 198.68,
+      "text": "Well, let's try it.",
+      "rawText": "Well, let's try it.",
+      "suspects": []
+    },
+    {
+      "index": 56,
+      "audioStart": 198.68,
+      "audioEnd": 201.27,
+      "text": "Ah, it went down.",
+      "rawText": "Ah, it went down.",
+      "suspects": []
+    },
+    {
+      "index": 57,
+      "audioStart": 201.27,
+      "audioEnd": 205.2,
+      "text": "So that's sort of because the existence of the art show sort",
+      "rawText": "So that's sort of because the existence of the art show sort",
+      "suspects": []
+    },
+    {
+      "index": 58,
+      "audioStart": 205.2,
+      "audioEnd": 211.48,
+      "text": "of explains why the statue might be there.",
+      "rawText": "of explains why the statue might be there.",
+      "suspects": []
+    },
+    {
+      "index": 59,
+      "audioStart": 211.48,
+      "audioEnd": 213.33,
+      "text": "Now, just for fun, I'm going to switch to another",
+      "rawText": "Now, just for fun, I'm going to switch to another",
+      "suspects": []
+    },
+    {
+      "index": 60,
+      "audioStart": 213.33,
+      "audioEnd": 215.28,
+      "text": "situation, very similar.",
+      "rawText": "situation, very similar.",
+      "suspects": []
+    },
+    {
+      "index": 61,
+      "audioStart": 215.28,
+      "audioEnd": 222.77,
+      "text": "And the situation here is that a neighbor's dog often barks.",
+      "rawText": "And the situation here is that a neighbor's dog often barks.",
+      "suspects": []
+    },
+    {
+      "index": 62,
+      "audioStart": 222.77,
+      "audioEnd": 224.44,
+      "text": "It might be because of a burglar.",
+      "rawText": "It might be because of a burglar.",
+      "suspects": []
+    },
+    {
+      "index": 63,
+      "audioStart": 224.44,
+      "audioEnd": 226.15,
+      "text": "It might be because of a raccoon.",
+      "rawText": "It might be because of a raccoon.",
+      "suspects": []
+    },
+    {
+      "index": 64,
+      "audioStart": 226.15,
+      "audioEnd": 229.33,
+      "text": "Sometimes, there's a burglar and a raccoon.",
+      "rawText": "Sometimes, there's a burglar and a raccoon.",
+      "suspects": []
+    },
+    {
+      "index": 65,
+      "audioStart": 229.33,
+      "audioEnd": 232.57,
+      "text": "Sometimes, the damn dog just barks.",
+      "rawText": "Sometimes, the damn dog just barks.",
+      "suspects": []
+    },
+    {
+      "index": 66,
+      "audioStart": 232.57,
+      "audioEnd": 239.04,
+      "text": "So let's do some calculations there and calculate the",
+      "rawText": "So let's do some calculations there and calculate the",
+      "suspects": []
+    },
+    {
+      "index": 67,
+      "audioStart": 239.04,
+      "audioEnd": 241.98,
+      "text": "probability that a raccoon is true, similar to",
+      "rawText": "probability that a raccoon is true, similar to",
+      "suspects": []
+    },
+    {
+      "index": 68,
+      "audioStart": 241.98,
+      "audioEnd": 244.33,
+      "text": "what we did last time.",
+      "rawText": "what we did last time.",
+      "suspects": []
+    },
+    {
+      "index": 69,
+      "audioStart": 244.33,
+      "audioEnd": 246.91,
+      "text": "Looks like on any given night--",
+      "rawText": "Looks like on any given night--",
+      "suspects": []
+    },
+    {
+      "index": 70,
+      "audioStart": 246.91,
+      "audioEnd": 249.22,
+      "text": "it's kind of a wooded are-- there's a high probability of",
+      "rawText": "it's kind of a wooded are-- there's a high probability of",
+      "suspects": []
+    },
+    {
+      "index": 71,
+      "audioStart": 249.22,
+      "audioEnd": 252.27,
+      "text": "a raccoon showing up.",
+      "rawText": "a raccoon showing up.",
+      "suspects": []
+    },
+    {
+      "index": 72,
+      "audioStart": 252.27,
+      "audioEnd": 259.8,
+      "text": "And then we can ask, well, what is the probability of the",
+      "rawText": "And then we can ask, well, what is the probability of the",
+      "suspects": []
+    },
+    {
+      "index": 73,
+      "audioStart": 259.8,
+      "audioEnd": 263.34,
+      "text": "dog barking given that a raccoon shows up?",
+      "rawText": "dog barking given that a raccoon shows up?",
+      "suspects": []
+    },
+    {
+      "index": 74,
+      "audioStart": 263.34,
+      "audioEnd": 265.63,
+      "text": "Well, in that case, we want to just limit the number of rows",
+      "rawText": "Well, in that case, we want to just limit the number of rows",
+      "suspects": []
+    },
+    {
+      "index": 75,
+      "audioStart": 265.63,
+      "audioEnd": 266.86,
+      "text": "to those where a raccoon--",
+      "rawText": "to those where a raccoon--",
+      "suspects": []
+    },
+    {
+      "index": 76,
+      "audioStart": 266.86,
+      "audioEnd": 270.1,
+      "text": "or where the dog is barking.",
+      "rawText": "or where the dog is barking.",
+      "suspects": []
+    },
+    {
+      "index": 77,
+      "audioStart": 270.1,
+      "audioEnd": 273.99,
+      "text": "Looks like the probability of the dog barking, knowing",
+      "rawText": "Looks like the probability of the dog barking, knowing",
+      "suspects": []
+    },
+    {
+      "index": 78,
+      "audioStart": 273.99,
+      "audioEnd": 276.08,
+      "text": "nothing else, is about [? 3/7. ?]",
+      "rawText": "nothing else, is about [? 3/7. ?]",
+      "suspects": []
+    },
+    {
+      "index": 79,
+      "audioStart": 280.46,
+      "audioEnd": 283.96,
+      "text": "But now we want to know the probability of the raccoon--",
+      "rawText": "But now we want to know the probability of the raccoon--",
+      "suspects": []
+    },
+    {
+      "index": 80,
+      "audioStart": 283.96,
+      "audioEnd": 286.7,
+      "text": "that's these guys here need to get checked.",
+      "rawText": "that's these guys here need to get checked.",
+      "suspects": []
+    },
+    {
+      "index": 81,
+      "audioStart": 286.7,
+      "audioEnd": 288.24,
+      "text": "These are off.",
+      "rawText": "These are off.",
+      "suspects": []
+    },
+    {
+      "index": 82,
+      "audioStart": 288.24,
+      "audioEnd": 289.785,
+      "text": "So that's the probability of a raccoon.",
+      "rawText": "So that's the probability of a raccoon.",
+      "suspects": []
+    },
+    {
+      "index": 83,
+      "audioStart": 293.07,
+      "audioEnd": 296.16,
+      "text": "Did I get that right?",
+      "rawText": "Did I get that right?",
+      "suspects": []
+    },
+    {
+      "index": 84,
+      "audioStart": 296.16,
+      "audioEnd": 298.01,
+      "text": "Oh, that's probability of a burglar.",
+      "rawText": "Oh, that's probability of a burglar.",
+      "suspects": []
+    },
+    {
+      "index": 85,
+      "audioStart": 298.01,
+      "audioEnd": 299.26,
+      "text": "Sorry, that was too hard.",
+      "rawText": "Sorry, that was too hard.",
+      "suspects": []
+    },
+    {
+      "index": 86,
+      "audioStart": 301.21,
+      "audioEnd": 303.22,
+      "text": "So let me go back and calculate--",
+      "rawText": "So let me go back and calculate--",
+      "suspects": []
+    },
+    {
+      "index": 87,
+      "audioStart": 303.22,
+      "audioEnd": 305.72,
+      "text": "I want to get the probability of a raccoon.",
+      "rawText": "I want to get the probability of a raccoon.",
+      "suspects": []
+    },
+    {
+      "index": 88,
+      "audioStart": 305.72,
+      "audioEnd": 314.6,
+      "text": "That's true, false, true, false, true, false, true.",
+      "rawText": "That's true, false, true, false, true, false, true.",
+      "suspects": []
+    },
+    {
+      "index": 89,
+      "audioStart": 314.6,
+      "audioEnd": 316.23,
+      "text": "So the probability of a raccoon, as I",
+      "rawText": "So the probability of a raccoon, as I",
+      "suspects": []
+    },
+    {
+      "index": 90,
+      "audioStart": 316.23,
+      "audioEnd": 318.24,
+      "text": "said before is 0.5.",
+      "rawText": "said before is 0.5.",
+      "suspects": []
+    },
+    {
+      "index": 91,
+      "audioStart": 318.24,
+      "audioEnd": 321.89,
+      "text": "Now, what happens to that probability if I know the dog",
+      "rawText": "Now, what happens to that probability if I know the dog",
+      "suspects": []
+    },
+    {
+      "index": 92,
+      "audioStart": 321.89,
+      "audioEnd": 323.72,
+      "text": "is barking?",
+      "rawText": "is barking?",
+      "suspects": []
+    },
+    {
+      "index": 93,
+      "audioStart": 323.72,
+      "audioEnd": 327.36,
+      "text": "Well, all I need to do is limit my rows to those where",
+      "rawText": "Well, all I need to do is limit my rows to those where",
+      "suspects": []
+    },
+    {
+      "index": 94,
+      "audioStart": 327.36,
+      "audioEnd": 330.18,
+      "text": "the dog is barking, those bottom four.",
+      "rawText": "the dog is barking, those bottom four.",
+      "suspects": []
+    },
+    {
+      "index": 95,
+      "audioStart": 330.18,
+      "audioEnd": 332.47,
+      "text": "And I'll click that there, and you'll notice all these",
+      "rawText": "And I'll click that there, and you'll notice all these",
+      "suspects": []
+    },
+    {
+      "index": 96,
+      "audioStart": 332.47,
+      "audioEnd": 337.36,
+      "text": "tallies up above the midpoint have gone to zero, because",
+      "rawText": "tallies up above the midpoint have gone to zero, because",
+      "suspects": []
+    },
+    {
+      "index": 97,
+      "audioStart": 337.36,
+      "audioEnd": 339.05,
+      "text": "we're only considering those cases",
+      "rawText": "we're only considering those cases",
+      "suspects": []
+    },
+    {
+      "index": 98,
+      "audioStart": 339.05,
+      "audioEnd": 341.26,
+      "text": "where the dog is barking.",
+      "rawText": "where the dog is barking.",
+      "suspects": []
+    },
+    {
+      "index": 99,
+      "audioStart": 341.26,
+      "audioEnd": 343.81,
+      "text": "In that case, the probability that there's a raccoon--",
+      "rawText": "In that case, the probability that there's a raccoon--",
+      "suspects": []
+    },
+    {
+      "index": 100,
+      "audioStart": 343.81,
+      "audioEnd": 345.17,
+      "text": "just the number of tallies over the",
+      "rawText": "just the number of tallies over the",
+      "suspects": []
+    },
+    {
+      "index": 101,
+      "audioStart": 345.17,
+      "audioEnd": 347.41,
+      "text": "total number of tallies--",
+      "rawText": "total number of tallies--",
+      "suspects": []
+    },
+    {
+      "index": 102,
+      "audioStart": 347.41,
+      "audioEnd": 351.82,
+      "text": "gee, I guess it's 225 plus 50 divided by 370.",
+      "rawText": "gee, I guess it's 225 plus 50 divided by 370.",
+      "suspects": []
+    },
+    {
+      "index": 103,
+      "audioStart": 351.82,
+      "audioEnd": 354.72,
+      "text": "That turns out to be 0.743.",
+      "rawText": "That turns out to be 0.743.",
+      "suspects": []
+    },
+    {
+      "index": 104,
+      "audioStart": 354.72,
+      "audioEnd": 360.07,
+      "text": "So about 75% of the time, the dog barking is accounted for--",
+      "rawText": "So about 75% of the time, the dog barking is accounted for--",
+      "suspects": []
+    },
+    {
+      "index": 105,
+      "audioStart": 360.07,
+      "audioEnd": 363.35,
+      "text": "well, the probability of a raccoon under those conditions",
+      "rawText": "well, the probability of a raccoon under those conditions",
+      "suspects": []
+    },
+    {
+      "index": 106,
+      "audioStart": 363.35,
+      "audioEnd": 365.23,
+      "text": "is pretty high.",
+      "rawText": "is pretty high.",
+      "suspects": []
+    },
+    {
+      "index": 107,
+      "audioStart": 365.23,
+      "audioEnd": 368.23,
+      "text": "And now, once again, I'm going to ask, well, what is the",
+      "rawText": "And now, once again, I'm going to ask, well, what is the",
+      "suspects": []
+    },
+    {
+      "index": 108,
+      "audioStart": 368.23,
+      "audioEnd": 372.48,
+      "text": "probability of a raccoon, given that the dog is barking",
+      "rawText": "probability of a raccoon, given that the dog is barking",
+      "suspects": []
+    },
+    {
+      "index": 109,
+      "audioStart": 372.48,
+      "audioEnd": 375.84,
+      "text": "and there's a burglar?",
+      "rawText": "and there's a burglar?",
+      "suspects": []
+    },
+    {
+      "index": 110,
+      "audioStart": 375.84,
+      "audioEnd": 377.71,
+      "text": "Any guess what will happen there?",
+      "rawText": "Any guess what will happen there?",
+      "suspects": []
+    },
+    {
+      "index": 111,
+      "audioStart": 377.71,
+      "audioEnd": 381.79,
+      "text": "We did this once before with the statue.",
+      "rawText": "We did this once before with the statue.",
+      "suspects": []
+    },
+    {
+      "index": 112,
+      "audioStart": 381.79,
+      "audioEnd": 384.35,
+      "text": "Probability first went up when we saw the statue and then",
+      "rawText": "Probability first went up when we saw the statue and then",
+      "suspects": []
+    },
+    {
+      "index": 113,
+      "audioStart": 384.35,
+      "audioEnd": 387.01,
+      "text": "went down when we saw another explanation.",
+      "rawText": "went down when we saw another explanation.",
+      "suspects": []
+    },
+    {
+      "index": 114,
+      "audioStart": 387.01,
+      "audioEnd": 388.53,
+      "text": "Here's this one here.",
+      "rawText": "Here's this one here.",
+      "suspects": []
+    },
+    {
+      "index": 115,
+      "audioStart": 388.53,
+      "audioEnd": 389.6,
+      "text": "Wow, look at that.",
+      "rawText": "Wow, look at that.",
+      "suspects": []
+    },
+    {
+      "index": 116,
+      "audioStart": 389.6,
+      "audioEnd": 393.5,
+      "text": "It went back to its original condition, its a priori",
+      "rawText": "It went back to its original condition, its a priori",
+      "suspects": []
+    },
+    {
+      "index": 117,
+      "audioStart": 393.5,
+      "audioEnd": 395.79,
+      "text": "probability.",
+      "rawText": "probability.",
+      "suspects": []
+    },
+    {
+      "index": 118,
+      "audioStart": 395.79,
+      "audioEnd": 399.52,
+      "text": "So somehow, the existence of the burglar and the dog",
+      "rawText": "So somehow, the existence of the burglar and the dog",
+      "suspects": []
+    },
+    {
+      "index": 119,
+      "audioStart": 399.52,
+      "audioEnd": 403.41,
+      "text": "barking means that the probability of a raccoon is",
+      "rawText": "barking means that the probability of a raccoon is",
+      "suspects": []
+    },
+    {
+      "index": 120,
+      "audioStart": 403.41,
+      "audioEnd": 406.072,
+      "text": "just what it was before we started this game.",
+      "rawText": "just what it was before we started this game.",
+      "suspects": []
+    },
+    {
+      "index": 121,
+      "audioStart": 406.072,
+      "audioEnd": 408.02,
+      "text": "So those are kind of interesting questions, and",
+      "rawText": "So those are kind of interesting questions, and",
+      "suspects": []
+    },
+    {
+      "index": 122,
+      "audioStart": 408.02,
+      "audioEnd": 410.76,
+      "text": "there's a lot we can do when we have this table by way of",
+      "rawText": "there's a lot we can do when we have this table by way of",
+      "suspects": []
+    },
+    {
+      "index": 123,
+      "audioStart": 410.76,
+      "audioEnd": 413.89,
+      "text": "those kinds of calculations.",
+      "rawText": "those kinds of calculations.",
+      "suspects": []
+    },
+    {
+      "index": 124,
+      "audioStart": 413.89,
+      "audioEnd": 418.43,
+      "text": "And in fact, the whole miracle of probabilistic inference is",
+      "rawText": "And in fact, the whole miracle of probabilistic inference is",
+      "suspects": []
+    },
+    {
+      "index": 125,
+      "audioStart": 418.43,
+      "audioEnd": 419.15,
+      "text": "right in front of us.",
+      "rawText": "right in front of us.",
+      "suspects": []
+    },
+    {
+      "index": 126,
+      "audioStart": 419.15,
+      "audioEnd": 421.8,
+      "text": "It's the table.",
+      "rawText": "It's the table.",
+      "suspects": []
+    },
+    {
+      "index": 127,
+      "audioStart": 421.8,
+      "audioEnd": 423.73,
+      "text": "So why don't we go home?",
+      "rawText": "So why don't we go home?",
+      "suspects": []
+    },
+    {
+      "index": 128,
+      "audioStart": 423.73,
+      "audioEnd": 427.65,
+      "text": "Well, because there's a little problem with this table--",
+      "rawText": "Well, because there's a little problem with this table--",
+      "suspects": []
+    },
+    {
+      "index": 129,
+      "audioStart": 427.65,
+      "audioEnd": 430.04,
+      "text": "with these two tables that I've shown you by way of",
+      "rawText": "with these two tables that I've shown you by way of",
+      "suspects": []
+    },
+    {
+      "index": 130,
+      "audioStart": 430.04,
+      "audioEnd": 431.88,
+      "text": "illustration.",
+      "rawText": "illustration.",
+      "suspects": []
+    },
+    {
+      "index": 131,
+      "audioStart": 431.88,
+      "audioEnd": 440.92,
+      "text": "And the problem is that there are a lot of rows.",
+      "rawText": "And the problem is that there are a lot of rows.",
+      "suspects": []
+    },
+    {
+      "index": 132,
+      "audioStart": 440.92,
+      "audioEnd": 442.83,
+      "text": "And I had a hard time making up those numbers.",
+      "rawText": "And I had a hard time making up those numbers.",
+      "suspects": []
+    },
+    {
+      "index": 133,
+      "audioStart": 442.83,
+      "audioEnd": 445.58,
+      "text": "I didn't have the patience to wait and make observations.",
+      "rawText": "I didn't have the patience to wait and make observations.",
+      "suspects": []
+    },
+    {
+      "index": 134,
+      "audioStart": 445.58,
+      "audioEnd": 447.25,
+      "text": "That would take too long.",
+      "rawText": "That would take too long.",
+      "suspects": []
+    },
+    {
+      "index": 135,
+      "audioStart": 447.25,
+      "audioEnd": 449.58,
+      "text": "So I had to kind of make some guesses.",
+      "rawText": "So I had to kind of make some guesses.",
+      "suspects": []
+    },
+    {
+      "index": 136,
+      "audioStart": 449.58,
+      "audioEnd": 453.4,
+      "text": "And I could kind of manage it with eight rows--",
+      "rawText": "And I could kind of manage it with eight rows--",
+      "suspects": []
+    },
+    {
+      "index": 137,
+      "audioStart": 453.4,
+      "audioEnd": 454.96,
+      "text": "those up there.",
+      "rawText": "those up there.",
+      "suspects": []
+    },
+    {
+      "index": 138,
+      "audioStart": 454.96,
+      "audioEnd": 457.41,
+      "text": "I could put in some tallies.",
+      "rawText": "I could put in some tallies.",
+      "suspects": []
+    },
+    {
+      "index": 139,
+      "audioStart": 457.41,
+      "audioEnd": 459.34,
+      "text": "It wasn't that big of a deal.",
+      "rawText": "It wasn't that big of a deal.",
+      "suspects": []
+    },
+    {
+      "index": 140,
+      "audioStart": 459.34,
+      "audioEnd": 463.0,
+      "text": "So I got myself all those eight numbers",
+      "rawText": "So I got myself all those eight numbers",
+      "suspects": []
+    },
+    {
+      "index": 141,
+      "audioStart": 463.0,
+      "audioEnd": 466.43,
+      "text": "up there like that.",
+      "rawText": "up there like that.",
+      "suspects": []
+    },
+    {
+      "index": 142,
+      "audioStart": 466.43,
+      "audioEnd": 471.8,
+      "text": "And similarly, for the art show calculations, produced",
+      "rawText": "And similarly, for the art show calculations, produced",
+      "suspects": []
+    },
+    {
+      "index": 143,
+      "audioStart": 471.8,
+      "audioEnd": 473.67,
+      "text": "eight numbers.",
+      "rawText": "eight numbers.",
+      "suspects": []
+    },
+    {
+      "index": 144,
+      "audioStart": 473.67,
+      "audioEnd": 476.92,
+      "text": "But what if I added something else to the mix?",
+      "rawText": "But what if I added something else to the mix?",
+      "suspects": []
+    },
+    {
+      "index": 145,
+      "audioStart": 476.92,
+      "audioEnd": 480.98,
+      "text": "What if I added the day of the week or",
+      "rawText": "What if I added the day of the week or",
+      "suspects": []
+    },
+    {
+      "index": 146,
+      "audioStart": 480.98,
+      "audioEnd": 483.2,
+      "text": "what I had for breakfast?",
+      "rawText": "what I had for breakfast?",
+      "suspects": []
+    },
+    {
+      "index": 147,
+      "audioStart": 483.2,
+      "audioEnd": 486.67,
+      "text": "Each of those things would double the number of rows of",
+      "rawText": "Each of those things would double the number of rows of",
+      "suspects": []
+    },
+    {
+      "index": 148,
+      "audioStart": 486.67,
+      "audioEnd": 490.02,
+      "text": "their binary variables.",
+      "rawText": "their binary variables.",
+      "suspects": []
+    },
+    {
+      "index": 149,
+      "audioStart": 490.02,
+      "audioEnd": 496.53,
+      "text": "So if I have to consider 10 influences all working",
+      "rawText": "So if I have to consider 10 influences all working",
+      "suspects": []
+    },
+    {
+      "index": 150,
+      "audioStart": 496.53,
+      "audioEnd": 498.46,
+      "text": "together, then I'd have 2 to the 10th.",
+      "rawText": "together, then I'd have 2 to the 10th.",
+      "suspects": []
+    },
+    {
+      "index": 151,
+      "audioStart": 498.46,
+      "audioEnd": 502.48,
+      "text": "I'd have 1,000 numbers to deal with.",
+      "rawText": "I'd have 1,000 numbers to deal with.",
+      "suspects": []
+    },
+    {
+      "index": 152,
+      "audioStart": 502.48,
+      "audioEnd": 504.69,
+      "text": "And that would be hard.",
+      "rawText": "And that would be hard.",
+      "suspects": []
+    },
+    {
+      "index": 153,
+      "audioStart": 504.69,
+      "audioEnd": 506.78,
+      "text": "But if I had a joint probability table, then I can",
+      "rawText": "But if I had a joint probability table, then I can",
+      "suspects": []
+    },
+    {
+      "index": 154,
+      "audioStart": 506.78,
+      "audioEnd": 508.52,
+      "text": "do these kinds of miracles.",
+      "rawText": "do these kinds of miracles.",
+      "suspects": []
+    },
+    {
+      "index": 155,
+      "audioStart": 508.52,
+      "audioEnd": 511.31,
+      "text": "But Dave, if I could have this little projector now, please.",
+      "rawText": "But Dave, if I could have this little projector now, please.",
+      "suspects": []
+    },
+    {
+      "index": 156,
+      "audioStart": 515.24,
+      "audioEnd": 518.45,
+      "text": "I just want to emphasize that although we're talking about",
+      "rawText": "I just want to emphasize that although we're talking about",
+      "suspects": []
+    },
+    {
+      "index": 157,
+      "audioStart": 518.45,
+      "audioEnd": 522.1,
+      "text": "probabilistic inference, and it's a very powerful tool,",
+      "rawText": "probabilistic inference, and it's a very powerful tool,",
+      "suspects": []
+    },
+    {
+      "index": 158,
+      "audioStart": 522.1,
+      "audioEnd": 525.17,
+      "text": "it's not the only tool we need in our bag.",
+      "rawText": "it's not the only tool we need in our bag.",
+      "suspects": []
+    },
+    {
+      "index": 159,
+      "audioStart": 525.17,
+      "audioEnd": 527.75,
+      "text": "Trouble with most ideas in artificial intelligence is",
+      "rawText": "Trouble with most ideas in artificial intelligence is",
+      "suspects": []
+    },
+    {
+      "index": 160,
+      "audioStart": 527.75,
+      "audioEnd": 530.3,
+      "text": "that their hardcore proponents think that they're the only",
+      "rawText": "that their hardcore proponents think that they're the only",
+      "suspects": []
+    },
+    {
+      "index": 161,
+      "audioStart": 530.3,
+      "audioEnd": 532.09,
+      "text": "thing to do.",
+      "rawText": "thing to do.",
+      "suspects": []
+    },
+    {
+      "index": 162,
+      "audioStart": 532.09,
+      "audioEnd": 536.39,
+      "text": "And probabilistic inference has a role to play in",
+      "rawText": "And probabilistic inference has a role to play in",
+      "suspects": []
+    },
+    {
+      "index": 163,
+      "audioStart": 536.39,
+      "audioEnd": 538.22,
+      "text": "developing a theory of human intelligence.",
+      "rawText": "developing a theory of human intelligence.",
+      "suspects": []
+    },
+    {
+      "index": 164,
+      "audioStart": 538.22,
+      "audioEnd": 540.55,
+      "text": "And it certainly has a practical value, but it's not",
+      "rawText": "And it certainly has a practical value, but it's not",
+      "suspects": []
+    },
+    {
+      "index": 165,
+      "audioStart": 540.55,
+      "audioEnd": 541.74,
+      "text": "the only thing.",
+      "rawText": "the only thing.",
+      "suspects": []
+    },
+    {
+      "index": 166,
+      "audioStart": 541.74,
+      "audioEnd": 544.97,
+      "text": "And to illustrate that point, I'd like to imagine for a few",
+      "rawText": "And to illustrate that point, I'd like to imagine for a few",
+      "suspects": []
+    },
+    {
+      "index": 167,
+      "audioStart": 544.97,
+      "audioEnd": 554.59,
+      "text": "moments that MIT were founded in 1861 BC instead of 1861 AD.",
+      "rawText": "moments that MIT were founded in 1861 BC instead of 1861 AD.",
+      "suspects": []
+    },
+    {
+      "index": 168,
+      "audioStart": 554.59,
+      "audioEnd": 559.33,
+      "text": "And if that were so, then it might be the case that there",
+      "rawText": "And if that were so, then it might be the case that there",
+      "suspects": []
+    },
+    {
+      "index": 169,
+      "audioStart": 559.33,
+      "audioEnd": 562.89,
+      "text": "would be a research program on what floats.",
+      "rawText": "would be a research program on what floats.",
+      "suspects": []
+    },
+    {
+      "index": 170,
+      "audioStart": 562.89,
+      "audioEnd": 565.65,
+      "text": "And this, of course, would be a problem in experimental",
+      "rawText": "And this, of course, would be a problem in experimental",
+      "suspects": []
+    },
+    {
+      "index": 171,
+      "audioStart": 565.65,
+      "audioEnd": 569.55,
+      "text": "physics, and we could imagine that those people back there",
+      "rawText": "physics, and we could imagine that those people back there",
+      "suspects": []
+    },
+    {
+      "index": 172,
+      "audioStart": 569.55,
+      "audioEnd": 573.47,
+      "text": "in that early MIT would, being experimentally minded, try",
+      "rawText": "in that early MIT would, being experimentally minded, try",
+      "suspects": []
+    },
+    {
+      "index": 173,
+      "audioStart": 573.47,
+      "audioEnd": 574.57,
+      "text": "some things.",
+      "rawText": "some things.",
+      "suspects": []
+    },
+    {
+      "index": 174,
+      "audioStart": 574.57,
+      "audioEnd": 576.88,
+      "text": "Oh, I didn't know that's what happened.",
+      "rawText": "Oh, I didn't know that's what happened.",
+      "suspects": []
+    },
+    {
+      "index": 175,
+      "audioStart": 576.88,
+      "audioEnd": 579.33,
+      "text": "It looks like chalk floats.",
+      "rawText": "It looks like chalk floats.",
+      "suspects": []
+    },
+    {
+      "index": 176,
+      "audioStart": 579.33,
+      "audioEnd": 582.054,
+      "text": "Here's a rock.",
+      "rawText": "Here's a rock.",
+      "suspects": []
+    },
+    {
+      "index": 177,
+      "audioStart": 582.054,
+      "audioEnd": 584.38,
+      "text": "No, it didn't float.",
+      "rawText": "No, it didn't float.",
+      "suspects": []
+    },
+    {
+      "index": 178,
+      "audioStart": 584.38,
+      "audioEnd": 586.97,
+      "text": "Here's some money.",
+      "rawText": "Here's some money.",
+      "suspects": []
+    },
+    {
+      "index": 179,
+      "audioStart": 586.97,
+      "audioEnd": 588.58,
+      "text": "Doesn't float.",
+      "rawText": "Doesn't float.",
+      "suspects": []
+    },
+    {
+      "index": 180,
+      "audioStart": 588.58,
+      "audioEnd": 589.83,
+      "text": "Here's a pencil.",
+      "rawText": "Here's a pencil.",
+      "suspects": []
+    },
+    {
+      "index": 181,
+      "audioStart": 592.3,
+      "audioEnd": 593.27,
+      "text": "No, it doesn't float.",
+      "rawText": "No, it doesn't float.",
+      "suspects": []
+    },
+    {
+      "index": 182,
+      "audioStart": 593.27,
+      "audioEnd": 595.36,
+      "text": "Here's a pen.",
+      "rawText": "Here's a pen.",
+      "suspects": []
+    },
+    {
+      "index": 183,
+      "audioStart": 595.36,
+      "audioEnd": 597.745,
+      "text": "Here's a piece of tin foil I got from Kendra.",
+      "rawText": "Here's a piece of tin foil I got from Kendra.",
+      "suspects": []
+    },
+    {
+      "index": 184,
+      "audioStart": 597.745,
+      "audioEnd": 599.16,
+      "text": "That floats.",
+      "rawText": "That floats.",
+      "suspects": []
+    },
+    {
+      "index": 185,
+      "audioStart": 599.16,
+      "audioEnd": 599.8,
+      "text": "That's a metal.",
+      "rawText": "That's a metal.",
+      "suspects": []
+    },
+    {
+      "index": 186,
+      "audioStart": 599.8,
+      "audioEnd": 600.85,
+      "text": "The other stuff's metal, too.",
+      "rawText": "The other stuff's metal, too.",
+      "suspects": []
+    },
+    {
+      "index": 187,
+      "audioStart": 600.85,
+      "audioEnd": 602.5,
+      "text": "Now I'm really getting confused.",
+      "rawText": "Now I'm really getting confused.",
+      "suspects": []
+    },
+    {
+      "index": 188,
+      "audioStart": 602.5,
+      "audioEnd": 605.2,
+      "text": "Here's a little wad of paper.",
+      "rawText": "Here's a little wad of paper.",
+      "suspects": []
+    },
+    {
+      "index": 189,
+      "audioStart": 605.2,
+      "audioEnd": 608.34,
+      "text": "Here's a cell ph-- no, actually,",
+      "rawText": "Here's a cell ph-- no, actually,",
+      "suspects": []
+    },
+    {
+      "index": 190,
+      "audioStart": 608.34,
+      "audioEnd": 609.33,
+      "text": "I've tried that before.",
+      "rawText": "I've tried that before.",
+      "suspects": []
+    },
+    {
+      "index": 191,
+      "audioStart": 609.33,
+      "audioEnd": 610.58,
+      "text": "They don't float.",
+      "rawText": "They don't float.",
+      "suspects": []
+    },
+    {
+      "index": 192,
+      "audioStart": 610.58,
+      "audioEnd": 611.91,
+      "text": "And they also don't work afterward, either.",
+      "rawText": "And they also don't work afterward, either.",
+      "suspects": []
+    },
+    {
+      "index": 193,
+      "audioStart": 614.62,
+      "audioEnd": 620.51,
+      "text": "I don't need to do any of that in the MIT of 1861 AD and",
+      "rawText": "I don't need to do any of that in the MIT of 1861 AD and",
+      "suspects": []
+    },
+    {
+      "index": 194,
+      "audioStart": 620.51,
+      "audioEnd": 623.0,
+      "text": "beyond, because I know that Archimedes",
+      "rawText": "beyond, because I know that Archimedes",
+      "suspects": []
+    },
+    {
+      "index": 195,
+      "audioStart": 623.0,
+      "audioEnd": 624.08,
+      "text": "worked this all out.",
+      "rawText": "worked this all out.",
+      "suspects": []
+    },
+    {
+      "index": 196,
+      "audioStart": 624.08,
+      "audioEnd": 625.97,
+      "text": "And all I have to do is measure the volume of the",
+      "rawText": "And all I have to do is measure the volume of the",
+      "suspects": []
+    },
+    {
+      "index": 197,
+      "audioStart": 625.97,
+      "audioEnd": 631.05,
+      "text": "stuff, divide that by the weight, and if that ratio is",
+      "rawText": "stuff, divide that by the weight, and if that ratio is",
+      "suspects": []
+    }
+  ]
+}

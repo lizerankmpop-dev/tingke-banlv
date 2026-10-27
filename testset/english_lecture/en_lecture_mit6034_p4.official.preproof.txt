@@ -1,0 +1,185 @@
+with is this backtracking idea.
+Now, backtrack is not relevant to the British Museum
+algorithm, because you've got to find everything.
+You can't quit when you've found one path.
+But you'd always want to use backtracking with Depth-first
+Search, because you may plunge on down and miss the path that
+gets to the goal.
+Now, you might ask me, is backtracking, therefore,
+always part of Depth-first Search?
+And you can read textbooks that do it either way.
+Count on it.
+If we give you a Search problem on a quiz, we'll tell
+you whether or not your Search is supposed to use
+backtracking.
+We consider it to be an optional thing.
+You'd be pretty stupid not to use this optional thing when
+you're doing Depth-first Search.
+But we'll separate these ideas out and call
+it an optional add-on.
+so, that's Depth-first Search, very simple.
+Now, the natural companion to Depth-first Search will be
+Breadth-first Search, Breadth-first.
+And the way it works is you build up this tree level by
+level, and at some point, when you scan across a level,
+you'll find that you've completed a path
+that goes to the goal.
+So, level by level, s can go to either a or b.
+a can go either to b or d.
+And b can go to either a or c.
+So, you see what we're doing.
+We're going level by level.
+And we haven't hit a level with a goal in it yet, so
+we've got to keep going.
+Note that we're building up quite a bit of stuff here,
+quite a lot of growth in the size of the path set that
+we're keeping in mind.
+At the next level, we have b going to c, d going to g, a
+going to d, and c going to e.
+And now, when we scan across, we do hit g.
+So, we found a path with Breadth-first Search, just as
+we found a path with Depth-first Search.
+Now, you might say, well, why didn't you just quit
+when you hit g?
+Implementation detail.
+We'll talk about a sample implementation.
+You can write it in any way you want.
+But now that we know what these searches are, let's
+speed things up a little bit here and do a couple searches
+that now have names.
+The first type will be Depth-first, boom.
+That's the one that produces the thief path.
+And then we can also do a Breadth-first Search, which we
+haven't tried yet.
+What do you suppose is going to happen?
+Is it going to be fast, slow, produce a good path,
+produce a bad path?
+I don't know, let's try it.
+I had to speed it up, you see, because it's doing an awful
+lot of Search.
+It's generating an awful lot of paths.
+Finally, you got a path.
+Is it the best path?
+I don't think so.
+But we're not going to talk about optimal paths today.
+We're just going to talk about pretty good
+paths, heuristic paths.
+Let's move the starting position here in the middle.
+Do you think Breadth-first Search is going to be stupid?
+I think it's going to be pretty stupid.
+Let's see what happens.
+This Search is a lot to the left, which you would never do
+with you eye.
+Let me slow that down just to demonstrate it.
+It finds a shorter path, because it's right there in
+the middle.
+But it spends a lot of its time looking off to the left.
+It's pretty stupid.
+But that's how it works.
+So, now that we've got two examples of searches on the
+table, I'd like to just write a little flow chart for how
+the search might work.
+Because if I do that, then it'll be easier for us to see
+what kind of small differences there are between the
+implementations of these various searches.
+So, what we're going to do is we're going to develop a
+waiting list, a queue, a line, whatever you'd
+like to call it.
+Let's call if a queue.
+We're going to develop a queue of paths that are under
+consideration.
+So, the first step in our algorithm will be to
+initialize our queue.
+And I think what I'll do is I'll simulate Depth-first
+Search on this problem up there on the
+left using this algorithm.
+I need to have some way of representing my paths.
+And what I want to do is I'm going to betray my heritage as
+a list programmer, because I'm just going to put these up as
+if there were lisp s-expressions.
+To begin with, I just have one path.
+And it has only one node in it, s.
+That's the whole path.
+The next thing I do after I initialize the queue is I
+extend first path on the queue.
+OK, when I extend s, I get two paths.
+I get s goes to a, and I get s goes to b.
+I take the first one off the front of the queue.
+And I put back the two that are produced by
+extending that path.
+Now, after I've extended the first path on the queue, I
+have to but those extended paths on to the queue.
+In here there's an explicit step where I've checked to see
+if that first path is a winner.
+If it's not, I extend it.
+And I have to put those paths onto the queue.
+So, I'll say that what I do is I end queue.
+Now, I've done one step.
+And let's let me do another step.
+I'm going to take this first path off.
+I'm going to extend that path.
+And where do I put these new paths on the queue if I'm
+doing Depth-first Search?
+Well, I want to work with the path that I've just generated.
+I'm taking this plunge down deep into the search tree.
+So, since I want to keep going down into the stuff that I
+just generated, where then do I want to put these two paths?
+At the end of the queue?
+I don't think so, because it'll be a long
+time getting there.
+I want to put them on the front of the queue.
+For Depth-first Search, I want to put them on the
+front of the queue.
+And that's why s, a, b goes here, and s, a, d, and then
+that's s, b.
+So, s, b is still there.
+That's still a valid possibility.
+But now I've stuck two paths in front of it, both of the
+ones I generated by taking a path off the front of the
+queue, discovering that it doesn't go to the goal,
+extending it and putting those back on the queue.
+I might as well complete this illustration here.
+While I'm at it, I take the s, a, b off, s, a, b, and I can
+go only there to c.
+But, of course, I keep s, a, d and s, b on the queue.
+Now, I take the front off the queue again, and I get s, a,
+b, c, e, and not to forget s, a, d and s, b.
+I take the first one off the queue.
+It doesn't go to the goal.
+I try to extend it, but there's nothing there.
+I've reached a dead end.
+So, in this operation, all I'm doing is taking the front one
+off the queue and shortening the queue.
+We're almost home.
+I take s, a,d off of queue.
+And I get s, a, d, c.
+And, of course, I still have s, b.
+Now, the next time I visit the situation, buried in that
+first step, I discover a path that actually does get to
+goal, and I'm done.
+So, each time around I visualize the queue.
+I check to see if I'm done.
+If not, I take the extensions and put them
+somewhere on the queue.
+And then I go back in.
+And then here there's a varied test which checks to see if
+we're done.
+That's how the Depth-first Search algorithm works.
+And now, would we have to start all over again if we did
+Breadth-first Search?
+Nope.
+Same algorithm.
+All the code we've got needs one line
+replaced, one line changed.
+What do I have to do different in order to get a
+Breadth-first Search out of this instead of
+a Depth-first Search?
+Tanya?
+Change [INAUDIBLE] on the queue.
+And where do I put it on the queue?
+She says to change it.
+On the back?
+Put it on the back.
+So, with Breadth-first Search all I have to do
+is put on the back.
+Now, if we were content with a inefficient search, and didn't
