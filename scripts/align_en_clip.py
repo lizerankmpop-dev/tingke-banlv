@@ -60,6 +60,44 @@ def token_times(cues: list[dict]) -> list[float]:
     return out
 
 
+def same_source_ratio(cues, draft, n: int = 3) -> float:
+    """🔴 **素材同一性预检**：ASR 草稿的 n-gram 有多少能在官方稿里找到
+
+    为什么必须有这一步（2026-10-27，P12 踩出来的）
+    ----------------------------------------------
+    P12（B 站「12.-学习：神经网络、反向传播」）↔ OCW Lecture 12A（Neural Nets）
+    —— **标题与主题都吻合，但重合率只有 12.8%** ⇒ **不是同一段视频**
+    （很可能是不同剪辑版本/不同来源的同名讲次）。
+
+    表现是：自动对齐的三种方法**全都失败**，而手工扫 `--offset` 也给不出
+    合理结果（所有 offset 的词级差都 ≈0.96）⇒ 我在那格上耗了大量时间，
+    根因却是「素材根本对不上」，**不是算法不够好**。
+
+    ⇒ **对齐之前先花 1 秒验「是不是同一素材」**，比调一小时算法划算得多。
+
+    实测基准（MIT 6.034）：
+    | 格 | 3-gram 重合率 | 判定 |
+    |---|---|---|
+    | P4（Lec-4） | 60.8% | ✅ 同一素材 |
+    | P20（Lec-21） | 65.2% | ✅ 同一素材 |
+    | **P12（Lec-12A）** | **12.8%** | ❌ **不是同一素材** |
+
+    阈值：>45% 值得做对齐；25~45% 可疑；<25% 直接判「不同源」。
+    """
+    from collections import Counter
+
+    full = " ".join(c["text"] for c in cues).lower()
+    grams: Counter = Counter()
+    for seg in draft["segments"]:
+        w = seg["text"].lower().split()
+        for i in range(len(w) - n + 1):
+            grams[" ".join(w[i:i + n])] += 1
+    if not grams:
+        return 0.0
+    hit = sum(1 for g in grams if g in full)
+    return hit / len(grams)
+
+
 def fit_by_ngram(cues, draft, n: int = 4) -> tuple[list[float], float, float, float]:
     """🔴 **n-gram 索引 + 投票**（2026-10-26，P12 逼出来的最终定位法）
 
@@ -286,6 +324,20 @@ def main() -> int:
     print(f"VTT: {len(cues)} cues，覆盖 {cues[0]['start']:.0f}~{cues[-1]['end']:.0f}s")
 
     clip_len = args.clip_end - args.clip_start
+
+    # 🔴 **先验「是不是同一素材」**（P12 的教训：对不上就别调算法了）
+    ratio = same_source_ratio(cues, draft)
+    print(f"素材同一性预检：3-gram 重合率 {ratio:.1%}")
+    if ratio < 0.25:
+        print(f"🔴🔴 重合率仅 {ratio:.1%}（同一素材实测 60~65%）⇒ "
+              f"**B 站素材与这份官方 VTT 不是同一段视频**。")
+        print("    对齐在这里**不可能成功** —— 请先确认讲次对应关系"
+              "（B 站分 P ↔ OCW 讲次可能不同源），或换一份官方转写。")
+        print("    （本轮不产出候选稿 —— 与其产出一份错位的稿，不如明确报「不同源」。）")
+        return 2
+    if ratio < 0.45:
+        print(f"⚠ 重合率 {ratio:.1%} 偏低，对齐结果需**加倍核对**（首句/末句边界 + 词级差）")
+
     if args.offset is not None:
         # 人工确认路径：偏移由**两个以上独立位置**手工核对得出
         cands, med, share, sd = [args.offset], args.offset, 1.0, 0.0

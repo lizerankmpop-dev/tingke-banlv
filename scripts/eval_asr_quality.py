@@ -61,6 +61,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import random
@@ -353,6 +354,30 @@ def edit_distance(ref: list, hyp: list) -> int:
     return prev[-1]
 
 
+def edit_breakdown(ref: list, hyp: list) -> dict:
+    """试返分解：插入 / 删除 / 替换，及其总数。
+
+    • 真的变化在词同不同的方向上会当下反向着贝：这会把指标变成：“采绘品词变好”的办法。
+
+    不能取代陨插入：“保持单词不会产生重练”，只能计量量。
+    """
+    sm = difflib.SequenceMatcher(None, ref, hyp, autojunk=False)
+    ins = dele = sub = 0
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "insert":
+            ins += j2 - j1
+        elif tag == "delete":
+            dele += i2 - i1
+        elif tag == "replace":
+            sub += max(i2 - i1, j2 - j1)
+    return {
+        "insertions": ins,
+        "deletions": dele,
+        "substitutions": sub,
+        "total": ins + dele + sub,
+    }
+
+
 def wer(ref_text: str, hyp_text: str, language: str) -> dict:
     """
     返回 {wer, cer, refUnits, hypUnits, edits}
@@ -380,6 +405,7 @@ def wer(ref_text: str, hyp_text: str, language: str) -> dict:
         "refUnits": len(ref_units),
         "hypUnits": len(hyp_units),
         "edits": edits,
+        "breakdown": edit_breakdown(ref_units, hyp_units),
     }
 
 
@@ -992,13 +1018,19 @@ def summarize(results: list[dict]) -> dict:
 
     by_scenario: dict[str, dict] = {}
     for r in ok:
-        bucket = by_scenario.setdefault(r["scenario"], {"files": 0, "wer": [], "cer": [], "rtf": []})
+        bucket = by_scenario.setdefault(r["scenario"], {"files": 0, "wer": [], "cer": [], "rtf": [],
+                                                      "insertions": [], "deletions": [], "substitutions": []})
         bucket["files"] += 1
         if r.get("rtf") is not None:
             bucket["rtf"].append(r["rtf"])
         if r.get("accuracy"):
             bucket["wer"].append(r["accuracy"]["wer"])
             bucket["cer"].append(r["accuracy"]["cer"])
+            _bk = r["accuracy"].get("breakdown")
+            if _bk:
+                bucket["insertions"].append(_bk["insertions"])
+                bucket["deletions"].append(_bk["deletions"])
+                bucket["substitutions"].append(_bk["substitutions"])
 
     # 来源 × 场景 二维聚合。**独立于 byScenario**：byScenario 原样保留，
     # 保证历史对照表可以逐格对账；这里回答的是另一个问题 ——
@@ -1146,6 +1178,7 @@ def verdict(summary: dict, results: list[dict], args) -> tuple[bool, list[str]]:
         notes.append("✗ 切出了片段但没有任何字幕（片段未送入识别引擎）—— 本次结果无效")
     else:
         notes.append(
+
             f"✓ 管道连通：{summary['totalSegments']} 个片段 → {summary['totalSubtitles']} 条字幕"
         )
 
@@ -1288,6 +1321,29 @@ def print_report(results: list[dict], summary: dict, notes: list[str]) -> None:
             f"{(str(r['latency']['p95']) if r['paired'] else '-'):>9}"
             f"{(str(r['latency_word_based']['p95']) if r.get('latency_word_based', {}).get('p95') is not None else '-'):>9}"
         )
+    # 误差分解（插入 / 删除 / 替换）—— V7 P3 的教训：「只看 WER 总数，
+    # 会把方向相反的两个效应混在一起」——「替换↓ = 术语识别改善」与
+    # 「插入↑ = 输出啰嗦」必须分开看。
+    # ⚠️ 一致性自检那一列是**关键**：difflib 的对齐不是严格最优解，
+    #    若 总数 ≠ edits ⇒ 分解只能当量级参考。
+    _brk = []
+    for _r in results:
+        _b = (_r.get("accuracy") or {}).get("breakdown")
+        if _b:
+            _brk.append((_r, _b))
+    if _brk:
+        print("-" * 122)
+        print(f"{'误差分解':<32}{'插':>6}{'删':>6}{'替':>6}"
+              f"{'总':>6}{'edits':>8}{'一致?':>8}")
+        for _r, _b in _brk:
+            _acc = _r["accuracy"]
+            _ok = "✓" if _b["total"] == _acc["edits"] else "✗"
+            print(f"{_r['file'][:31]:<32}{_b['insertions']:>6}{_b['deletions']:>6}"
+                  f"{_b['substitutions']:>6}{_b['total']:>6}{_acc['edits']:>8}{_ok:>8}")
+        if any(_b["total"] != _r["accuracy"]["edits"] for _r, _b in _brk):
+            print("  ⚠ 有条「总数≠edits」：difflib 的对齐不是严格最优解，"
+                  "所以这些数字只能当量级参考。")
+
     print("-" * 122)
     print(
         f"汇总：{summary['files']} 个文件（{summary['withReference']} 个有参考文本）｜"
