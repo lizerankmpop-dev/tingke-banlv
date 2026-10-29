@@ -352,7 +352,22 @@ class TestRealCallChain:
         )
 
     def test_pipeline_hot_update_keeps_phrases_for_english(self):
-        """反向断言：英文课程热更新后短语层仍在"""
+        """反向断言：**热更新路径本身没坏**（术语层仍被正确重建）
+
+        ⚠️ **这条断言的前提在 2026-10-28 变了**（V7 P9）：
+
+        它原本断言「英文课热更新后**短语层仍在**」，用来防止「修中文课时
+        顺手把英文课的能力也砍了」（那是砍功能换绿灯）。
+
+        现在**英文课本来就不该有通用短语层** —— 短语层的内容是
+        `basic_vocab.json` 里的通用心理学/教育学短语，**与用户学的课无关**；
+        V7 在 MIT 6.034 三个讲次上实测排除它之后 WER **三讲一致**下降
+        −0.0123 ~ −0.0190（详见 `docs/m3/plan_v7.md` §六之四）。
+
+        ⇒ **本测试的价值不在于「有 phrases 层」，而在于「热更新这条调用链没坏」**
+        ⇒ 断言改成验证**热更新确实重建了术语层**，并**顺带钉住新行为**：
+        英文课**没有**通用短语层，但 **custom 层在热更新后确实更新了**。
+        """
         from asr.pipeline import ASRPipeline
 
         pipe = object.__new__(ASRPipeline)
@@ -361,12 +376,27 @@ class TestRealCallChain:
         pipe._terminology = {}
         pipe._term_language = None
 
+        captured = {}
+
         class _FakeWhisper:
             def set_initial_prompt(self, prompt, sections=None):
-                pass
+                captured["prompt"] = prompt
+                captured["sections"] = sections
 
         pipe._whisper = _FakeWhisper()
         pipe.update_terminology()
 
         sections = {k: len(v) for k, v in (pipe._terminology.get("sections") or [])}
-        assert sections.get("phrases"), f"英文课的短语层被误砍：{sections}"
+        # ① 热更新确实重建了术语层（sections 非空 ⇒ 走了完整构建路径）
+        assert sections, f"热更新后术语层没有被重建：{sections}"
+        # ② 英文课**不再有**通用短语层（V7 P9 的结论，在真实调用链上钉住）
+        assert not sections.get("phrases"), (
+            f"英文课不应再有通用短语层（内容与课程无关，实测有害）：{sections}"
+        )
+        # ③ 🔑 **热更新后 custom 层确实更新了** —— 这是本测试真正要守的东西
+        pipe.course_config["custom_terms"] = ["beam search", "minimax"]
+        pipe.update_terminology()
+        sections2 = {k: len(v) for k, v in (pipe._terminology.get("sections") or [])}
+        assert sections2.get("custom") == 2, (
+            f"热更新后 custom 层没有更新：{sections2}"
+        )

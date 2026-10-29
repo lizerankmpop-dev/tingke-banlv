@@ -59,6 +59,22 @@ FORMAT = "int16"
 
 SYSTEM = platform.system()
 
+# 🔴 **音频设备枚举的全局互斥锁 + 默认回环设备缓存**（2026-10-29）
+#
+# 为什么必须加：PortAudio 的 `get_default_wasapi_loopback()` 会读
+# `hostApi->info.defaultOutputDevice`。**多个采集线程同时枚举**时这里会读到
+# 非法值，PortAudio 直接断言失败并 **abort 整个进程**：
+#     Assertion failed: hostApi->info.defaultOutputDevice < hostApi->info.deviceCount,
+#     file src/common/pa_front.c, line 233
+# 实际触发路径：前端在多个课程上各起了一个 ASR 管道 ⇒ 三个采集线程同一毫秒
+# 启动 ⇒ 同时枚举 ⇒ 后端进程崩掉（页面显示「已连接」但永远没有字幕）。
+#
+# 两道防线：
+# 1. 互斥锁 —— 枚举串行化（枚举很便宜，串行没有代价）
+# 2. 缓存 —— 默认回环设备**不会变**，第一次查到就复用，后续启动不再碰 PortAudio
+_DEVICE_ENUM_LOCK = threading.Lock()
+_DEFAULT_LOOPBACK_INDEX_CACHE: Optional[int] = None
+
 CaptureMode = Literal["loopback", "microphone"]
 
 
@@ -118,6 +134,13 @@ class AudioCapture:
         self._pyaudio = None
         self._native_rate = sample_rate          # 设备实际使用的采样率
         self._in_channels = CHANNELS             # 流实际打开的输入声道数
+
+        # 🔴 音频流被外部打断后的**重建重试**参数（2026-10-28）
+        #    host error 最常见的触发方式就是「另一个程序开始播放音频」
+        #    —— 浏览器开播就会打断 ⇒ 采集必须能自己恢复，而不是永久死掉。
+        self.max_retries = 8          # 最多重建 8 次
+        self.retry_base_delay = 1.0   # 首次退避 1s
+        self.retry_max_delay = 8.0    # 退避上限 8s（1→2→4→8→8…）
         self._chunk_count = 0
         self._dropped = 0
 
@@ -269,8 +292,86 @@ class AudioCapture:
                 logger.warning("音频流已非活跃状态，捕获退出")
 
         except Exception as e:
-            logger.error(f"音频捕获错误: {type(e).__name__}: {e}")
-            self._running = False
+            # 🔴 **host error 是可恢复的** —— 它最常见的触发方式就是
+            #    「**另一个程序开始播放音频**」（浏览器开播、播放器开声、
+            #    甚至另一个 ASR 管道抢占设备）。Windows 的 WASAPI 回环设备
+            #    同一时刻只能被一个流独占，被抢时 PortAudio 直接报
+            #    `OSError: [Errno -9999] Unanticipated host error`。
+            #
+            #    原实现在这里**直接把 `_running` 置 False** ⇒ 采集永久死掉，
+            #    字幕永远不来，而前端只能显示「等待音频输入...」——
+            #    用户完全看不出是「设备被抢」还是「模型坏了」。
+            #    （2026-10-28 用户测试时实际踩到：浏览器一开始播视频，
+            #      采集就被打断，界面一直停在「等待音频输入...」。）
+            #
+            #    ⇒ 现在改成**重建音频流 + 指数退避重试**。
+            #    重试放在采集线程里（daemon thread），不阻塞事件循环。
+            if not self._running:
+                return
+
+            attempt = 0
+            while self._running and attempt < self.max_retries:
+                attempt += 1
+                delay = min(self.retry_base_delay * (2 ** (attempt - 1)),
+                            self.retry_max_delay)
+                logger.warning(
+                    f"音频捕获被中断（{type(e).__name__}: {e}）→ "
+                    f"{delay:.1f}s 后重建音频流（第 {attempt}/{self.max_retries} 次）"
+                )
+                # 退避期间也要能被 stop() 立刻打断
+                deadline = time.time() + delay
+                while self._running and time.time() < deadline:
+                    time.sleep(0.1)
+                if not self._running:
+                    return
+                try:
+                    self._close_stream_quietly()
+                    self._pyaudio = pyaudio.PyAudio()
+                    self._stream = self._pyaudio.open(
+                        format=self._pyaudio.get_format_from_width(2),
+                        channels=in_channels,
+                        rate=self._native_rate,
+                        input=True,
+                        input_device_index=device_index,
+                        frames_per_buffer=frames_per_buffer,
+                        stream_callback=self._audio_callback,
+                    )
+                    self._stream.start_stream()
+                    logger.info("音频流已重建，恢复捕获")
+                    e = None
+                    break
+                except Exception as e2:
+                    logger.warning(f"重建音频流失败: {type(e2).__name__}: {e2}")
+                    e = e2
+
+            if e is not None:
+                logger.error(f"音频捕获错误（重试 {attempt} 次后仍失败）: "
+                             f"{type(e).__name__}: {e}")
+                self._running = False
+        finally:
+            self._close_stream_quietly()
+
+    def _close_stream_quietly(self) -> None:
+        """关流 + 释放 PyAudio —— 任何时候都不能让它抛出来打断调用方"""
+        try:
+            if self._stream is not None:
+                try:
+                    self._stream.stop_stream()
+                except Exception:
+                    pass
+                try:
+                    self._stream.close()
+                except Exception:
+                    pass
+                self._stream = None
+        except Exception:
+            pass
+        try:
+            if self._pyaudio is not None:
+                self._pyaudio.terminate()
+                self._pyaudio = None
+        except Exception:
+            pass
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
         """
@@ -312,16 +413,44 @@ class AudioCapture:
 
         这是回环采集的正确做法：靠设备名子串匹配（'loopback'/'立体声混音'/'cable'）
         既不可靠，也会把「立体声混音」（需要用户手动启用）和 VB-Cable 误当成首选。
+
+        🔴 **必须加锁 + 缓存**（2026-10-29 修的真实崩溃）
+        ----------------------------------------------
+        `get_default_wasapi_loopback()` 会去读 PortAudio 的
+        `hostApi->info.defaultOutputDevice`。**当多个采集线程同时枚举设备时，
+        这里会读到非法值，PortAudio 直接断言失败并 abort 整个进程**：
+
+            Assertion failed: hostApi->info.defaultOutputDevice < hostApi->info.deviceCount,
+            file src/common/pa_front.c, line 233
+
+        触发路径（实际发生）：**前端在多个课程上各起了一个 ASR 管道**
+        ⇒ 三个采集线程在同一毫秒启动 ⇒ 同时枚举 ⇒ 后端整个进程崩掉，
+        页面只剩「已连接」但永远没有字幕。
+
+        ⇒ 两道防线：
+        1. **模块级互斥锁** —— 设备枚举串行化（枚举很便宜，串行无代价）
+        2. **缓存索引** —— 默认回环设备**不会变**，第一次查到就存起来复用，
+           后续启动根本不再枚举（⇒ 连并发都不会发生）
         """
+        global _DEFAULT_LOOPBACK_INDEX_CACHE
+
         if not _HAS_LOOPBACK_API:
             return None
-        try:
+
+        # 防线 2：命中缓存就不再碰 PortAudio
+        with _DEVICE_ENUM_LOCK:
+            cached = _DEFAULT_LOOPBACK_INDEX_CACHE
+        if cached is not None:
+            return cached
+
+        # 防线 1：枚举串行化
+        with _DEVICE_ENUM_LOCK:
             info = pyaudio_obj.get_default_wasapi_loopback()
             if info and info.get("index") is not None:
-                logger.info(f"WASAPI 默认回环设备: {info.get('name')} (index={info['index']})")
-                return int(info["index"])
-        except Exception as e:
-            logger.debug(f"get_default_wasapi_loopback 不可用: {e}")
+                idx = int(info["index"])
+                logger.info(f"WASAPI 默认回环设备: {info.get('name')} (index={idx})")
+                _DEFAULT_LOOPBACK_INDEX_CACHE = idx
+                return idx
         return None
 
     def _find_loopback_device(self, pyaudio_obj) -> Optional[int]:

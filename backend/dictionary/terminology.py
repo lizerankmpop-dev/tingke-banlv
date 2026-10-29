@@ -235,11 +235,26 @@ def _dedup_keep_order(items: list[str]) -> list[str]:
     return out
 
 
-# 走「短语层」的语种。中文课堂一律排除 —— 短语层只能命中英文多词短语，
-# 对中文课是纯干扰（实测 CER +42.9%，详见 build_prompt_sections 的 docstring）。
+# 走「短语层」的语种。
+#
+# - **中文课堂一律排除** —— 短语层只能命中英文多词短语，对中文课是纯干扰
+#   （实测 CER +42.9%，详见 build_prompt_sections 的 docstring）。
+# - **英文课堂也排除**（2026-10-28，V7 P9）—— 短语层的内容是 `basic_vocab.json`
+#   里的**通用心理学/教育学短语**（`prefrontal cortex` / `forgetting curve` /
+#   `cognitive bias` …），**与用户学的课无关**。V7 在 MIT 6.034 三个讲次上实测：
+#   排除它之后 WER **三讲一致**下降 −0.0123 ~ −0.0190
+#   （P1 0.1130→0.0954 / P4 0.1610→0.1487 / P20 0.1622→0.1432），
+#   机制是**替换错误三讲一致下降**（100→80 / 147→135 / 146→134），
+#   提示词从 794 字符降到 0。
+#   证据与复现步骤见 `docs/m3/plan_v7.md` §六之四 与 `docs/m3/plan_v7_p7_changes.md`。
+#   ⇒ 英文课改为只用 **custom（用户自配）→ discovered（课内已提取）→ domain（领域）** 三层。
+#
 # 用白名单式反选（列出**已知不该注入**的）而不是列出该注入的：语种代码是开放集合，
 # 漏列一个新语种只会退化成旧行为，而漏在正选名单外会静默砍掉该语种的能力。
-_PHRASES_LAYER_EXCLUDED_LANGS = frozenset({"zh", "yue", "wuu", "cmn"})
+#
+# ⚠️ **只对 `en` 生效**（证据只覆盖英文课）。`ja` / `ko` / `fr` 等仍保留短语层 ——
+#    要改它们需要各自的实测证据，不能拿英文的结论外推。
+_PHRASES_LAYER_EXCLUDED_LANGS = frozenset({"zh", "yue", "wuu", "cmn", "en"})
 
 
 def _phrases_layer_enabled(language: str) -> bool:

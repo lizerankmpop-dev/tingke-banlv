@@ -76,7 +76,7 @@ def test_surrounding_whitespace_is_ignored():
 
 # ============ 2. 非中文 / 未指定：保持旧行为（反向断言）============
 
-@pytest.mark.parametrize("lang", ["auto", "", "en", "en-US", "ja", "ko", "fr"])
+@pytest.mark.parametrize("lang", ["auto", "", "ja", "ko", "fr"])
 def test_non_chinese_keeps_phrases_layer(lang):
     """
     反向断言：修中文课**不许**把英文课的既有能力一起关掉
@@ -87,6 +87,37 @@ def test_non_chinese_keeps_phrases_layer(lang):
     assert _phrases_layer_enabled(lang) is True, f"{lang} 应保留短语层"
     assert _phrases_count(lang) > 0, f"{lang} 应产出短语层"
     assert _has_ascii_phrase(lang), f"{lang} 的短语层应含英文多词短语"
+
+
+@pytest.mark.parametrize("lang", ["en", "en-US", "EN", "en_GB"])
+def test_english_excludes_phrases_layer(lang):
+    """
+    🔴 **英文课也排除短语层**（2026-10-28，V7 P9）—— 这次是**有实测依据**的改动
+
+    这条断言**曾经是反过来的**（`en` 属于「必须保留短语层」那一档）。
+    改动它的依据是 V7 在 **MIT 6.034 三个讲次**上的实测（不是推理）：
+
+    | 格 | 默认（有 60 条通用短语） | 排除短语层 | Δ | 机制（替换错误） |
+    |---|---|---|---|---|
+    | P1（Lec-1 定义课） | 0.1130 / 0.1083 | **0.0954** | **−0.0176** | 100 → 80 |
+    | P4（Lec-4 搜索课） | 0.1610 | **0.1487** | **−0.0123** | 147 → 135 |
+    | P20（Lec-21 概率推理） | 0.1622 | **0.1432** | **−0.0190** | 146 → 134 |
+
+    提示词从 794 字符降到 **0**；三讲一致，差值远大于 P1 自身的波动（极差 0.0047）。
+
+    **为什么英文也该排除**：短语层的内容是 `basic_vocab.json` 里的
+    **通用心理学/教育学短语**（`prefrontal cortex` / `forgetting curve` /
+    `cognitive bias` …）—— 它们**与用户学的课无关**，只会占满提示词预算、
+    并让模型输出更啰嗦。⇒ 英文课改为只用
+    **custom（用户自配）→ discovered（课内已提取）→ domain（领域）** 三层。
+
+    ⚠️ **只对 `en` 生效** —— 证据只覆盖英文课。`ja` / `ko` / `fr` 仍保留短语层，
+    要改它们需要各自的实测证据（**不能拿英文的结论外推**）。
+    证据与复现步骤见 `docs/m3/plan_v7.md` §六之四、
+    `docs/m3/plan_v7_p7_changes.md`，以及 `docs/asr_eval/WER_REPORT_PLAN.md` §7.1。
+    """
+    assert _phrases_layer_enabled(lang) is False, f"{lang} 应排除通用短语层"
+    assert _phrases_count(lang) == 0, f"{lang} 不应产出通用短语层"
 
 
 def test_excluded_set_is_not_empty():

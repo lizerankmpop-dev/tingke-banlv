@@ -26,7 +26,10 @@ const SIMP_MODES = [
   { value: 'raw', label: '保留原始字形' },
 ]
 
-type LoopbackStatus = 'checking' | 'ok' | 'missing'
+// 🔴 `'unreachable'` = **后端服务没运行**（连接被拒），它与 `'missing'`
+//    （后端在跑，但确实没有 Loopback 设备）是**两件完全不同的事**：
+//    前者要「启动服务」，后者要「装虚拟声卡」。混为一谈会把人引向错误的修复方向。
+type LoopbackStatus = 'checking' | 'ok' | 'missing' | 'unreachable'
 
 interface LoopbackGuide {
   name: string
@@ -248,18 +251,35 @@ export default function CourseConfig() {
     if (!isOffline) {
       setLoopbackStatus('checking')
       fetch('/api/audio/check-loopback')
-        .then(r => r.json())
+        .then(r => {
+          // 🔴 **先看 HTTP 状态，再看 body**（2026-10-29 修）
+          //
+          // 原来只 catch 网络异常 ⇒ **后端整个进程没起来时**（连接被拒）
+          // 也走 catch ⇒ 状态被设成 'missing' ⇒ 页面显示
+          // 「**未检测到音频 Loopback 设备**」⇒ **把人引去装虚拟声卡**，
+          // 而真实原因是「后端服务没运行」。两者要修的方向完全不同。
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          return r.json()
+        })
         .then(data => {
           setLoopbackGuide(data.guide)
           setLoopbackStatus(data.hasLoopback ? 'ok' : 'missing')
         })
-        .catch(() => setLoopbackStatus('missing'))
+        .catch((err) => {
+          // 「后端不可达」与「设备不存在」是**两件事**，必须分开说
+          const unreachable = (err?.message || '').startsWith('HTTP')
+            || err instanceof TypeError
+          setLoopbackStatus(unreachable ? 'unreachable' : 'missing')
+        })
     } else {
       setLoopbackStatus('ok')
     }
   }, [isOffline])
 
-  const canStart = isOffline || loopbackStatus === 'ok'
+  // ⚠️ `'unreachable'`（后端没起）时**不禁用**「开始识别」——
+  //    否则用户连试都试不了，只能干看着。真正该做的是让用户去启动服务，
+  //    而不是把按钮锁死（点了之后后端会给出真实原因）。
+  const canStart = isOffline || loopbackStatus === 'ok' || loopbackStatus === 'unreachable'
 
   const handleStart = () => {
     if (!canStart) return
@@ -370,6 +390,31 @@ export default function CourseConfig() {
             customTerms={customTerms.split(/[,，]/).map(t => t.trim()).filter(Boolean)}
           />
         </div>
+
+        {/* 🔴 后端服务不可达（**不是**设备问题）—— 2026-10-29 加 */}
+        {!isOffline && loopbackStatus === 'unreachable' && (
+          <div style={styles.warningBar}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AlertTriangle size={16} color="var(--danger)" />
+              <span style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 500 }}>
+                后端服务未运行
+              </span>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
+              连不上识别服务，**这不是音频设备的问题**。请先启动后端再试
+              （桌面版由应用自动启动；网页版请运行 <code>启动网页测试.bat</code>）。
+            </p>
+            <button
+              onClick={() => {
+                setLoopbackStatus('checking')
+                window.location.reload()
+              }}
+              style={styles.guideLink}
+            >
+              重新检测
+            </button>
+          </div>
+        )}
 
         {/* Loopback 设备检测警告 */}
         {!isOffline && loopbackStatus === 'missing' && (

@@ -192,17 +192,53 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
 
   _startBackendASR: (courseId: string) => {
     get().setASRStatus('listening', '正在启动识别...')
-    fetch(`/api/asr/start?course_id=${courseId}`, { method: 'POST' })
-      .then(() => {
-        if (!get().intentionalClose) {
-          set({ reconnectAttempts: 0 })
-          get().setASRStatus('listening', '识别中...')
-        }
-      })
-      .catch(() => {
-        if (!get().intentionalClose) {
-          get()._tryReconnect(courseId)
-        }
+
+    // 🔴 **先 stop 再 start，必须串行**（2026-10-29 修）
+    //
+    // 原来 `disconnectASR` 里的 stop 是 fire-and-forget（不等它返回），
+    // 而 `_startBackendASR` 紧接着就发 start ⇒ **两个管道短暂并存** ⇒
+    // 两个采集线程同一毫秒枚举音频设备 ⇒ PortAudio 断言失败
+    // ⇒ **整个后端进程 abort**（页面显示「已连接」但永远没有字幕）。
+    //
+    // ⇒ 现在串行：等 stop 落地（失败也继续）再 start。
+    //    重连路径走这里也安全 —— 重连的前提本来就是管道已经不在了。
+    fetch(`/api/asr/stop?course_id=${courseId}`, { method: 'POST' })
+      .catch(() => {})
+      .finally(() => {
+        fetch(`/api/asr/start?course_id=${courseId}`, { method: 'POST' })
+          .then(async (res) => {
+            // 🔴 **必须检查状态码**（2026-10-29 修）
+            //
+            // 原来只看「fetch 没抛异常」⇒ 后端返回 **409 / 4xx / 5xx** 也走 `.then()`
+            // ⇒ 前端显示「识别中...」而**后端根本没起管道**
+            // ⇒ 用户看到「已连接」但永远没有字幕，且完全不知道原因。
+            if (!res.ok) {
+              let detail = ''
+              try {
+                const body = await res.json()
+                detail = body?.detail || ''
+              } catch { /* 响应不是 JSON，忽略 */ }
+              const err = new Error(detail || `启动失败（HTTP ${res.status}）`)
+              ;(err as any).status = res.status
+              throw err
+            }
+            if (!get().intentionalClose) {
+              set({ reconnectAttempts: 0 })
+              get().setASRStatus('listening', '识别中...')
+            }
+          })
+          .catch((err) => {
+            if (get().intentionalClose) return
+            // 🔴 **409 = 设备被另一门课占用** ⇒ 那是**业务上的永久冲突**，
+            //    重试多少次都不会变（还会把后端拖进雪崩）。
+            //    ⇒ 直接把原因显示给用户，**不重连**。
+            const status = (err as any)?.status
+            if (status === 409) {
+              get().setASRStatus('error', err?.message || '系统音频已被另一门课占用')
+              return
+            }
+            get()._tryReconnect(courseId)
+          })
       })
   },
 
