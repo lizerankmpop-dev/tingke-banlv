@@ -28,6 +28,10 @@ router = APIRouter()
 
 # 活跃的 ASR 管道（按课程 ID）
 active_pipelines: dict[str, ASRPipeline] = {}
+# 🔴 **正在构造中的课程**（2026-10-29）—— `active_pipelines` 要等管道构造完才登记，
+#    构造期间来的第二个请求看不到前一个 ⇒ 两边同时构造 PyAudio ⇒ PortAudio 断言
+#    失败 → abort 整个后端进程。⇒ 构造前先占位。
+_starting_courses: set[str] = set()
 
 # 术语提示词自动降级兜底的全局默认值
 #
@@ -962,11 +966,15 @@ async def start_asr(course_id: str = Query(...)):
     # 一个音频输出设备同一时刻只能被**一个** WASAPI 回环流使用。
     # 原来多个课程可以各起一个管道 ⇒ 它们同时枚举设备 / 同时开流 ⇒
     # ① 后来的管道**静默卡死**（`get_default_wasapi_loopback()` 在设备被占时阻塞）
-    # ② 更糟：并发枚举让 PortAudio **断言失败并 abort 整个后端进程**
+    # ② 更糟：并发构造 PyAudio 让 PortAudio **断言失败并 abort 整个后端进程**
     #    （`Assertion failed: hostApi->info.defaultOutputDevice < ...`）
     #
     # ⇒ 现在**明确拒绝**并告诉用户是哪门课占着，而不是让它静默失败。
     #    注：前端在 ASR 没产出时会重连重试，所以这个检查能真正挡住雪崩。
+    #
+    # 🔴 **占位必须提前到「构造之前」**（`_starting_courses`）：
+    #    `active_pipelines` 要等管道**构造完**才登记 ⇒ 构造期间来的第二个请求
+    #    **看不到前一个** ⇒ 两边同时构造 PyAudio ⇒ 崩。
     if course.get("courseType", "online") != "offline":
         others = []
         for cid, p in active_pipelines.items():
@@ -976,6 +984,8 @@ async def start_asr(course_id: str = Query(...)):
             cfg = getattr(p, "course_config", None) or {}
             if cfg.get("courseType", "online") != "offline":
                 others.append(cid)
+        # 正在构造中的（还没进 active_pipelines）也算占着
+        others += [cid for cid in _starting_courses if cid != course_id]
         if others:
             names = []
             for cid in others:
@@ -987,6 +997,10 @@ async def start_asr(course_id: str = Query(...)):
                        f"同一时间只能听一门课 —— 请先停止那门课，或把它改成"
                        f"「线下课堂（麦克风）」模式。")
 
+    # 🔴 **占位**：从这一刻起，这个 course_id 就「占着」音频设备，
+    #    构造期间来的第二个请求会被上面的检查挡下（409）。
+    _starting_courses.add(course_id)
+
     # 先建队列再建管道：管道构造过程中回调就可能被触发
     # （Whisper 引擎在后台线程里加载模型并上报 progress）
     asr_message_queues[course_id] = deque()
@@ -996,10 +1010,12 @@ async def start_asr(course_id: str = Query(...)):
         pipeline = await _build_pipeline(course_id, course, loop)
     except Exception as e:
         asr_message_queues.pop(course_id, None)
+        _starting_courses.discard(course_id)
         logger.error(f"ASR 管道构造失败: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"ASR 初始化失败: {e}")
 
     active_pipelines[course_id] = pipeline
+    _starting_courses.discard(course_id)
 
     await pipeline.start()
 

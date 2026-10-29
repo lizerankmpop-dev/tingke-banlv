@@ -72,7 +72,13 @@ SYSTEM = platform.system()
 # 两道防线：
 # 1. 互斥锁 —— 枚举串行化（枚举很便宜，串行没有代价）
 # 2. 缓存 —— 默认回环设备**不会变**，第一次查到就复用，后续启动不再碰 PortAudio
-_DEVICE_ENUM_LOCK = threading.Lock()
+# 🔴 **必须是 `RLock` 而不是 `Lock`**（2026-10-29）
+#    `Lock` **不可重入** ⇒ `_capture_loop` 持有它去开流，
+#    而开流过程里调的 `_default_loopback_index` 又要拿同一把锁
+#    ⇒ **自死锁**（表现：日志只有「音频捕获已启动」，既没有「使用音频设备」
+#    也没有「音频流已打开」，然后永远不出数据）。
+#    `RLock` 允许同一线程重复获取 ⇒ 嵌套调用安全。
+_DEVICE_ENUM_LOCK = threading.RLock()
 _DEFAULT_LOOPBACK_INDEX_CACHE: Optional[int] = None
 
 CaptureMode = Literal["loopback", "microphone"]
@@ -230,53 +236,68 @@ class AudioCapture:
             return
 
         try:
-            self._pyaudio = pyaudio.PyAudio()
+            # 🔴🔴 **「构造 PyAudio + 找设备 + 开流」必须整段串行**（2026-10-29 二次修）
+            #
+            # 上一版我只给 `_default_loopback_index` 加了锁 ⇒ **还是崩**，因为：
+            #   ① **`pyaudio.PyAudio()` 构造函数本身就会枚举 host API**
+            #      （`Pa_Initialize` 会读 `hostApi->info.defaultOutputDevice`）
+            #      ⇒ 两个线程同时构造 ⇒ **PortAudio 断言失败 → abort 整个进程**
+            #      ⇒ 日志里只留下一行 `Assertion failed: ...`，**Python 层拿不到任何异常**
+            #   ② `self._pyaudio.open(...)` 同样要碰设备状态
+            #
+            # 实测触发：两个前端标签页各发一次「开始识别」⇒ 两个采集线程
+            # 在同一毫秒构造 PyAudio ⇒ 崩。
+            #
+            # ⇒ 现在**整段进锁**：构造 → 找设备 → 开流 全部串行。
+            #    锁只保护「打开」这个短动作，长期持有的 stream 不在锁内 ⇒ 无性能影响。
+            with _DEVICE_ENUM_LOCK:
+                self._pyaudio = pyaudio.PyAudio()
 
-            if self._device_index is not None:
-                device_index = self._device_index
-            elif self.mode == "loopback":
-                # PyAudioWPatch 自带默认回环设备，优先用它
-                device_index = self._default_loopback_index(self._pyaudio)
+                if self._device_index is not None:
+                    device_index = self._device_index
+                elif self.mode == "loopback":
+                    # PyAudioWPatch 自带默认回环设备，优先用它
+                    device_index = self._default_loopback_index(self._pyaudio)
+                    if device_index is None:
+                        device_index = self._find_loopback_device(self._pyaudio)
+                else:
+                    device_index = self._find_microphone_device(self._pyaudio)
+
                 if device_index is None:
-                    device_index = self._find_loopback_device(self._pyaudio)
-            else:
-                device_index = self._find_microphone_device(self._pyaudio)
+                    logger.error(f"未找到可用的音频设备 (模式: {self.mode})")
+                    self._running = False
+                    return
 
-            if device_index is None:
-                logger.error(f"未找到可用的音频设备 (模式: {self.mode})")
-                self._running = False
-                return
+                device_info = self._pyaudio.get_device_info_by_index(device_index)
+                self._native_rate = int(device_info.get("defaultSampleRate") or self.sample_rate)
+                logger.info(
+                    f"使用音频设备: {device_info['name']} "
+                    f"(index={device_index}, 模式={self.mode}, "
+                    f"原生采样率={self._native_rate}Hz, 输入声道={device_info['maxInputChannels']})"
+                )
 
-            device_info = self._pyaudio.get_device_info_by_index(device_index)
-            self._native_rate = int(device_info.get("defaultSampleRate") or self.sample_rate)
-            logger.info(
-                f"使用音频设备: {device_info['name']} "
-                f"(index={device_index}, 模式={self.mode}, "
-                f"原生采样率={self._native_rate}Hz, 输入声道={device_info['maxInputChannels']})"
-            )
+                # 回环/多声道设备需要按声道数打开，否则 PortAudio 报错
+                in_channels = 1 if self.mode == "microphone" else 2
+                max_in = int(device_info.get("maxInputChannels") or 1)
+                if max_in > 1:
+                    in_channels = min(2, max_in)
+                elif max_in == 1:
+                    in_channels = 1
+                self._in_channels = in_channels
 
-            # 回环/多声道设备需要按声道数打开，否则 PortAudio 报错
-            in_channels = 1 if self.mode == "microphone" else 2
-            max_in = int(device_info.get("maxInputChannels") or 1)
-            if max_in > 1:
-                in_channels = min(2, max_in)
-            elif max_in == 1:
-                in_channels = 1
-            self._in_channels = in_channels
+                # 关键：按设备原生采样率打开，采集后再重采样到 16k。
+                # （回环设备在共享模式下不接受任意采样率）
+                frames_per_buffer = max(1, int(self._native_rate * CHUNK_DURATION))
 
-            # 关键：按设备原生采样率打开，采集后再重采样到 16k。
-            # （回环设备在共享模式下不接受任意采样率）
-            frames_per_buffer = max(1, int(self._native_rate * CHUNK_DURATION))
-
-            self._stream = self._pyaudio.open(
-                format=self._pyaudio.get_format_from_width(2),  # int16 = 2 bytes
-                channels=in_channels,
-                rate=self._native_rate,
-                input=True,
-                input_device_index=device_index,
-                frames_per_buffer=frames_per_buffer,
-                stream_callback=self._audio_callback,
-            )
+                self._stream = self._pyaudio.open(
+                    format=self._pyaudio.get_format_from_width(2),  # int16 = 2 bytes
+                    channels=in_channels,
+                    rate=self._native_rate,
+                    input=True,
+                    input_device_index=device_index,
+                    frames_per_buffer=frames_per_buffer,
+                    stream_callback=self._audio_callback,
+                )
 
             self._stream.start_stream()
             logger.info(
@@ -325,18 +346,20 @@ class AudioCapture:
                 if not self._running:
                     return
                 try:
-                    self._close_stream_quietly()
-                    self._pyaudio = pyaudio.PyAudio()
-                    self._stream = self._pyaudio.open(
-                        format=self._pyaudio.get_format_from_width(2),
-                        channels=in_channels,
-                        rate=self._native_rate,
-                        input=True,
-                        input_device_index=device_index,
-                        frames_per_buffer=frames_per_buffer,
-                        stream_callback=self._audio_callback,
-                    )
-                    self._stream.start_stream()
+                    # 🔴 重建路径**同样**要加锁：重新构造 PyAudio 一样会枚举 host API
+                    with _DEVICE_ENUM_LOCK:
+                        self._close_stream_quietly()
+                        self._pyaudio = pyaudio.PyAudio()
+                        self._stream = self._pyaudio.open(
+                            format=self._pyaudio.get_format_from_width(2),
+                            channels=in_channels,
+                            rate=self._native_rate,
+                            input=True,
+                            input_device_index=device_index,
+                            frames_per_buffer=frames_per_buffer,
+                            stream_callback=self._audio_callback,
+                        )
+                        self._stream.start_stream()
                     logger.info("音频流已重建，恢复捕获")
                     e = None
                     break
