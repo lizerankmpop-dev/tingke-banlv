@@ -61,7 +61,9 @@ backend/llm/chains/
 ├── prompts.py    ChatPromptTemplate 提示词模板（构图期校验变量）
 ├── schemas.py    Pydantic 结构化输出模型（容错 validator）
 ├── agents.py      四条业务链的 LCEL 编排
-├── agent_tools.py 答疑 Agent 的三个工具 + create_agent 组装
+├── agent_tools.py 答疑 Agent 的四个工具 + create_agent 组装
+├── rag.py         字幕向量索引与语义检索（RAG）
+├── memory.py      会话持久化（checkpointer，Memory）
 └── verify.py      离线自检脚本（30 项检查，无需大模型）
 ```
 
@@ -76,6 +78,8 @@ backend/llm/chains/
 |---|---|---|
 | **Chain（LCEL 编排）** | 术语提取 / 单词讲解 / 课后摘要 | 调用路径由开发者预先确定，模型只在既定步骤内填充内容 |
 | **Agent（自主决策）** | 对话答疑 | 模型运行时自主决定调用哪个工具、调几次 |
+| **RAG（检索增强）** | 字幕语义检索 | 字幕→语义分块→向量索引→按语义召回，突破固定窗口限制 |
+| **Memory（会话记忆）** | 多轮对话 | checkpointer 按 thread_id 隔离，历史逐轮累积 |
 
 Agent 的三个工具：
 
@@ -91,6 +95,26 @@ Agent 的三个工具：
 Agent 与链并存（`ChatQA(use_agent=...)`）：Agent 适合开放问题，
 链适合上下文充分的问题（延迟更低、token 更省）。
 Agent 异常时自动回退链模式，答疑功能不中断。
+
+### RAG（字幕检索）
+
+| 环节 | 组件 |
+|---|---|
+| 切分 | `RecursiveCharacterTextSplitter` + 自定义字幕分块（保留时间戳与重叠） |
+| 向量化 | `Embeddings`（本地 Ollama `nomic-embed-text`，约 274 MB，离线可用） |
+| 存储 | `InMemoryVectorStore`（纯 numpy，零额外依赖；可换 FAISS，接口一致） |
+| 召回 | `similarity_search` + 工具封装（由 Agent 自主决定何时检索） |
+
+字幕是带时间戳的时序知识库，检索结果直接给出「第 12:35 讲的」。
+
+### Memory（多轮对话）
+
+用 LangChain 1.x 推荐的 **checkpointer** 方案，而非已废弃的
+`RunnableWithMessageHistory`（LangChain 1.6.4 起标记废弃，官方指向 LangGraph）。
+
+`create_agent()` 原生接受 `checkpointer` 参数，无需额外包装 Runnable。
+实现抽出 `CheckpointStore` 抽象，换 Redis/SQLite 只需实现同一接口。
+记忆按 `thread_id` 隔离（建议「课程ID:学生ID」），换课程不串味。
 
 ---
 
@@ -123,9 +147,9 @@ ollama pull qwen2.5:7b
 
 | 项目 | 结果 |
 |---|---|
-| 全量测试套件 | **468 passed** / 9 skipped（改造前 447 passed，无回归） |
+| 全量测试套件 | **478 passed** / 9 skipped（改造前 447 passed，无回归） |
 | LangChain 链离线自检 | **30 / 30** 通过 |
-| LangChain 专项回归守卫 | **21 / 21** 通过（含 Agent 工具调用循环） |
+| LangChain 专项回归守卫 | **31 / 31** 通过（Agent / RAG / Memory） |
 | 链编排演示 | 四条链全部正确输出 |
 
 ---
