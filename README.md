@@ -161,7 +161,8 @@ OpenAI 兼容 API。
 | `match_course_terms` | 在字幕中匹配本课专业术语 | `dictionary.terminology.match_terms_in_text` |
 | `search_subtitle_context` | 从字幕里定位含关键词的原句 | 字符串检索 |
 
-> 💡 **LangChain Tool 的说明书就是给模型看的接口文档** ——
+> 💡 **LangChain Tool 的说明书（docstring）就是给模型看的接口文档** ——
+> 三个工具均用 `@tool` 装饰器声明 ——
 > 三个工具的 docstring 都写明了「何时该用」与「返回什么」，
 > 模型据此决定调用与调用时机。这也是 `create_agent()` 的工作方式。
 
