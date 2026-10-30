@@ -288,7 +288,7 @@ export default function SubtitleOverlay() {
                 style={{
                   width: '100%', boxSizing: 'border-box', padding: '5px 7px',
                   borderRadius: 5, border: '1px solid var(--border)',
-                  background: 'var(--bg-input, #12161d)', color: 'var(--text-primary)',
+                  background: 'var(--bg-card)', color: 'var(--text-primary)',
                   fontSize: 12, marginBottom: 8,
                 }}
               >
@@ -311,7 +311,7 @@ export default function SubtitleOverlay() {
             style={{
               width: '100%', boxSizing: 'border-box', padding: '5px 7px',
               borderRadius: 5, border: '1px solid var(--border)',
-              background: 'var(--bg-input, #12161d)', color: 'var(--text-primary)',
+              background: 'var(--bg-card)', color: 'var(--text-primary)',
               fontSize: 12, marginBottom: 8,
             }}
           />
