@@ -352,19 +352,26 @@ async def list_sessions(course_id: str):
         sid = s.get("session_id") or ""
         if not sid:
             continue          # 老库存量行（session_id 为空）不在任何会话里
+        # 🔴 **字段名**：`_row_to_dict` 会把 `created_at` **重命名成 `createdAt`**
+        #    （manager.py: `d["createdAt"] = d.pop("created_at")`）
+        #    ⇒ 这里只读 `created_at` 永远拿不到值 ⇒ 返回 0
+        #    ⇒ 前端 `new Date(0)` 显示 **1970/1/1**；而且排序键全为 0
+        #    ⇒ 「最近一次」也排错了。⇒ 两种拼写都兼容。
+        created = s.get("created_at") or s.get("createdAt") or 0
         b = buckets.setdefault(sid, {
             "sessionId": sid,
-            "startedAt": s.get("created_at") or 0,
+            "startedAt": created,
             "count": 0,
             "firstText": "",
-            "_maxCreated": 0,
+            "_maxCreated": created,
         })
         b["count"] += 1
         if not b["firstText"]:
             b["firstText"] = (s.get("text") or "")[:60]
-        b["_maxCreated"] = max(b["_maxCreated"], s.get("created_at") or 0)
+        b["_maxCreated"] = max(b["_maxCreated"], created)
 
-    sessions = sorted(buckets.values(), key=lambda b: b["_maxCreated"], reverse=True)
+    sessions = sorted(buckets.values(),
+                      key=lambda b: (b["_maxCreated"], b["startedAt"]), reverse=True)
     for i, b in enumerate(sessions):
         b["isLatest"] = (i == 0)
         b.pop("_maxCreated", None)
