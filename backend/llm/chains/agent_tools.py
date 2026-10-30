@@ -191,13 +191,20 @@ Instructions:
 5. Be concise but complete — this is an in-class quick reference, not an essay
    (usually under 300 words).
 6. If the student's question contains a typo (likely from ASR), infer the intended meaning.
-7. Do not mention tool names or that you used tools; just answer naturally."""
+7. Do not mention tool names or that you used tools; just answer naturally.
+
+You are in a multi-turn conversation. Earlier turns are provided as history.
+When the student says "it", "that", "they", or asks a follow-up, refer back to the
+previous exchange to resolve what is being referred to."""
 
 
 def build_qa_agent(
     temperature: float = 0.4,
     num_predict: int = 1024,
     model: str | None = None,
+    knowledge_base=None,
+    extra_tools: list | None = None,
+    checkpointer=None,
 ):
     """
     构建「对话式答疑」智能体（LangChain Agent）。
@@ -210,6 +217,11 @@ def build_qa_agent(
         temperature: 采样温度
         num_predict: 最大生成 token 数
         model: 显式模型名
+        knowledge_base: SubtitleKnowledgeBase 实例；提供后额外挂载
+            「检索整节课字幕」工具，让 Agent 能回答早期内容相关的问题
+        extra_tools: 额外工具列表
+        checkpointer: 会话持久化存储；提供后 Agent 支持多轮记忆
+            （调用时需传 config={"configurable": {"thread_id": ...}}）
 
     Returns:
         可 invoke 的 Runnable，输入 dict（含 question / context 等），输出 AIMessage
@@ -222,10 +234,28 @@ def build_qa_agent(
         temperature=temperature, num_predict=num_predict, model=model
     )
 
+    tools = [lookup_term, match_course_terms, search_subtitle_context]
+
+    # RAG：把「检索整节课字幕」也变成 Agent 可自主调用的工具
+    if knowledge_base is not None:
+        from llm.chains.rag import make_retrieve_tool
+
+        tools.append(make_retrieve_tool(lambda: knowledge_base))
+
+    if extra_tools:
+        tools.extend(extra_tools)
+
+    kwargs = {}
+    if checkpointer is not None:
+        # 我们的 CheckpointStore 内部持有 LangGraph 的 saver
+        saver = getattr(checkpointer, "_saver", checkpointer)
+        kwargs["checkpointer"] = saver
+
     return create_agent(
         model=chat_model,
-        tools=[lookup_term, match_course_terms, search_subtitle_context],
+        tools=tools,
         system_prompt=AGENT_SYSTEM_PROMPT,
+        **kwargs,
     )
 
 

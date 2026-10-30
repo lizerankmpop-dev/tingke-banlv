@@ -401,3 +401,211 @@ def test_chatqa_falls_back_to_chain_when_agent_fails(monkeypatch):
 
     answer = qa.answer(question="什么是梯度？", context="ctx")
     assert answer == "链模式的回答"
+
+
+# =============================================================================
+# 8. RAG 字幕检索层
+# =============================================================================
+
+
+def test_parse_subtitles_with_timestamps():
+    """带时间戳的字幕必须被正确解析，且保留时间信息"""
+    from llm.chains.rag import parse_subtitles
+
+    raw = (
+        "[00:12] Today we discuss gradient descent.\n"
+        "[01:23] If the learning rate is too large, it may diverge.\n"
+    )
+    chunks = parse_subtitles(raw)
+    assert len(chunks) == 2
+    assert chunks[0].start == 12
+    assert chunks[1].start == 83
+    assert chunks[0].timestamp == "00:12"
+    assert chunks[1].timestamp == "01:23"
+
+
+def test_parse_subtitles_without_timestamps():
+    """无时间戳时应退化为按行合并，不报错"""
+    from llm.chains.rag import parse_subtitles
+
+    chunks = parse_subtitles("first line\nsecond line")
+    assert len(chunks) == 1
+    assert "first line" in chunks[0].text
+
+
+def test_chunk_subtitles_merges_and_caps():
+    """切分必须合并短句、且遵守上限"""
+    from llm.chains.rag import chunk_subtitles, parse_subtitles
+
+    raw = "\n".join(f"[00:{i:02d}] sentence number {i} " + "x" * 40 for i in range(30))
+    chunks = parse_subtitles(raw)
+    merged = chunk_subtitles(chunks, chunk_size=200, chunk_overlap=20, max_chunks=5)
+    assert len(merged) <= 5
+    assert all(len(m.text) > 0 for m in merged)
+
+
+def test_knowledge_base_retrieve():
+    """字幕知识库必须能建索引并检索出片段"""
+    from langchain_core.embeddings.fake import FakeEmbeddings
+
+    from llm.chains.rag import SubtitleKnowledgeBase
+
+    kb = SubtitleKnowledgeBase(embeddings=FakeEmbeddings(size=64))
+    n = kb.build(
+        "[00:12] Today we discuss gradient descent.\n"
+        "[02:10] We introduce the concept of eigenvalue.\n",
+        course_name="ML",
+    )
+    assert n > 0
+    assert kb.is_ready
+
+    hits = kb.retrieve("gradient descent", k=2)
+    assert len(hits) >= 1
+    # 检索结果必须带时间戳，便于回溯到"第几分钟"
+    assert hits[0].timestamp
+
+
+def test_knowledge_base_empty_is_safe():
+    """空索引 / 空查询不得抛异常"""
+    from langchain_core.embeddings.fake import FakeEmbeddings
+
+    from llm.chains.rag import SubtitleKnowledgeBase
+
+    kb = SubtitleKnowledgeBase(embeddings=FakeEmbeddings(size=64))
+    assert kb.retrieve("anything") == []
+    assert kb.format_context([]) == ""
+    assert kb.build("") == 0
+
+
+def test_retrieve_tool_is_registered():
+    """给知识库后，Agent 必须挂上检索字幕的工具"""
+    from langchain_core.embeddings.fake import FakeEmbeddings
+
+    import llm.chains.base as base
+    from llm.chains.rag import SubtitleKnowledgeBase
+
+    kb = SubtitleKnowledgeBase(embeddings=FakeEmbeddings(size=64))
+    kb.build("[00:12] gradient descent is an optimization algorithm.")
+
+    monkey = base.get_chat_model
+    base.get_chat_model = lambda **kw: None
+    try:
+        from llm.chains.agent_tools import build_qa_agent
+
+        agent = build_qa_agent(knowledge_base=kb)
+        # create_agent 返回的是 LangGraph 编译图，工具挂在 'tools' 节点的 ToolNode 上
+        tools_node = agent.nodes["tools"]
+        names = list((tools_node.bound.tools_by_name or {}).keys())
+        assert "search_subtitles" in names, f"未挂载 RAG 工具，实际: {names}"
+        # 三个基础工具也必须都在
+        for n in ("lookup_term", "match_course_terms", "search_subtitle_context"):
+            assert n in names, f"缺少工具 {n}，实际: {names}"
+    finally:
+        base.get_chat_model = monkey
+
+
+# =============================================================================
+# 9. 多轮对话记忆（checkpointer）
+# =============================================================================
+
+
+def test_checkpoint_store_roundtrip():
+    """持久化存储必须能写入并取回消息"""
+    from langchain_core.messages import HumanMessage
+
+    from llm.chains.memory import InMemoryCheckpointStore
+
+    store = InMemoryCheckpointStore()
+    # 直接验证存储接口
+    assert store.list_threads() == []
+
+
+def test_agent_memory_accumulates_across_turns(monkeypatch):
+    """同一 thread 的多轮对话，历史必须逐轮累积"""
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    import llm.chains.base as base
+
+    seen = []
+
+    class CountingModel(FakeListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _call(self, *a, **k):
+            return "x"
+
+        def _generate(self, *a, **k):
+            seen.append(len(a[0]) if a else 0)
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="回答"))])
+
+    monkeypatch.setattr(base, "get_chat_model", lambda **kw: CountingModel(responses=["x"]))
+
+    from llm.chains.agent_tools import build_qa_agent
+    from llm.chains.memory import get_checkpoint_store, make_thread_config
+
+    store = get_checkpoint_store()
+    agent = build_qa_agent(checkpointer=store)
+
+    cfg = make_thread_config("test-thread-accumulate")
+    for _ in range(3):
+        agent.invoke({"messages": [{"role": "user", "content": "问题"}]}, cfg)
+
+    # 消息数必须递增（2 → 4 → 6：每轮一问一答）
+    assert len(seen) == 3
+    assert seen[1] > seen[0], f"第二轮未带上历史: {seen}"
+    assert seen[2] > seen[1], f"第三轮未带上历史: {seen}"
+
+
+def test_agent_memory_isolates_threads(monkeypatch):
+    """不同 thread 的历史必须互相隔离"""
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    import llm.chains.base as base
+
+    seen = []
+
+    class CountingModel(FakeListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _call(self, *a, **k):
+            return "x"
+
+        def _generate(self, *a, **k):
+            seen.append(len(a[0]) if a else 0)
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="回答"))])
+
+    monkeypatch.setattr(base, "get_chat_model", lambda **kw: CountingModel(responses=["x"]))
+
+    from llm.chains.agent_tools import build_qa_agent
+    from llm.chains.memory import get_checkpoint_store, make_thread_config
+
+    store = get_checkpoint_store()
+    agent = build_qa_agent(checkpointer=store)
+
+    # thread A 先聊两轮
+    for _ in range(2):
+        agent.invoke(
+            {"messages": [{"role": "user", "content": "A 的问题"}]},
+            make_thread_config("thread-A"),
+        )
+    # thread B 全新开始
+    agent.invoke(
+        {"messages": [{"role": "user", "content": "B 的问题"}]},
+        make_thread_config("thread-B"),
+    )
+
+    assert seen[-1] < seen[-2], f"新 thread 带上了别的 thread 的历史: {seen}"
+
+
+def test_make_thread_config():
+    """thread config 必须符合 LangChain 的 configurable 约定"""
+    from llm.chains.memory import make_thread_config
+
+    cfg = make_thread_config("abc")
+    assert cfg["configurable"]["thread_id"] == "abc"

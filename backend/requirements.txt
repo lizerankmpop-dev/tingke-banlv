@@ -26,14 +26,22 @@ soundfile>=0.12.1
 
 # LLM —— LangChain 框架层
 # 第四章作业：智能应用开发要求基于 LangChain 框架构建，
-# 这里把原先手写的 prompt 拼接 + JSON 正则解析改造为声明式 LCEL 链。
+# 这里把原先手写的 prompt 拼接 + JSON 正则解析改造为声明式 LCEL 链，
+# 并用 create_agent() + checkpointer 实现 Agent / RAG / Memory 三种范式。
 langchain-core>=1.0.0
 langchain>=1.0.0
 langchain-ollama>=1.0.0
 # 云端 OpenAI 兼容 API（DeepSeek / Kimi / 智谱 / OpenAI）走 langchain-openai
 langchain-openai>=0.3.0
+# 字幕 RAG 的切分器（语义分块）
+langchain-text-splitters>=0.3.0
 # 结构化输出依赖 Pydantic
 pydantic>=2.0.0
+
+# 说明：会话记忆用 LangGraph 的 checkpointer（随 langchain 1.x 一并安装，
+# 官方推荐用它替代已废弃的 RunnableWithMessageHistory）；
+# 向量库用 langchain_core 自带的 InMemoryVectorStore（纯 numpy，零额外依赖）；
+# 嵌入模型用本地 Ollama 的 nomic-embed-text（约 274 MB，离线可用）。
 
 # LLM (Ollama client)
 ollama>=0.3.0

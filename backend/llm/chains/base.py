@@ -141,7 +141,13 @@ def is_available() -> bool:
 # =============================================================================
 
 
-def safe_invoke(chain: Runnable, payload: dict, default=None, label: str = "chain"):
+def safe_invoke(
+    chain: Runnable,
+    payload: dict,
+    default=None,
+    label: str = "chain",
+    config: dict | None = None,
+):
     """
     执行链并统一降级。
 
@@ -153,11 +159,14 @@ def safe_invoke(chain: Runnable, payload: dict, default=None, label: str = "chai
         payload: 链的输入字典
         default: 失败时的返回值
         label: 日志标签
+        config: 可选的 LangChain config（如 checkpointer 用的 thread_id）
 
     Returns:
         链的输出，或 default
     """
     try:
+        if config is not None:
+            return chain.invoke(payload, config)
         return chain.invoke(payload)
     except Exception as e:  # noqa: BLE001 —— 业务要求：任何 LLM 失败都不应中断前端
         logger.error(f"{label} 执行失败: {e}")
