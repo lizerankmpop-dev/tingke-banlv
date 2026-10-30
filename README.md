@@ -6,8 +6,8 @@
 ![LLM](https://img.shields.io/badge/LLM-Ollama%20%2B%20Qwen2.5%20(local)-2f6fb5)
 
 > 🧠 **智能体层基于 [LangChain](https://github.com/langchain-ai/langchain) 1.x 构建**
-> —— 四条 LLM 链（术语提取 / 单词讲解 / 课后摘要 / 对话答疑）全部用 LCEL 编排，
-> 支持结构化输出与分支路由，本地 Ollama 离线运行。
+> —— 术语提取 / 单词讲解 / 课后摘要用 LCEL 编排，对话答疑用 `create_agent()` 做自主工具调用，
+> 并叠加 **RAG 全课语义检索** 与**多轮对话记忆**。本地 Ollama 离线运行。
 > 👉 详见 **[🧠 智能体架构](#-智能体架构基于-langchain-的四条-llm-链)**
 
 实时字幕工具，支持**在线网课**和**线下课堂**两种模式。捕获系统音频或麦克风收音，生成逐词同步字幕，点击单词即可学习。完全免费，本地运行。
@@ -39,7 +39,7 @@
 - 🤖 **AI 术语提取** — LangChain 结构化输出链，自动提取专业词汇
 - 💡 **AI 深度讲解** — LangChain 分支链，结合课程语境解释"这个词在这里什么意思"
 - 📋 **课后摘要** — LangChain 结构化输出，一键生成摘要 / 知识点 / 生词复习清单
-- 💬 **对话式答疑** — LangChain **Agent** 自主调用术语库/字幕检索工具，基于最近字幕上下文提问，"刚才那段没听懂"场景
+- 💬 **对话式答疑** — LangChain **Agent** 自主调用术语库/字幕检索工具，结合 **RAG 全课检索** 与**多轮记忆**
 - 📚 **课程专属词典** — 每个课程独立管理词汇，支持生词本和搜索
 
 ## 术语识别优化
@@ -176,6 +176,60 @@ OpenAI 兼容 API。
 
 Agent 构建失败或执行异常时，**自动回退到链模式**，保证答疑功能不中断。
 
+### 🔍 RAG：能回答整节课的任意内容
+
+原答疑只把「最近 N 条字幕」拼进 prompt —— 超过窗口的早期内容直接丢失，
+且窗口内所有内容同等对待，噪声淹没信号。
+
+RAG 把这件事交给向量检索：
+
+```
+字幕文本 → 语义分块 → 向量索引 → 按问题语义检索 → 只把命中的片段喂给模型
+```
+
+实现（`backend/llm/chains/rag.py`）用的是 LangChain 生态的标准组件：
+
+| 环节 | 组件 |
+|---|---|
+| 切分 | `RecursiveCharacterTextSplitter` + 自定义字幕分块（保留时间戳与重叠） |
+| 向量化 | `Embeddings`（本地 Ollama `nomic-embed-text`，约 274 MB，离线可用） |
+| 存储 | `InMemoryVectorStore`（纯 numpy，零额外依赖；可换 FAISS，接口一致） |
+| 召回 | `similarity_search` + 自定义工具封装 |
+
+字幕是**带时间戳的时序知识库**，本实现据此做了三件事：
+
+1. 片段保留起止时间，检索结果直接给出「第 12:35 讲的」
+2. 检索按语义而非关键词，中英混合提问也能召回
+3. 术语表与字幕一起入库，专业问题召回率更高
+
+检索不是硬塞进 prompt，而是包成 `search_subtitles` 工具 ——
+**由 Agent 自己决定什么时候去翻字幕**，避免无谓的 token 开销与噪声干扰。
+
+### 🧠 Memory：能接住「那它和上一节课讲的 XX 呢」
+
+原答疑是**无状态**的，每轮都只带「问题 + 最近字幕」，模型不知道上一轮说了什么。
+
+```
+学生：那什么是梯度下降？
+教师：（解释梯度下降）
+学生：那它和反向传播什么关系？     ← 「它」指什么？
+```
+
+用 LangChain 1.x 的 **checkpointer** 解决：调用时传 `thread_id`，
+框架自动把该线程的消息历史注入模型上下文，并把本轮输出写回。
+
+> ⚠️ 这里踩过一个坑：官方早期的 `RunnableWithMessageHistory` 在 LangChain 1.6.4
+> 起已被**标记废弃**，官方明确指向「用 LangGraph 内置的持久化替代」。
+> 而 `create_agent()` 本身就接受 `checkpointer` 参数 ——
+> 不需要额外的包装 Runnable，架构更干净，也少一层封装。
+
+实现（`backend/llm/chains/memory.py`）抽出了 `CheckpointStore` 抽象：
+默认用 LangGraph 的 `InMemorySaver`（进程内），
+换成 Redis / SQLite 只需实现同样的接口，业务代码不动 ——
+这正是「同一节课跨设备继续问」所需要的。
+
+记忆按 `thread_id` 隔离（建议用「课程ID:学生ID」组合），换课程即换 thread，不会串味。
+
 ### 代码结构
 
 ```
@@ -185,7 +239,9 @@ backend/llm/
 │   ├── prompts.py     ChatPromptTemplate 提示词模板
 │   ├── schemas.py     Pydantic 结构化输出模型（含容错 validator）
 │   ├── agents.py      四条业务链的 LCEL 编排
-│   ├── agent_tools.py 答疑 Agent 的三个工具 + create_agent 组装
+│   ├── agent_tools.py 答疑 Agent 的四个工具 + create_agent 组装
+│   ├── rag.py         字幕向量索引与语义检索（RAG）
+│   ├── memory.py      会话持久化（checkpointer，Memory）
 │   └── verify.py      离线自检脚本（30 项检查，无需大模型）
 ├── client.py         统一 LLM 入口（已切换到 LangChain BaseChatModel）
 ├── extractor.py      术语提取（薄封装）
@@ -194,7 +250,7 @@ backend/llm/
 └── qa.py             对话答疑（薄封装）
 
 examples/langchain_demo.py    链编排演示脚本（离线/真实两种模式）
-tests/test_langchain_chains.py  21 项回归守卫（含 Agent 工具调用循环）
+tests/test_langchain_chains.py  31 项回归守卫（Agent / RAG / Memory）
 ```
 
 ### 关键实现要点
@@ -257,7 +313,7 @@ python examples/langchain_demo.py --live
 # 离线自检：30 项检查，覆盖模板/Schema/分支/降级
 cd backend && python -m llm.chains.verify
 
-# 回归守卫：21 项
+# 回归守卫：31 项
 cd backend && python -m pytest tests/test_langchain_chains.py -v
 ```
 

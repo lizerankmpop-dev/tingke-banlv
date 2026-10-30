@@ -65,6 +65,94 @@ def hr(title: str = "") -> None:
 # =============================================================================
 
 
+
+def _demo_rag() -> None:
+    """演示 RAG：字幕 → 语义分块 → 向量索引 → 语义召回"""
+    from langchain_core.embeddings.fake import FakeEmbeddings
+
+    from llm.chains.rag import SubtitleKnowledgeBase, chunk_subtitles, parse_subtitles
+
+    subtitle = """[00:12] Today we discuss gradient descent, the fundamental optimization algorithm used in machine learning.
+[00:45] The update rule is theta = theta minus alpha times gradient of L.
+[01:23] If the learning rate is too large, the algorithm may diverge.
+[02:10] We also introduce the concept of eigenvalue, which describes how a transformation stretches space.
+[03:05] Overfitting occurs when the model fits the training data too well and generalizes poorly."""
+
+    print("① 字幕解析（保留时间戳）")
+    chunks = parse_subtitles(subtitle)
+    for c in chunks:
+        print(f"   [{c.timestamp}] {c.text[:62]}")
+
+    print("\n② 语义分块（合并短句，保留重叠）")
+    merged = chunk_subtitles(chunks, chunk_size=140, chunk_overlap=30)
+    for m in merged:
+        print(f"   [{m.timestamp}] len={len(m.text):3d}  {m.text[:52]}")
+
+    print("\n③ 建立向量索引并召回")
+    kb = SubtitleKnowledgeBase(embeddings=FakeEmbeddings(size=64))
+    n = kb.build(subtitle, course_name="深度学习导论", domain="机器学习")
+    print(f"   索引片段数：{n}")
+    hits = kb.retrieve("learning rate 太大会怎样", k=3)
+    for h in hits:
+        print(f"   命中 [{h.timestamp}] {h.text[:58]}")
+
+    print("\n（说明：离线模式用 FakeEmbeddings，向量是随机值，故排序无实际语义；")
+    print("  真实模式用本地 Ollama 的 nomic-embed-text，召回按语义排序）")
+
+
+def _demo_memory() -> None:
+    """演示 Memory：同一 thread 历史累积，不同 thread 相互隔离"""
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    import llm.chains.base as base
+    from llm.chains.agent_tools import build_qa_agent
+    from llm.chains.memory import get_checkpoint_store, make_thread_config
+
+    seen: list[int] = []
+
+    class CountingModel(FakeListChatModel):
+        """记录每次调用收到的消息条数"""
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _call(self, *a, **k):
+            return "x"
+
+        def _generate(self, *a, **k):
+            seen.append(len(a[0]) if a else 0)
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="回答"))])
+
+    _orig = base.get_chat_model
+    base.get_chat_model = lambda **kw: CountingModel(responses=["x"])
+    try:
+        store = get_checkpoint_store()
+        agent = build_qa_agent(checkpointer=store)
+
+        print("① 同一 thread 的多轮追问（历史逐轮累积）")
+        for q in ["第一问：什么是梯度下降？", "第二问：那它和反向传播什么关系？", "第三问：继续说"]:
+            agent.invoke(
+                {"messages": [{"role": "user", "content": q}]},
+                make_thread_config("demo-thread-A"),
+            )
+            print(f"   {q[:22]:24s} → 模型收到 {seen[-1]} 条消息")
+
+        print("\n② 不同 thread 相互隔离")
+        seen.clear()
+        agent.invoke(
+            {"messages": [{"role": "user", "content": "全新会话"}]},
+            make_thread_config("demo-thread-B"),
+        )
+        print(f"   新 thread 收到 {seen[-1]} 条消息（不带上一个 thread 的历史）")
+
+        print("\n③ 历史存储")
+        for t in ("demo-thread-A", "demo-thread-B"):
+            print(f"   {t}: {len(store.get_messages(t))} 条消息")
+    finally:
+        base.get_chat_model = _orig
+
 def run_offline() -> None:
     """离线演示 —— 不需要 Ollama"""
     print("=" * 72)
@@ -232,8 +320,17 @@ def run_offline() -> None:
     hr("链 5 / 对话答疑 Agent  create_agent() + 工具调用循环")
     _demo_agent_tool_loop(fake_model)
 
+    # ---- 6. RAG 字幕语义检索 ----
+    hr("链 6 / RAG 字幕语义检索  语义分块 → 向量索引 → 召回")
+    _demo_rag()
+
+    # ---- 7. 多轮对话记忆 ----
+    hr("链 7 / Memory 多轮对话  checkpointer 按 thread_id 隔离")
+    _demo_memory()
+
     hr()
-    print("离线演示完成。链路的组装、编排、结构化输出、分级策略与 Agent 工具调用全部验证通过。")
+    print("离线演示完成。链路的组装、编排、结构化输出、分级策略、Agent 工具调用、")
+    print("RAG 语义检索与多轮对话记忆全部验证通过。")
 
 
 def _demo_agent_tool_loop(fake_model) -> None:
