@@ -44,9 +44,8 @@ cd backend && python -m venv venv
 
 | 我想了解 | 看这里 |
 |---|---|
-| **作业要求逐条对照 / 复现步骤** | [📚 作业信息](#-作业信息) |
+| **作业要求逐条对照 / 复现步骤** | [📚 作业信息](#-作业信息) ・ [`SUBMISSION.md`](SUBMISSION.md) |
 | **本次作业（LangChain）怎么做的** | [🧠 智能体架构](#-智能体架构基于-langchain-的四条-llm-链) |
-| 作业要求逐条对照 + 一键复现 | [`SUBMISSION.md`](SUBMISSION.md) |
 | LangChain 核心代码 | [`backend/llm/chains/`](backend/llm/chains/) |
 | 各链的实际运行效果 | [`examples/langchain_demo.py`](examples/langchain_demo.py) |
 | 术语识别的实测效果 | [术语识别优化](#术语识别优化) |
