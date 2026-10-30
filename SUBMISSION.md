@@ -8,7 +8,7 @@
 
 | 作业要求 | 本项目对应内容 | 位置 |
 |---|---|---|
-| **基于 LangChain 框架** | 四条 LLM 智能链全部用 LangChain 1.x 实现（LCEL 链 / 结构化输出 / RunnableBranch） | `backend/llm/chains/` |
+| **基于 LangChain 框架** | 四条 LLM 智能链用 LangChain 1.x 实现（LCEL 链 / 结构化输出 / RunnableBranch），答疑另用 `create_agent()` 做自主工具调用 | `backend/llm/chains/` |
 | **在线大模型或离线大模型** | 离线 Ollama + Qwen2.5（默认 `qwen2.5:7b`），可一键切换云端 OpenAI 兼容 API | `backend/llm/chains/base.py` |
 | **开发一款智能应用** | 听课伴侣 —— 实时字幕 + 交互式单词学习桌面应用 | 全仓库 |
 | **上传 README 文档说明** | 完整项目说明（含「🧠 智能体架构」专章） | [`README.md`](README.md) |
@@ -44,8 +44,12 @@
 │  字幕全文 + 生词表 → 提示词 → 模型 → 摘要/知识点/生词      │
 └─────────────────────────────────────────────────────────┘
 
-┌── 对话答疑链 ──────────────────────────────────────────┐
-│  问题 + 最近字幕 → 提示词 → 模型 → 纯文本答案            │
+┌── 对话答疑 Agent ───────────────────────────────────────┐
+│  问题 + 最近字幕 ─→ create_agent() + 三个工具             │
+│         ↓ 模型自主决定是否调用                            │
+│   lookup_term / match_course_terms / search_subtitle_ctx │
+│         ↓ 拿到工具结果                                    │
+│   模型生成最终答案                                        │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -56,12 +60,37 @@ backend/llm/chains/
 ├── base.py       模型提供方抽象（ChatOllama / ChatOpenAI）+ 统一降级 safe_invoke
 ├── prompts.py    ChatPromptTemplate 提示词模板（构图期校验变量）
 ├── schemas.py    Pydantic 结构化输出模型（容错 validator）
-├── agents.py     四条业务链的 LCEL 编排
-└── verify.py     离线自检脚本（30 项检查，无需大模型）
+├── agents.py      四条业务链的 LCEL 编排
+├── agent_tools.py 答疑 Agent 的三个工具 + create_agent 组装
+└── verify.py      离线自检脚本（30 项检查，无需大模型）
 ```
 
 原有 `client.py` / `extractor.py` / `explainer.py` / `summarizer.py` / `qa.py`
 改为薄封装，**对外接口与返回结构逐字未变**，因此 `api/routes.py` 与前端零改动。
+
+---
+
+## 三·补、LangChain 的两类范式都用了
+
+| 范式 | 本项目对应 | 说明 |
+|---|---|---|
+| **Chain（LCEL 编排）** | 术语提取 / 单词讲解 / 课后摘要 | 调用路径由开发者预先确定，模型只在既定步骤内填充内容 |
+| **Agent（自主决策）** | 对话答疑 | 模型运行时自主决定调用哪个工具、调几次 |
+
+Agent 的三个工具：
+
+| 工具 | 作用 | 底层 |
+|---|---|---|
+| `lookup_term` | 查课程术语库中该术语的**本课语境**释义 | `dictionary.terminology.lookup_vocab` |
+| `match_course_terms` | 在字幕中匹配本课专业术语 | `dictionary.terminology.match_terms_in_text` |
+| `search_subtitle_context` | 从字幕里定位含关键词的原句 | 字符串检索 |
+
+工具用 `@tool` 装饰，**docstring 即给模型看的接口文档** ——
+写明「何时该用」与「返回什么」，模型据此决定调用与调用时机。
+
+Agent 与链并存（`ChatQA(use_agent=...)`）：Agent 适合开放问题，
+链适合上下文充分的问题（延迟更低、token 更省）。
+Agent 异常时自动回退链模式，答疑功能不中断。
 
 ---
 
@@ -94,9 +123,9 @@ ollama pull qwen2.5:7b
 
 | 项目 | 结果 |
 |---|---|
-| 全量测试套件 | **463 passed** / 9 skipped（改造前 447 passed，无回归） |
+| 全量测试套件 | **468 passed** / 9 skipped（改造前 447 passed，无回归） |
 | LangChain 链离线自检 | **30 / 30** 通过 |
-| LangChain 专项回归守卫 | **16 / 16** 通过 |
+| LangChain 专项回归守卫 | **21 / 21** 通过（含 Agent 工具调用循环） |
 | 链编排演示 | 四条链全部正确输出 |
 
 ---
