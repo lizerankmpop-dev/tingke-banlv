@@ -609,6 +609,52 @@ async def update_vocabulary_entry(course_id: str, vocab_id: str, req: UpdateVoca
 
 # ============ AI 讲解 API ============
 
+@router.get("/ai/status")
+async def ai_status():
+    """AI 功能可用性（前端据此决定要不要显示「AI 讲解」入口 + 给可操作提示）
+
+    🔴 为什么需要这个端点（2026-10-30）
+    ------------------------------------
+    原来前端只管调 `/api/ai/explain`，失败就显示**硬编码**的
+    「AI 讲解服务不可用（Ollama 未启动）」⇒ **误导**：
+    真实原因可能是 ① 依赖没装 ② ollama 没装 ③ 模型没下 ④ 服务没起
+    ⇒ 用户按提示去启动 ollama 也没用。
+
+    ⇒ 现在后端给出**真实状态与真实原因**，前端照着显示。
+    """
+    import asyncio as _asyncio
+
+    available = False
+    reason = ""
+    provider = "unknown"
+
+    # ① 依赖层：langchain 能不能 import（软依赖，缺了 ⇒ 整条 AI 链不可用）
+    obj = _get_llm("word_explainer")
+    if obj is None:
+        reason = _LLM_IMPORT_ERRORS.get(
+            "word_explainer", "LLM 依赖不可用（langchain 未安装或损坏）")
+    else:
+        # ② 服务层：provider 在不在（ollama 是否在跑、模型是否就绪）
+        try:
+            from llm.client import get_provider, is_available
+            provider = get_provider()
+            available = await _asyncio.to_thread(is_available)
+            if not available:
+                reason = {
+                    "ollama": "Ollama 未启动（安装后需 `ollama serve` 并拉取模型）",
+                }.get(provider, f"LLM 服务 {provider} 未就绪")
+        except Exception as exc:  # noqa: BLE001
+            reason = f"{type(exc).__name__}: {exc}"
+
+    return {
+        "available": available,
+        "reason": reason,
+        "provider": provider,
+        # 明确告诉前端：主链路不受影响（避免用户以为整个软件坏了）
+        "coreUnaffected": True,
+    }
+
+
 @router.post("/ai/explain")
 async def ai_explain(req: ExplainRequest):
     """
@@ -932,6 +978,16 @@ def _make_term_handler(course_id: str, loop: asyncio.AbstractEventLoop):
     return on_term
 
 
+def _log_subtitle_persist_error(fut) -> None:
+    """字幕落库的异步结果回调 —— 失败只记日志，**绝不影响识别**"""
+    try:
+        exc = fut.exception()
+    except Exception:  # noqa: BLE001 —— future 还没完成/被取消
+        return
+    if exc is not None:
+        logger.warning(f"字幕落库失败（不影响识别与显示）: {type(exc).__name__}: {exc}")
+
+
 async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
     """
     构造 ASR 管道
@@ -942,11 +998,44 @@ async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
     现象就是「点开始听课，整个应用卡死」。
     """
     enqueue = _make_enqueue(course_id)
+
+    # 🔴 **字幕必须落库**（2026-10-30）
+    #
+    # 原状：字幕只经 `enqueue` 推给前端（内存队列）⇒ **从不写数据库**
+    #   ⇒ `GET /api/courses/{id}/subtitles` 永远空
+    #   ⇒ `GET /api/courses/{id}/export-srt` 永远 `count=0`（导出功能形同虚设）
+    #   ⇒ 关掉应用，字幕就没了 ⇒ 「课程」失去了它最该有的东西（这节课讲了什么）
+    # 根因：`db.add_subtitle()` 一直存在，但**没有任何地方调用它**。
+    #
+    # ⇒ 现在：字幕**既推消息又入库**。
+    #   · 回调来自**识别线程**（非事件循环）⇒ 用 `run_coroutine_threadsafe` 回投
+    #   · `interim`（临时结果）**不入库** —— 那是半成品，入了库会重复
+    #   · 入库失败**绝不能影响识别**（吞掉异常并记日志）
+    def _on_subtitle(data: dict) -> None:
+        enqueue("subtitle", data)
+        try:
+            # ⚠️ 字段名要对齐：管道给的是 `start`/`end`/`isFinal`（驼峰），
+            #    而 `db.add_subtitle` 要的是 `start_ms`/`end_ms`/`is_final`，
+            #    且 `start_ms`/`end_ms`/`text` 是**必需键**（缺了就 KeyError）。
+            row = {
+                "course_id": course_id,
+                "text": data.get("text", ""),
+                "words": data.get("words", []),
+                "start_ms": int(data.get("start_ms", data.get("start", 0)) or 0),
+                "end_ms": int(data.get("end_ms", data.get("end", 0)) or 0),
+                "is_final": bool(data.get("is_final", data.get("isFinal", True))),
+                "video_id": data.get("video_id", ""),
+            }
+            fut = asyncio.run_coroutine_threadsafe(db.add_subtitle(row), loop)
+            fut.add_done_callback(_log_subtitle_persist_error)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"字幕落库调度失败（不影响识别）: {type(exc).__name__}: {exc}")
+
     pipeline = await asyncio.to_thread(
         ASRPipeline,
         course_id=course_id,
         course_config=_course_config_for_asr(course),
-        on_subtitle=lambda data: enqueue("subtitle", data),
+        on_subtitle=_on_subtitle,
         on_interim=lambda text, words: enqueue("interim", {"text": text, "words": words}),
         on_status=lambda status, msg: enqueue("asr_status", {"status": status, "message": msg}),
         on_term_extracted=_make_term_handler(course_id, loop),

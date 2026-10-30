@@ -4,7 +4,7 @@ import { useCourseStore } from '../stores/useCourseStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
 import { useOverlayStore } from '../stores/useOverlayStore'
 import OverlayControlPanel from '../components/OverlayControlPanel'
-import { X, MinusCircle, BookOpen, Mic, MicOff, Settings, Loader2, AlertCircle, School, Monitor, Sparkles, FileText, ListChecks, GraduationCap, MessageCircle, Send, PictureInPicture2 } from 'lucide-react'
+import { X, MinusCircle, BookOpen, Mic, MicOff, Settings, Loader2, AlertCircle, School, Monitor, Sparkles, FileText, ListChecks, GraduationCap, MessageCircle, Send, PictureInPicture2, Download } from 'lucide-react'
 
 export default function SubtitleOverlay() {
   const { courseId, stopListening, setView } = useAppStore()
@@ -127,6 +127,39 @@ export default function SubtitleOverlay() {
     if (clean.length > 1) selectWord(word)
   }
 
+  // 导出字幕为 SRT —— 后端 `GET /api/courses/{id}/export-srt` 一直都有，
+  // 但前端**从来没调用过**（2026-10-30 补上这个入口）
+  const [exportMsg, setExportMsg] = useState('')
+  const exportSrt = async () => {
+    if (!courseId) return
+    setExportMsg('导出中…')
+    try {
+      const res = await fetch(`/api/courses/${courseId}/export-srt`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      const count = data?.count ?? 0
+      if (!count) {
+        setExportMsg('还没有字幕可导出')
+        window.setTimeout(() => setExportMsg(''), 3000)
+        return
+      }
+      const blob = new Blob([data.srt ?? ''], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(course?.name || 'course').replace(/[\\/:*?"<>|]/g, '_')}.srt`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setExportMsg(`已导出 ${count} 条字幕`)
+      window.setTimeout(() => setExportMsg(''), 3000)
+    } catch (e) {
+      setExportMsg('导出失败，请重试')
+      window.setTimeout(() => setExportMsg(''), 3000)
+    }
+  }
+
   if (collapsed) {
     return (
       <div style={{
@@ -185,6 +218,9 @@ export default function SubtitleOverlay() {
           <button onClick={fetchSummary} style={styles.ctrlBtn} title="AI 课摘要">
             <FileText size={15} />
           </button>
+          <button onClick={exportSrt} style={styles.ctrlBtn} title="导出字幕为 SRT 文件">
+            <Download size={15} />
+          </button>
           <button onClick={() => setView('dictionary')} style={styles.ctrlBtn} title="课程词典">
             <BookOpen size={15} />
           </button>
@@ -199,6 +235,30 @@ export default function SubtitleOverlay() {
           </button>
         </div>
       </div>
+
+      {/* 导出反馈（点了要让人知道结果，不能静默）*/}
+      {exportMsg && (
+        <div style={{
+          position: 'absolute', top: 44, right: 10, zIndex: 20,
+          padding: '5px 10px', borderRadius: 6,
+          background: 'rgba(20,24,32,0.94)', color: 'var(--accent-light)',
+          fontSize: 11, border: '1px solid var(--border)',
+        }}>
+          {exportMsg}
+        </div>
+      )}
+
+      {/* 导出反馈（点了要让人知道结果，不能静默）*/}
+      {exportMsg && (
+        <div style={{
+          position: 'absolute', top: 44, right: 10, zIndex: 20,
+          padding: '5px 10px', borderRadius: 6,
+          background: 'rgba(20,24,32,0.94)', color: 'var(--accent-light)',
+          fontSize: 11, border: '1px solid var(--border)',
+        }}>
+          {exportMsg}
+        </div>
+      )}
 
       {/* 字幕内容区 */}
       <div style={styles.subtitleArea}>
@@ -397,31 +457,48 @@ function WordPanelInline({ word, onClose }: { word: string; onClose: () => void 
   const { wordEntry, wordNotFound } = useSubtitleStore()
   const courseId = useCourseStore((s) => s.activeCourseId)
   const [aiState, setAiState] = useState<'idle' | 'loading' | 'done' | 'unavailable'>('idle')
+  // 🔴 AI 不可用的**真实原因**（后端给的）—— 2026-10-30
+  //    原来只有硬编码文案「（Ollama 未启动）」⇒ 真实原因可能是依赖没装/模型没下
+  const [aiError, setAiError] = useState('')
   const [aiData, setAiData] = useState<{ explanation: { translation: string; meaning_in_context: string; example: string; related: string[] } } | null>(null)
 
   // 切换单词时重置 AI 讲解
   useEffect(() => {
     setAiState('idle')
     setAiData(null)
+    setAiError('')
   }, [word])
 
   const fetchAIExplain = async () => {
     if (!courseId || aiState === 'loading') return
     setAiState('loading')
+    setAiError('')
     try {
       const res = await fetch('/api/ai/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ word, courseId }),
       })
-      const data = await res.json()
-      if (data.available) {
+      // 🔴 **必须检查 res.ok**（2026-10-30）
+      //    原来只看 `data.available`，而 503 的响应体是 `{"detail": "..."}`
+      //    ⇒ `data.available` 是 undefined ⇒ 一律落到「不可用」分支
+      //    ⇒ **后端给出的真实原因被整个吞掉**。
+      let data: any = null
+      try { data = await res.json() } catch { /* 不是 JSON 就当无 body */ }
+      if (!res.ok) {
+        setAiError(data?.detail || `请求失败（HTTP ${res.status}）`)
+        setAiState('unavailable')
+        return
+      }
+      if (data?.available) {
         setAiData(data)
         setAiState('done')
       } else {
+        setAiError(data?.reason || 'AI 讲解暂不可用')
         setAiState('unavailable')
       }
     } catch {
+      setAiError('连不上后端服务')
       setAiState('unavailable')
     }
   }
@@ -461,7 +538,15 @@ function WordPanelInline({ word, onClose }: { word: string; onClose: () => void 
       )}
       {aiState === 'unavailable' && (
         <div style={styles.aiUnavailable}>
-          AI 讲解服务不可用（Ollama 未启动）
+          <div style={{ marginBottom: 4 }}>AI 讲解不可用</div>
+          {aiError && (
+            <div style={{ fontSize: 11, opacity: 0.85, lineHeight: 1.5 }}>
+              {aiError}
+            </div>
+          )}
+          <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
+            （字幕与查词等主功能不受影响）
+          </div>
         </div>
       )}
       {aiState === 'done' && aiData && (
