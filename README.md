@@ -3,6 +3,12 @@
 ![CI](https://github.com/lizerankmpop-dev/tingke-banlv/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
+> 📚 **《开源软件构建技术》第七章《智能应用开发》作业分支**
+> 本次作业基于 **LangChain 1.x** + 离线大模型（Ollama / Qwen2.5）实现，
+> 包含四条 LCEL 智能链（术语提取 / 单词讲解 / 课后摘要 / 对话答疑）。
+> 👉 作业代码与说明请见分支：[`feat/langchain-agent`](https://github.com/lizerankmpop-dev/tingke-banlv/tree/feat/langchain-agent)
+> ｜ 作业提交说明：[`SUBMISSION.md`](https://github.com/lizerankmpop-dev/tingke-banlv/blob/feat/langchain-agent/SUBMISSION.md)
+
 实时字幕工具，支持**在线网课**和**线下课堂**两种模式。捕获系统音频或麦克风收音，生成逐词同步字幕，点击单词即可学习。完全免费，本地运行。
 
 ## 核心功能
