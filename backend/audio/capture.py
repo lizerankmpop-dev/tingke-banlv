@@ -191,7 +191,20 @@ class AudioCapture:
 
     @staticmethod
     def list_devices() -> list[dict]:
-        """列出所有音频设备（供前端选择麦克风用）"""
+        """列出所有音频设备（供前端选择麦克风用）
+
+        🔴 **必须与采集侧共用同一把锁**（2026-10-30 第三次修同一个崩溃）
+        ------------------------------------------------------------------
+        这个方法**会在事件循环线程里被调用**（`/api/audio/check-loopback`）
+        ⇒ 它 `pyaudio.PyAudio()`（枚举 host API）+ `get_device_count()` +
+        `get_device_info_by_index()` 的那一刻，**采集线程可能正在构造/开流**
+        ⇒ 两个线程同时碰 PortAudio 的 `hostApi->info` ⇒
+        **断言失败 → abort 整个后端进程**：
+            Assertion failed: hostApi->info.defaultOutputDevice < hostApi->info.deviceCount
+
+        ⇒ 与 `_capture_loop` 共用 `_DEVICE_ENUM_LOCK`（RLock）即可根治：
+        **所有碰 PortAudio 设备枚举的地方都必须串行。**
+        """
         if pyaudio is None:
             logger.warning(
                 f"未安装音频库（当前后端={AUDIO_BACKEND}）。"
@@ -199,26 +212,28 @@ class AudioCapture:
             )
             return []
         try:
-            p = pyaudio.PyAudio()
-            devices = []
-            default_input = None
-            try:
-                default_input = p.get_default_input_device_info().get("index")
-            except Exception:
-                pass
+            # 🔴 与采集侧同一把锁（RLock 可重入 ⇒ 嵌套调用安全）
+            with _DEVICE_ENUM_LOCK:
+                p = pyaudio.PyAudio()
+                devices = []
+                default_input = None
+                try:
+                    default_input = p.get_default_input_device_info().get("index")
+                except Exception:
+                    pass
 
-            for i in range(p.get_device_count()):
-                info = p.get_device_info_by_index(i)
-                devices.append({
-                    "index": i,
-                    "name": info["name"],
-                    "maxInputChannels": info["maxInputChannels"],
-                    "maxOutputChannels": info["maxOutputChannels"],
-                    "defaultSampleRate": info["defaultSampleRate"],
-                    "isDefaultInput": bool(i == default_input),
-                    "isLoopback": bool(info.get("isLoopbackDevice", False)),
-                })
-            p.terminate()
+                for i in range(p.get_device_count()):
+                    info = p.get_device_info_by_index(i)
+                    devices.append({
+                        "index": i,
+                        "name": info["name"],
+                        "maxInputChannels": info["maxInputChannels"],
+                        "maxOutputChannels": info["maxOutputChannels"],
+                        "defaultSampleRate": info["defaultSampleRate"],
+                        "isDefaultInput": bool(i == default_input),
+                        "isLoopback": bool(info.get("isLoopbackDevice", False)),
+                    })
+                p.terminate()
             return devices
         except Exception as e:
             logger.error(f"枚举音频设备失败: {e}")

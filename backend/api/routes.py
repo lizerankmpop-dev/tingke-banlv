@@ -751,9 +751,17 @@ async def preview_terminology(req: PreviewTerminologyRequest):
 @router.get("/audio/check-loopback")
 async def check_loopback():
     """检查 Loopback 设备是否可用，返回安装指引"""
+    import asyncio
+
     from audio.capture import AudioCapture, AUDIO_BACKEND, _HAS_LOOPBACK_API
 
-    devices = AudioCapture.list_devices()
+    # 🔴 **设备枚举必须离开事件循环**（2026-10-30）
+    #    `list_devices()` 要构造 PyAudio + 遍历所有设备 ⇒ **会阻塞几百毫秒**；
+    #    而它会读 PortAudio 的 `hostApi->info` —— 那一刻采集线程可能正在
+    #    构造/开流 ⇒ 两个线程并发 ⇒ **PortAudio 断言失败 → abort 整个后端进程**
+    #    （`Assertion failed: hostApi->info.defaultOutputDevice < ...`）
+    #    ⇒ ① 枚举移到线程里；② `list_devices()` 内部与采集侧共用同一把锁。
+    devices = await asyncio.to_thread(AudioCapture.list_devices)
     system = platform.system()
 
     # 优先用后端给出的 isLoopback 标记（PyAudioWPatch 能准确判断），
