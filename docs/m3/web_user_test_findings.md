@@ -132,3 +132,55 @@ depth-first · admissible · probability
 - **用户的 `git add -A` 把我的改动裹进了他的作业提交**（`c6f05aa`
   「docs: 补人工在环章节…」）⇒ 改动没丢，但 commit message 里没有它们。
   ⇒ **不动用户的提交历史**，改为补这份独立文档说明改动意图。
+
+---
+
+## 五、后续（同日第二轮）：LLM 软依赖 + 跨进程互斥（提交 `12c9330`）
+
+### 5.1 🔴 LLM 改软依赖 —— 缺依赖不再让整个软件打不开
+
+**原状**：`api/routes.py` 顶层硬 import + 模块级实例化
+（`from llm.explainer import WordExplainer` / `word_explainer = WordExplainer()`）
+⇒ `langchain_core` 一缺失 ⇒ **整个后端起不来**，而「实时字幕 + 点词」**完全不依赖 LLM**。
+
+**修法**（**`backend/llm/` 一行不动** —— 那是别人的工作区）：
+- 顶层去硬 import ⇒ 按需构造 `_get_llm(kind)`
+- `_llm_call(kind, method)` 统一取用；不可用 ⇒ 抛 **503 + 可操作提示**
+- `main.py` 的 `_refresh_llm_status`：import 挪进 try
+  （原来在 try 外 ⇒ 异常冲出协程 ⇒ 状态探测协程直接死掉）
+
+**实测**（用会抛 ImportError 的假 `langchain` 模块起独立实例）：
+- `/api/courses` 200、`/api/audio/check-loopback` 200 ⇒ **后端照样起来**
+- `/api/ai/explain` 对**词表里有的词** ⇒ **200 + `source: local_vocab`**
+  ⇒ **优雅降级到本地词表**（比 503 更好用）；词表也没有的词 ⇒ 503 + 明确提示
+
+防回归：`backend/tests/test_llm_soft_dependency.py`（3 条）
+
+### 5.2 🔴 PortAudio **跨进程**互斥 —— 同款崩溃的第四次根治
+
+进程内 RLock 挡不住**两个后端进程**（正式版 + dev 版同时跑）。
+实测：为了验证软依赖起了第二个实例（8766）⇒ **两个后端一起崩**。
+
+修法：Windows **命名互斥量** `Global\TingkeBanLV_PortAudioGuard`，
+五处接触点全部改用（构造+找设备+开流 / `list_devices()` / 重建路径 /
+`_default_loopback_index` / `_find_loopback_device`）；
+拿不到锁就**等待**而不是并发硬闯；检测到 `ABANDONED`（上个进程崩过）会告警。
+
+**实测**：8765 + 8766 **同时存活**（都 HTTP 200）⇒ 不再崩。
+
+⚠️ 这只是「让崩溃变成等待」，**不是禁止两个实例共存** ——
+真正的单实例约束（启动时检测并提示）仍是待办。
+
+### 5.3 ⚠️ 关于「同款崩溃连踩四次」的复盘
+
+| # | 时间 | 并发点 | 漏在哪 |
+|---|---|---|---|
+| 1 | 10-29 13:28 | 两个 ASR 管道同时启动 | 完全没有锁 |
+| 2 | 10-29 14:46 | 同上 | 只锁 `_default_loopback_index`，**漏了 `PyAudio()` 构造** |
+| 3 | 10-30 13:03 | **检测接口**在事件循环线程枚举设备 | 锁了采集侧，**漏了检测侧** |
+| 4 | 10-30 13:39 | **两个后端进程** | 进程内锁挡不住**跨进程** |
+
+🔑 **教训**：并发问题要按「**谁碰了共享资源**」**全量**列一遍（跨线程 + 跨进程），
+再逐个加锁/串行化；而不是「改到哪儿算哪儿」——
+我前三次都是**只修了自己当时看到的那一处**。
+
