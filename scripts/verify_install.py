@@ -286,6 +286,28 @@ def clean_env(extra: dict | None = None) -> dict:
     # "Most NODE_OPTIONs are not supported in packaged apps" 告警；
     # 真实用户机上不会有它，剥掉让测试环境更接近真实环境。
     env.pop("NODE_OPTIONS", None)
+    # 🔴🔴 **TEMP/TMP 必须指向一个干净目录**（2026-10-31）
+    #
+    # NSIS 静默安装用的是「**自我拷贝**」机制：安装器先把自己拷到
+    # `%TEMP%\<随机>\xxxx.tmp` 再运行（NSIS 装��器约 600KB，正好对得上）。
+    # ⇒ 若那个 `.tmp` **已被占用**（上一次安装残留、或被索引/杀软扫描锁定），
+    #    新的自我拷贝写不进去 ⇒ 安装器**静默失败**：
+    #       `setup.exe /S` 返回 **0**，但安装目录里**什么都没有**。
+    #
+    # 实测（本机 2026-10-31 01:26）：
+    #   `mv: Device or resource busy` ⇒ 那个 `.tmp` 确实被占着
+    #   ⇒ L4 三轮全部卡在「静默安装（/S）：退出码 0，180s 内未发现 exe」
+    #   ⇒ 而同一套流程在 20:17 是 3/3 全过的 ⇒ **是环境被污染，不是包的问题**
+    #
+    # ⇒ 每次验证用一个**专用空目录**当 TEMP ⇒ 彻底避开自我拷贝冲突。
+    try:
+        clean_tmp = Path(os.environ.get("TINGKEBANLV_VERIFY_TMP")
+                         or (Path.home() / ".tingkebanlv" / "_verify_tmp"))
+        clean_tmp.mkdir(parents=True, exist_ok=True)
+        env["TEMP"] = str(clean_tmp)
+        env["TMP"] = str(clean_tmp)
+    except Exception:
+        pass
     return env
 
 
