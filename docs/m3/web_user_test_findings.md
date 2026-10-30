@@ -270,3 +270,71 @@ op.open("http://127.0.0.1:8765/api/courses")
 `text=True`（默认 utf-8）会抛 `UnicodeDecodeError` ⇒ 要用
 `.stdout.decode("mbcs", errors="replace")`。
 
+---
+
+## 八、第四轮（提交 `cb8571d`）：收尾三个待办
+
+### 8.1 ✅ 导出面板可**选哪一次识别**
+
+`export-srt` 已默认取「最新一次会话」，但用户可能想导**之前那次**
+⇒ 后端 `GET /api/courses/{id}/sessions`
+（返回 `[{sessionId, startedAt, count, firstText, isLatest}]`）
+⇒ 前端导出面板加下拉（`时间 · N 条（最近）`），默认选最近那次。
+
+实测：`total=1`，`193 条`，`latest=True` ✓
+
+### 8.2 🔴 单实例检测 —— 明确告诉用户「为什么没字幕」
+
+同一台机器跑两个后端实例（正式版 + dev 版 / 双击两次图标）⇒
+两者争抢系统音频设备 ⇒ **后启动的那个识别不出字幕**，
+而用户完全不知道原因（看起来就像「软件坏了」）。
+
+修法：
+- `main.py` 加**实例级命名互斥量** `Global\TingkeBanLV_Instance`
+  （在 `lifespan` 最前面检测）⇒ 已有实例时记明确告警日志
+- 新增 `GET /api/instance/status`
+  → `{isPrimary, anotherInstanceRunning, hint, port}`
+- 前端课程配置页拉这个状态 ⇒ 是次要实例就显示红色警告条 + 可操作提示
+
+实测：
+
+```
+主实例 8765 → isPrimary=True   anotherInstanceRunning=False
+第二实例 8766 → isPrimary=False  anotherInstanceRunning=True
+  hint: 检测到另一个听课伴侣后端实例正在运行。两个实例会争抢系统音频设备…
+日志: ⚠️ 检测到**另一个听课伴侣后端实例**已在运行…
+且两个实例都还活着（HTTP 200）⇒ 跨进程互斥生效，没崩
+```
+
+### 8.3 🔴 音频流重建的重试上限 8 → 200（近乎无限）
+
+实测 Chrome 独占设备时会**持续**占着（不是抢一下就松）⇒
+8 次退避（1+2+4+8×5 ≈ 47s）用完管道就死，而用户的视频往往还在播
+⇒ 「莫名其妙就没字幕了」。
+
+⇒ 改成近乎无限重试（退避封顶 10s ⇒ 连续重试约半小时），
+设备一放开就自动恢复；`stop()` 仍能立刻打断（退避期间可中断）。
+
+---
+
+## 九、⚠️⚠️ 这批修复**都还没进任何交付物**（发布门槛）
+
+自 10-29 起累计改动的**进包区**文件（`backend/` 非 tests、`frontend/src/`）：
+
+| 文件 | 改了什么 |
+|---|---|
+| `backend/audio/capture.py` | PortAudio 跨线程 + 跨进程互斥；流重建退避重试（上限 200）|
+| `backend/api/routes.py` | 前端假成功（检查 res.ok）；409 单例；check-loopback 改 to_thread；字幕落库；会话隔离 + 导出偏移；`/ai/status`；`/sessions`|
+| `backend/main.py` | LLM 软依赖（import 挪进 try）；单实例检测 + `/api/instance/status` |
+| `backend/database/manager.py` | `subtitles.session_id` 列 + 老库 ALTER 迁移 |
+| `backend/dictionary/terminology.py` | `FILLER_PHRASES` 口语填充短语黑名单 |
+| `backend/asr/pipeline.py` | 自动入库的价值判据（只让「值得学」的进生词本）|
+| `frontend/src/stores/useSubtitleStore.ts` | 检查 res.ok；409 不重连；先 stop 再 start 串行化 |
+| `frontend/src/pages/CourseConfig.tsx` | 后端不可达 vs 设备缺失分开提示；次要实例警告条 |
+| `frontend/src/pages/SubtitleOverlay.tsx` | AI 真实原因；导出 SRT 入口 + 偏移 + 会话选择 |
+
+⇒ **`v3.6.0`（tag `36a61ff`）不含以上任何一条**，它的 L4/e2e 结论**不受影响**；
+⇒ **下一版必须带上这批 + 重新打包 + 重跑 L4 + e2e** 才算验证过。
+⇒ 建议下一版直接定为 **v3.7.0**（功能面变化明显：导出字幕、单实例提示、
+   生词本降噪、会话隔离都是用户可见的）。
+
