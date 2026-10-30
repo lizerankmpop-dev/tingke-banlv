@@ -205,7 +205,7 @@ ollama pull qwen2.5:7b
 
 | 项目 | 结果 |
 |---|---|
-| 全量测试套件 | **491 passed** / 11 skipped（改造前 447 passed，无回归） |
+| 全量测试套件 | **494 passed** / 11 skipped（改造前 447 passed，无回归） |
 | LangChain 链离线自检 | **30 / 30** 通过 |
 | LangChain 专项回归守卫 | **43 / 43** 通过（Chain / Agent / RAG / Memory / Workflow / Interrupt） |
 | 链编排演示 | 四条链全部正确输出 |
