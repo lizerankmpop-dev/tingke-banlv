@@ -79,6 +79,94 @@ SYSTEM = platform.system()
 #    也没有「音频流已打开」，然后永远不出数据）。
 #    `RLock` 允许同一线程重复获取 ⇒ 嵌套调用安全。
 _DEVICE_ENUM_LOCK = threading.RLock()
+
+# 🔴 **跨进程互斥**（2026-10-30）—— 同一台机器**只能跑一个后端实例**
+#
+# 问题：`_DEVICE_ENUM_LOCK` 是**进程内**的 ⇒ 两个后端进程（正式版 + dev 版）
+#       仍会**同时**碰 PortAudio ⇒ 照样 `Assertion failed` → abort。
+#       2026-10-30 实测：为了验证「LLM 软依赖」我起了第二个后端实例（8766），
+#       结果**两个后端一起崩**。
+#
+# ⇒ 用**命名互斥量**（Windows `CreateMutex`）把「设备枚举」跨进程串行化：
+#   拿不到锁 ⇒ 说明**别的进程正在枚举设备** ⇒ 等它，而不是并发硬闯。
+#
+# ⚠️ 注意：这是「让崩溃变成等待」，**不是**「禁止两个实例共存」——
+#    真正的单实例约束需要另外的机制（见 known_defects D7 残留缺口）。
+try:  # pragma: no cover —— 仅 Windows 有命名互斥量
+    import ctypes as _ctypes
+
+    _k32 = _ctypes.WinDLL("kernel32", use_last_error=True)
+    _k32.CreateMutexW(None, False, "Global\\TingkeBanLV_PortAudioGuard")
+    _k32.CreateMutexW.restype = _ctypes.c_void_p
+    _k32.WaitForSingleObject.argtypes = [_ctypes.c_void_p, _ctypes.c_ulong]
+    _k32.WaitForSingleObject.restype = _ctypes.c_ulong
+    _k32.ReleaseMutex.argtypes = [_ctypes.c_void_p]
+    _HAS_NAMED_MUTEX = True
+except Exception:  # 非 Windows / 拿不到 ⇒ 退回进程内锁
+    _k32 = None
+    _HAS_NAMED_MUTEX = False
+
+# ERROR_ABANDONED（0x00000080）：上一个持有者崩了（正好是我们的 abort 场景）
+# ⇒ 锁仍被释放，但我们要**知道**曾经发生过抢占
+_MUTEX_ABANDONED = 0x00000080
+_WAIT_OBJECT_0 = 0x00000000
+_WAIT_TIMEOUT = 0x00000102
+
+
+class _CrossProcessGuard:
+    """跨进程互斥（命名互斥量）+ 进程内锁 ⇒ 两层都要
+
+    用法::
+
+        with _CrossProcessGuard():
+            ...碰 PortAudio 的代码...
+
+    ⚠️ 拿不到命名互斥量时**只退化成进程内锁**（功能不受影响，只是失去跨进程保护）。
+    """
+
+    def __init__(self, timeout_ms: int = 5000):
+        self._timeout_ms = timeout_ms
+        self._handle = None
+        self._acquired = False
+
+    def __enter__(self):
+        _DEVICE_ENUM_LOCK.acquire()
+        try:
+            if _HAS_NAMED_MUTEX and _k32 is not None:
+                h = _k32.CreateMutexW(None, False, "Global\\TingkeBanLV_PortAudioGuard")
+                if h:
+                    self._handle = h
+                    res = _k32.WaitForSingleObject(h, self._timeout_ms)
+                    if res in (_WAIT_OBJECT_0, _MUTEX_ABANDONED):
+                        self._acquired = True
+                        if res == _MUTEX_ABANDONED:
+                            logger.warning(
+                                "检测到另一个进程曾持有 PortAudio 互斥量并异常退出"
+                                "（通常是 Assertion failed abort）—— 继续执行"
+                            )
+                    else:
+                        # 别的进程正卡在枚举里 ⇒ 等不到就让出进程内锁，避免硬闯
+                        logger.warning(
+                            f"等待跨进程 PortAudio 互斥量超时（{self._timeout_ms}ms）"
+                            f"—— 可能有另一个后端实例正在采集"
+                        )
+                        _k32.ReleaseMutex(h)
+                        self._handle = None
+        except Exception as exc:  # noqa: BLE001 —— 保护层失败不能影响主功能
+            logger.debug(f"跨进程互斥不可用: {exc}")
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if self._handle and self._acquired and _k32 is not None:
+                _k32.ReleaseMutex(self._handle)
+        except Exception:
+            pass
+        finally:
+            self._handle = None
+            self._acquired = False
+            _DEVICE_ENUM_LOCK.release()
+        return False
 _DEFAULT_LOOPBACK_INDEX_CACHE: Optional[int] = None
 
 CaptureMode = Literal["loopback", "microphone"]
@@ -213,7 +301,7 @@ class AudioCapture:
             return []
         try:
             # 🔴 与采集侧同一把锁（RLock 可重入 ⇒ 嵌套调用安全）
-            with _DEVICE_ENUM_LOCK:
+            with _CrossProcessGuard():
                 p = pyaudio.PyAudio()
                 devices = []
                 default_input = None
@@ -265,7 +353,7 @@ class AudioCapture:
             #
             # ⇒ 现在**整段进锁**：构造 → 找设备 → 开流 全部串行。
             #    锁只保护「打开」这个短动作，长期持有的 stream 不在锁内 ⇒ 无性能影响。
-            with _DEVICE_ENUM_LOCK:
+            with _CrossProcessGuard():
                 self._pyaudio = pyaudio.PyAudio()
 
                 if self._device_index is not None:
@@ -362,7 +450,7 @@ class AudioCapture:
                     return
                 try:
                     # 🔴 重建路径**同样**要加锁：重新构造 PyAudio 一样会枚举 host API
-                    with _DEVICE_ENUM_LOCK:
+                    with _CrossProcessGuard():
                         self._close_stream_quietly()
                         self._pyaudio = pyaudio.PyAudio()
                         self._stream = self._pyaudio.open(
@@ -476,13 +564,13 @@ class AudioCapture:
             return None
 
         # 防线 2：命中缓存就不再碰 PortAudio
-        with _DEVICE_ENUM_LOCK:
+        with _CrossProcessGuard():
             cached = _DEFAULT_LOOPBACK_INDEX_CACHE
         if cached is not None:
             return cached
 
         # 防线 1：枚举串行化
-        with _DEVICE_ENUM_LOCK:
+        with _CrossProcessGuard():
             info = pyaudio_obj.get_default_wasapi_loopback()
             if info and info.get("index") is not None:
                 idx = int(info["index"])

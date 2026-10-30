@@ -186,10 +186,23 @@ _llm_status: dict = {"available": False, "provider": "ollama", "checked_at": 0.0
 
 
 async def _refresh_llm_status() -> None:
-    from llm.client import get_provider, is_available
-
-    _llm_status["provider"] = get_provider()
+    # 🔴 **import 必须放进 try**（2026-10-30，LLM 改软依赖）
+    #    `llm/client.py` 顶层 `from langchain_core.messages import ...`
+    #    ⇒ 缺 langchain 时**这个 import 就抛 ModuleNotFoundError**。
+    #    原来它在 try 外面 ⇒ 异常直接冲出协程 ⇒ `_llm_status_loop` 的
+    #    `while True` 没有兜底 ⇒ **状态探测协程直接死掉**（不再更新）。
+    #    ⇒ 现在：捕获它，标记为不可用，主链路照常。
     try:
+        from llm.client import get_provider, is_available
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"LLM 客户端不可用（依赖缺失？）: {type(exc).__name__}: {exc}")
+        _llm_status["available"] = False
+        _llm_status["provider"] = "unavailable"
+        _llm_status["checked_at"] = time.time()
+        return
+
+    try:
+        _llm_status["provider"] = get_provider()
         _llm_status["available"] = await asyncio.to_thread(is_available)
     except Exception as exc:
         logger.debug(f"LLM 可用性探测失败: {exc}")

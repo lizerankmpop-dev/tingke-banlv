@@ -19,9 +19,6 @@ from typing import Optional
 from dependencies import db
 from asr.pipeline import ASRPipeline
 from asr.whisper_engine import SIMP_MODE_AUTO_SIMPLIFIED, normalize_simp_mode
-from llm.explainer import WordExplainer
-from llm.summarizer import LectureSummarizer
-from llm.qa import ChatQA
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -52,14 +49,75 @@ term_auto_degrade_default: bool = True
 asr_message_queues: dict[str, deque] = {}
 MAX_QUEUE_MESSAGES = 200
 
-# 全局单词讲解器（复用缓存）
-word_explainer = WordExplainer()
+# ============ LLM 组件（**软依赖**，2026-10-30）============
+#
+# 🔴 为什么改成软依赖
+# ------------------
+# 原来这里是**模块级硬 import + 模块级实例化**：
+#     from llm.explainer import WordExplainer
+#     word_explainer = WordExplainer()
+# ⇒ 只要 `langchain_core` 缺失（没装 / 装坏了 / 升级降级失败），
+#    **整个后端就起不来** —— 而用户的核心需求「实时字幕 + 点词」**完全不依赖 LLM**。
+#
+# 实际发生：2026-10-30 本机 venv 里 `langchain` 整个消失 ⇒
+# 后端反复重启 13 次全失败 ⇒ **整个软件打不开**，而 LLM 只是「AI 讲解」这个附加功能。
+#
+# ⇒ 现在：**按需构造**（第一次用到才 import）+ 失败则降级为「不可用」，
+#    端点返回 **503 + 明确原因**，而不是让整个应用起不来。
+#
+# ⚠️ 只改本文件，`backend/llm/` 一行不动（那里是别人的工作区）。
 
-# 全局摘要生成器
-lecture_summarizer = LectureSummarizer()
+_llm_instances: dict = {}
+_LLM_IMPORT_ERRORS: dict = {}
 
-# 全局答疑器
-chat_qa = ChatQA()
+
+def _get_llm(kind: str):
+    """按需构造 LLM 组件；不可用时返回 None（并记住原因）"""
+    if kind in _llm_instances:
+        return _llm_instances[kind]
+    try:
+        if kind == "word_explainer":
+            from llm.explainer import WordExplainer
+            obj = WordExplainer()
+        elif kind == "lecture_summarizer":
+            from llm.summarizer import LectureSummarizer
+            obj = LectureSummarizer()
+        elif kind == "chat_qa":
+            from llm.qa import ChatQA
+            obj = ChatQA()
+        else:
+            raise ValueError(f"未知的 LLM 组件: {kind}")
+    except Exception as exc:  # noqa: BLE001 —— 任何依赖问题都不该拖垮后端
+        _LLM_IMPORT_ERRORS[kind] = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            f"LLM 组件 {kind} 不可用（{type(exc).__name__}: {exc}）—— "
+            f"AI 相关功能降级，字幕/查词等主链路不受影响"
+        )
+        obj = None
+    _llm_instances[kind] = obj
+    return obj
+
+
+def _llm_call(kind: str, method: str):
+    """取 LLM 组件的某个方法；不可用时抛 503（而不是 AttributeError → 500）"""
+    obj = _get_llm(kind)
+    if obj is None:
+        raise _llm_unavailable(kind)
+    fn = getattr(obj, method, None)
+    if fn is None:
+        raise _llm_unavailable(kind)
+    return fn
+
+
+def _llm_unavailable(kind: str) -> HTTPException:
+    """统一的「LLM 不可用」错误 ⇒ 503 + 明确原因（前端能给出可操作的提示）"""
+    reason = _LLM_IMPORT_ERRORS.get(kind, "LLM 服务未就绪")
+    return HTTPException(
+        status_code=503,
+        detail=f"AI 功能不可用：{reason}。"
+                f"实时字幕与点词等主功能不受影响 —— "
+                f"如需 AI 讲解，请确认已安装 langchain 与 ollama 并已启动模型。",
+    )
 
 
 # ============ 请求模型 ============
@@ -576,7 +634,7 @@ async def ai_explain(req: ExplainRequest):
                 break
 
     result = await asyncio.to_thread(
-        word_explainer.explain,
+        _llm_call("word_explainer", "explain"),
         word,
         course.get("domain", ""),
         course.get("name", ""),
@@ -613,7 +671,7 @@ async def generate_summary(course_id: str):
     vocabulary = await db.get_vocabulary(course_id)
 
     result = await asyncio.to_thread(
-        lecture_summarizer.summarize,
+        _llm_call("lecture_summarizer", "summarize"),
         text,
         course.get("domain", ""),
         course.get("name", ""),
@@ -655,7 +713,7 @@ async def ai_ask(req: AskRequest):
     custom_terms = _parse_custom_terms(course)
 
     answer = await asyncio.to_thread(
-        chat_qa.answer,
+        _llm_call("chat_qa", "answer"),
         question,
         context,
         course.get("domain", ""),
