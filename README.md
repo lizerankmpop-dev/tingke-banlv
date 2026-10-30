@@ -13,14 +13,42 @@
 
 实时字幕工具，支持**在线网课**和**线下课堂**两种模式。捕获系统音频或麦克风收音，生成逐词同步字幕，点击单词即可学习。完全免费，本地运行。
 
+## 📚 作业信息
+
+《开源软件构建技术》· **第七章《智能应用开发》**
+
+| 作业要求 | 本项目 |
+|---|---|
+| 基于 **LangChain 框架** | LangChain 1.x，LCEL 链 / 结构化输出 / `RunnableBranch` / `create_agent` / `checkpointer` / `interrupt` |
+| **在线或离线大模型** | 离线 Ollama + Qwen2.5（`qwen2.5:7b`），可切云端 OpenAI 兼容 API |
+| 开发一款**智能应用** | 听课伴侣 —— 实时字幕 + 交互式单词学习桌面应用 |
+| **README 文档说明** | 即本文件（含「🧠 智能体架构」专章） |
+| **开源仓库链接** | [`feat/langchain-agent` 分支](https://github.com/lizerankmpop-dev/tingke-banlv/tree/feat/langchain-agent) |
+
+**核心改造提交**：`53f8c09` *feat(llm): 用 LangChain 框架重构四条 LLM 智能链*
+（其后为 Agent → RAG → Memory → 多 Agent 协作 → 人工在环的逐轮增强）
+
+**一键验证**（无需大模型，秒级完成）：
+
+```bash
+cd backend && python -m venv venv
+./venv/Scripts/python.exe -m pip install -r requirements.txt
+./venv/Scripts/python.exe -m llm.chains.verify          # 链自检 30 项
+./venv/Scripts/python.exe ../examples/langchain_demo.py --offline   # 九条链演示
+./venv/Scripts/python.exe -m pytest tests/ -q          # 全量 494 passed
+```
+
+> ⚠️ 作业代码在 `feat/langchain-agent` 分支；`main` 为改造前的原始版本。
+
 ## 📌 快速导航
 
 | 我想了解 | 看这里 |
 |---|---|
+| **作业要求逐条对照 / 复现步骤** | [📚 作业信息](#-作业信息) |
 | **本次作业（LangChain）怎么做的** | [🧠 智能体架构](#-智能体架构基于-langchain-的四条-llm-链) |
 | 作业要求逐条对照 + 一键复现 | [`SUBMISSION.md`](SUBMISSION.md) |
 | LangChain 核心代码 | [`backend/llm/chains/`](backend/llm/chains/) |
-| 四条链的运行效果 | [`examples/langchain_demo.py`](examples/langchain_demo.py) |
+| 各链的实际运行效果 | [`examples/langchain_demo.py`](examples/langchain_demo.py) |
 | 术语识别的实测效果 | [术语识别优化](#术语识别优化) |
 | 怎么装起来跑 | [快速开始](#快速开始) |
 
@@ -403,7 +431,7 @@ return RunnableBranch(
 ### 运行演示
 
 ```bash
-# 离线演示：无需大模型，秒级跑通四条链
+# 离线演示：无需大模型，秒级跑通九条链
 python examples/langchain_demo.py --offline
 
 # 真实模型：需先启动 Ollama 并拉取 qwen2.5:7b
