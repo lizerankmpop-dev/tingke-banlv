@@ -333,6 +333,44 @@ def _ms_to_date_str(ms) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ms / 1000))
 
 
+@router.get("/courses/{course_id}/sessions")
+async def list_sessions(course_id: str):
+    """列出该课程下的**识别会话**（导出时让用户选哪一批）
+
+    🔴 为什么需要（2026-10-30）
+    --------------------------
+    同一门课重跑识别 ⇒ 字幕累积，**每批的时间轴都从 0 起算**
+    ⇒ 导出必须**按会话分开**，否则时间轴重叠、SRT 直接错乱。
+    ⇒ `export-srt` 已默认取「最新一次会话」，但用户可能想导出**之前那次**
+    ⇒ 这里把会话列表给前端，让用户自己挑。
+
+    返回：[{sessionId, startedAt, count, firstText, isLatest}]
+    """
+    rows = await db.get_subtitles(course_id, limit=1000)
+    buckets: dict = {}
+    for s in rows:
+        sid = s.get("session_id") or ""
+        if not sid:
+            continue          # 老库存量行（session_id 为空）不在任何会话里
+        b = buckets.setdefault(sid, {
+            "sessionId": sid,
+            "startedAt": s.get("created_at") or 0,
+            "count": 0,
+            "firstText": "",
+            "_maxCreated": 0,
+        })
+        b["count"] += 1
+        if not b["firstText"]:
+            b["firstText"] = (s.get("text") or "")[:60]
+        b["_maxCreated"] = max(b["_maxCreated"], s.get("created_at") or 0)
+
+    sessions = sorted(buckets.values(), key=lambda b: b["_maxCreated"], reverse=True)
+    for i, b in enumerate(sessions):
+        b["isLatest"] = (i == 0)
+        b.pop("_maxCreated", None)
+    return {"sessions": sessions, "total": len(sessions)}
+
+
 @router.get("/courses/{course_id}/export-srt")
 async def export_srt(course_id: str, offsetMs: int = Query(default=0, ge=0),
                      sessionId: str = Query(default="")):

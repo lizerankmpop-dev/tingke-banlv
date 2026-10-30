@@ -135,6 +135,11 @@ def _resolve_dist_dir() -> Path | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    # 🔴 单实例检测要在**最前面**（2026-10-30）
+    #    音频设备只能被一个回环流使用 ⇒ 两个实例会互相抢
+    #    ⇒ 第二个实例要**明确知道**自己是次要实例（前端可提示用户）
+    global _INSTANCE_IS_PRIMARY
+    _INSTANCE_IS_PRIMARY = _acquire_instance_lock()
     await db.initialize()
     logger.info("数据库初始化完成")
     # 内置模型播种：**必须后台线程**（141MB 拷贝几秒到几十秒，同步做会拖长就绪
@@ -208,6 +213,74 @@ async def _refresh_llm_status() -> None:
         logger.debug(f"LLM 可用性探测失败: {exc}")
         _llm_status["available"] = False
     _llm_status["checked_at"] = time.time()
+
+
+# ============ 单实例检测（2026-10-30）============
+#
+# 为什么需要
+# ----------
+# 音频输出设备同一时刻只能被**一个** WASAPI 回环流使用 ⇒ 同一台机器
+# **同时跑两个后端实例**（正式版 + dev 版、或用户双击两次图标）⇒
+# 轻则「第二个课程开不了流」，重则 PortAudio 断言失败**整个进程 abort**。
+#
+# 现在 `capture.py` 用命名互斥量 `Global\TingkeBanLV_PortAudioGuard`
+# 把设备枚举跨进程串行化了 ⇒ **不会崩**（只是后来者拿不到流）。
+# 但用户**不知道**为什么第二个实例的识别不出字幕。
+#
+# ⇒ 这里再加一个**实例级**命名互斥量：启动时检测到已有实例 ⇒
+#   ① 记一条明确的日志（说清是谁占着）
+#   ② 通过 `GET /api/instance/status` 暴露给前端 ⇒ 前端可提示用户
+def _acquire_instance_lock() -> bool:
+    """尝试取得「本机唯一实例」锁。返回 True = 我是第一个实例"""
+    global _INSTANCE_LOCK_HANDLE
+    try:
+        import ctypes as _ctypes
+        _k32 = _ctypes.WinDLL("kernel32", use_last_error=True)
+        # ERROR_ALREADY_EXISTS(183) ⇒ 已有实例持有着
+        _k32.CreateMutexW.restype = _ctypes.c_void_p
+        h = _k32.CreateMutexW(None, False, "Global\\TingkeBanLV_Instance")
+        if not h:
+            return True          # 拿不到就当没有（不阻断启动）
+        already = (_k32.GetLastError() == 183)
+        if already:
+            logger.warning(
+                "⚠️ 检测到**另一个听课伴侣后端实例**已在运行"
+                "（命名互斥量 Global\\TingkeBanLV_Instance 已被占用）——"
+                "两者会争抢系统音频设备，后启动的那个可能识别不出字幕。"
+                "请关掉多余的那个实例。"
+            )
+        else:
+            _INSTANCE_LOCK_HANDLE = h     # 持有到进程结束
+        return not already
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"单实例检测不可用: {type(exc).__name__}: {exc}")
+        return True
+
+
+_INSTANCE_LOCK_HANDLE = None
+_INSTANCE_IS_PRIMARY = True
+
+
+@app.get("/api/instance/status")
+async def instance_status():
+    """本机实例状态（前端据此提示「已有另一个实例在跑」）
+
+    🔴 为什么要暴露给前端（2026-10-30）
+    ----------------------------------
+    同一台机器跑两个后端实例 ⇒ 两者争抢系统音频设备 ⇒
+    **后启动的那个识别不出字幕**，而用户完全不知道原因
+    （看起来就像「软件坏了」）。
+    ⇒ 后端明确告诉前端「你是不是次要实例」⇒ 前端给出可操作提示。
+    """
+    return {
+        "isPrimary": _INSTANCE_IS_PRIMARY,
+        "anotherInstanceRunning": not _INSTANCE_IS_PRIMARY,
+        "hint": ("" if _INSTANCE_IS_PRIMARY else
+                 "检测到另一个听课伴侣后端实例正在运行。"
+                 "两个实例会争抢系统音频设备 —— 请关掉多余的那个，"
+                 "否则本实例可能识别不出字幕。"),
+        "port": int(os.environ.get("TINGKEBANLV_PORT", "8765")),
+    }
 
 
 async def _llm_status_loop() -> None:

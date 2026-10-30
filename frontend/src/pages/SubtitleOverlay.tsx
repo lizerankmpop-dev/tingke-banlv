@@ -130,6 +130,12 @@ export default function SubtitleOverlay() {
   // 导出字幕为 SRT —— 后端 `GET /api/courses/{id}/export-srt` 一直都有，
   // 但前端**从来没调用过**（2026-10-30 补上这个入口）
   const [exportMsg, setExportMsg] = useState('')
+  // 🔴 **会话选择** —— 同一门课重跑识别 ⇒ 字幕按会话分批（各自时间轴从 0 起算）
+  //    ⇒ 导出必须让用户挑哪一批，否则时间轴重叠
+  const [sessions, setSessions] = useState<Array<{
+    sessionId: string; startedAt: number; count: number; firstText: string; isLatest: boolean
+  }>>([])
+  const [exportSession, setExportSession] = useState('')
   // 🔴 **视频起点偏移**（秒）—— 字幕时间戳是「从开始识别那刻」起算的，
   //    要贴到原视频上就得让用户告诉后端「识别开始时视频播到第几秒」。
   const [exportOffset, setExportOffset] = useState('')
@@ -140,7 +146,8 @@ export default function SubtitleOverlay() {
     try {
       const sec = parseFloat(exportOffset)
       const offsetMs = Number.isFinite(sec) && sec > 0 ? Math.round(sec * 1000) : 0
-      const res = await fetch(`/api/courses/${courseId}/export-srt?offsetMs=${offsetMs}`)
+      const sid = exportSession ? `&sessionId=${encodeURIComponent(exportSession)}` : ''
+      const res = await fetch(`/api/courses/${courseId}/export-srt?offsetMs=${offsetMs}${sid}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       const count = data?.count ?? 0
@@ -224,7 +231,25 @@ export default function SubtitleOverlay() {
           <button onClick={fetchSummary} style={styles.ctrlBtn} title="AI 课摘要">
             <FileText size={15} />
           </button>
-          <button onClick={() => setExportPanel(v => !v)} style={styles.ctrlBtn} title="导出字幕为 SRT 文件">
+          <button
+            onClick={() => {
+              setExportPanel(v => !v)
+              // 打开面板时拉一次会话列表（关着时不用请求）
+              if (!exportPanel && courseId) {
+                fetch(`/api/courses/${courseId}/sessions`)
+                  .then(r => r.ok ? r.json() : { sessions: [] })
+                  .then(d => {
+                    const list = (d?.sessions || []) as typeof sessions
+                    setSessions(list)
+                    const latest = list.find(s => s.isLatest) || list[0]
+                    setExportSession(latest?.sessionId || '')
+                  })
+                  .catch(() => setSessions([]))
+              }
+            }}
+            style={styles.ctrlBtn}
+            title="导出字幕为 SRT 文件"
+          >
             <Download size={15} />
           </button>
           <button onClick={() => setView('dictionary')} style={styles.ctrlBtn} title="课程词典">
@@ -252,6 +277,30 @@ export default function SubtitleOverlay() {
           fontSize: 12,
         }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>导出字幕（SRT）</div>
+          {sessions.length > 0 && (
+            <>
+              <label style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>
+                导出哪一次识别？
+              </label>
+              <select
+                value={exportSession}
+                onChange={(e) => setExportSession(e.target.value)}
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '5px 7px',
+                  borderRadius: 5, border: '1px solid var(--border)',
+                  background: 'var(--bg-input, #12161d)', color: 'var(--text-primary)',
+                  fontSize: 12, marginBottom: 8,
+                }}
+              >
+                {sessions.map(s => (
+                  <option key={s.sessionId} value={s.sessionId}>
+                    {new Date(s.startedAt).toLocaleString('zh-CN', { hour12: false })}
+                    {' · '}{s.count} 条{s.isLatest ? '（最近）' : ''}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           <label style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>
             识别开始时，视频播到第几秒？
           </label>

@@ -227,6 +227,9 @@ export default function CourseConfig() {
   const [simpMode, setSimpMode] = useState(course?.simpMode || COURSE_CONFIG_DEFAULTS.simpMode)
   const [customTerms, setCustomTerms] = useState('')
   const [loopbackStatus, setLoopbackStatus] = useState<LoopbackStatus>('checking')
+  // 🔴 **次要实例提示**（2026-10-30）—— 同一台机器跑两个后端实例时，
+  //    后启动的那个**识别不出字幕**（设备被抢），但用户完全不知道原因
+  const [instanceHint, setInstanceHint] = useState('')
   const [loopbackGuide, setLoopbackGuide] = useState<LoopbackGuide | null>(null)
   const [showGuide, setShowGuide] = useState(false)
 
@@ -245,6 +248,14 @@ export default function CourseConfig() {
       setCustomTerms((course.customTerms || []).join(', '))
     }
   }, [course])
+
+  // 🔴 检测本机是否已有另一个后端实例（设备独占 ⇒ 后启动的那个会没字幕）
+  useEffect(() => {
+    fetch('/api/instance/status')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d && d.anotherInstanceRunning) setInstanceHint(d.hint || '') })
+      .catch(() => { /* 后端不可达时不必提示这个 */ })
+  }, [])
 
   // 在线网课模式检测 Loopback 设备
   useEffect(() => {
@@ -413,6 +424,36 @@ export default function CourseConfig() {
             >
               重新检测
             </button>
+          </div>
+        )}
+
+        {/* 🔴 次要实例提示：两个实例抢音频设备 ⇒ 本实例可能识别不出字幕 */}
+        {instanceHint && (
+          <div style={styles.warningBar}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AlertTriangle size={16} color="var(--danger)" />
+              <span style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 500 }}>
+                检测到另一个实例在运行
+              </span>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
+              {instanceHint}
+            </p>
+          </div>
+        )}
+
+        {/* 🔴 次要实例提示：两个实例抢音频设备 ⇒ 本实例可能识别不出字幕 */}
+        {instanceHint && (
+          <div style={styles.warningBar}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AlertTriangle size={16} color="var(--danger)" />
+              <span style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 500 }}>
+                检测到另一个实例在运行
+              </span>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.5 }}>
+              {instanceHint}
+            </p>
           </div>
         )}
 
