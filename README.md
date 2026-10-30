@@ -2,8 +2,32 @@
 
 ![CI](https://github.com/lizerankmpop-dev/tingke-banlv/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![LangChain](https://img.shields.io/badge/agent-LangChain%201.x-1a7f37)
+![LLM](https://img.shields.io/badge/LLM-Ollama%20%2B%20Qwen2.5%20(local)-2f6fb5)
+
+> 🧠 **智能体层基于 [LangChain](https://github.com/langchain-ai/langchain) 1.x 构建**
+> —— 四条 LLM 链（术语提取 / 单词讲解 / 课后摘要 / 对话答疑）全部用 LCEL 编排，
+> 支持结构化输出与分支路由，本地 Ollama 离线运行。
+> 👉 详见 **[🧠 智能体架构](#-智能体架构基于-langchain-的四条-llm-链)**
 
 实时字幕工具，支持**在线网课**和**线下课堂**两种模式。捕获系统音频或麦克风收音，生成逐词同步字幕，点击单词即可学习。完全免费，本地运行。
+
+## 📌 快速导航
+
+| 我想了解 | 看这里 |
+|---|---|
+| **本次作业（LangChain）怎么做的** | [🧠 智能体架构](#-智能体架构基于-langchain-的四条-llm-链) |
+| 作业要求逐条对照 + 一键复现 | [`SUBMISSION.md`](SUBMISSION.md) |
+| LangChain 核心代码 | [`backend/llm/chains/`](backend/llm/chains/) |
+| 四条链的运行效果 | [`examples/langchain_demo.py`](examples/langchain_demo.py) |
+| 术语识别的实测效果 | [术语识别优化](#术语识别优化) |
+| 怎么装起来跑 | [快速开始](#快速开始) |
+
+## 📸 应用界面
+
+![听课伴侣主界面](docs/images/app-main-window.png)
+
+> 桌面端（Electron + React），左下角为实时逐词字幕，点击任意单词即可查词。
 
 ## 核心功能
 
@@ -12,10 +36,10 @@
 - 🏫 **双模式支持** — 在线网课（系统音频捕获）/ 线下课堂（麦克风收音）
 - 📝 **逐词高亮字幕** — 精确到单词级别的时间戳同步，中英混合支持
 - 🖱️ **点击查词学习** — 点击字幕任意单词，即时显示释义（词库优先，AI 兜底）
-- 🤖 **AI 术语提取** — Ollama 自动分析课程内容，提取专业词汇
-- 💡 **AI 深度讲解** — 结合课程语境解释"这个词在这里什么意思"
-- 📋 **课后摘要** — 一键生成课程摘要 / 知识点 / 生词复习清单
-- 💬 **对话式答疑** — 基于最近字幕上下文提问，"刚才那段没听懂"场景
+- 🤖 **AI 术语提取** — LangChain 结构化输出链，自动提取专业词汇
+- 💡 **AI 深度讲解** — LangChain 分支链，结合课程语境解释"这个词在这里什么意思"
+- 📋 **课后摘要** — LangChain 结构化输出，一键生成摘要 / 知识点 / 生词复习清单
+- 💬 **对话式答疑** — LangChain 对话链，基于最近字幕上下文提问，"刚才那段没听懂"场景
 - 📚 **课程专属词典** — 每个课程独立管理词汇，支持生词本和搜索
 
 ## 术语识别优化
@@ -69,6 +93,9 @@ Whisper 只保留 `initial_prompt` 的**末尾 223 token**，因此各层按 **t
 ---
 
 ## 🧠 智能体架构：基于 LangChain 的四条 LLM 链
+
+![LangChain 智能体架构](docs/images/langchain-architecture.png)
+
 
 项目的四项 AI 能力（术语提取、单词讲解、课后摘要、对话答疑）全部基于
 **LangChain 1.x** 构建，离线运行在本地 Ollama（Qwen2.5）上，可一键切换云端
@@ -191,6 +218,10 @@ cd backend && python -m llm.chains.verify
 # 回归守卫：16 项
 cd backend && python -m pytest tests/test_langchain_chains.py -v
 ```
+
+实际运行输出（离线模式）：
+
+![LangChain 演示输出](docs/images/langchain-demo-output.png)
 
 ### 对外接口零变更
 
