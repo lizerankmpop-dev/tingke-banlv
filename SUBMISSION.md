@@ -82,6 +82,7 @@ backend/llm/chains/
 | **RAG（检索增强）** | 字幕语义检索 | 字幕→语义分块→向量索引→按语义召回，突破固定窗口限制 |
 | **Memory（会话记忆）** | 多轮对话 | checkpointer 按 thread_id 隔离，历史逐轮累积 |
 | **多 Agent 协作** | 讲解生成-校验闭环 | LangGraph StateGraph：讲师 Agent 写 → 审校 Agent 查 → 不通过退回重写 |
+| **人工在环（interrupt）** | 讲解两阶段定稿 | LangGraph `interrupt()` 暂停图 → 学生确认 → 恢复定稿 |
 
 Agent 的三个工具：
 
@@ -139,6 +140,40 @@ lecture_node ──► fact_check_node ──► 路由
 
 实现：`backend/llm/chains/workflow.py`（`LearningLoop` / `build_review_loop`）。
 
+### 人工在环（interrupt 两阶段定稿）
+
+前面所有环节都是全自动的 —— 但**「讲解能不能定稿」最终应该由学生说了算**。
+
+```
+① 审校通过 → 图不直接结束，而是 interrupt() 暂停
+   ├─ 把当前状态持久化到 checkpointer
+   └─ 抛出待审 payload（草稿 + 审校结论 + 可选项）
+
+② 前端把待审内容展示给学生
+   ├─ 「确认无误」→ Command(resume={approved: True})  → 定稿
+   └─ 「还要改」  → Command(resume={approved: False, note: "..."})
+                                → 退回讲师重写 → 再次停在待审
+```
+
+**为什么这是框架不可替代的能力**：手写 while 循环要正确实现
+「暂停-持久化-恢复」这套语义，得自己维护断点、状态快照、恢复入口，
+且几乎必然在异常路径上出错 —— 「进程重启后从哪继续」
+「并发调用怎么区分」这类问题，`interrupt()` + `checkpointer` 已做进框架里。
+
+```python
+loop = LearningLoop(with_human_review=True)
+
+pending = loop.run(word="gradient", thread_id="stu-1")
+if pending["needs_review"]:
+    # pending["review_request"] 就是给前端展示的待审内容
+    ...
+
+final = loop.resume(thread_id="stu-1", approved=True)
+```
+
+`with_human_review=False`（默认）时不挂 checkpointer、不需要 thread_id，
+旧调用方式完全不受影响。
+
 ---
 
 ## 四、一键验证
@@ -170,9 +205,9 @@ ollama pull qwen2.5:7b
 
 | 项目 | 结果 |
 |---|---|
-| 全量测试套件 | **485 passed** / 9 skipped（改造前 447 passed，无回归） |
+| 全量测试套件 | **491 passed** / 11 skipped（改造前 447 passed，无回归） |
 | LangChain 链离线自检 | **30 / 30** 通过 |
-| LangChain 专项回归守卫 | **38 / 38** 通过（Chain / Agent / RAG / Memory / Workflow） |
+| LangChain 专项回归守卫 | **43 / 43** 通过（Chain / Agent / RAG / Memory / Workflow / Interrupt） |
 | 链编排演示 | 四条链全部正确输出 |
 
 ---

@@ -101,6 +101,60 @@ def _demo_rag() -> None:
 
 
 
+
+def _demo_interrupt() -> None:
+    """演示 interrupt()：图暂停待审 → 学生确认 → 恢复定稿"""
+    import json
+
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    import llm.chains.base as base
+    from llm.chains.workflow import LearningLoop
+
+    answers = [
+        "草稿：梯度下降沿损失函数梯度的负方向迭代更新参数。",
+        json.dumps({"passed": True, "reason": "与字幕一致", "issues": []}, ensure_ascii=False),
+    ]
+
+    class Scripted(FakeListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _call(self, *a, **k):
+            return "x"
+
+        def _generate(self, *a, **k):
+            text = answers.pop(0) if answers else "备用"
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
+
+    _orig = base.get_chat_model
+    base.get_chat_model = lambda **kw: Scripted(responses=["x"])
+    try:
+        loop = LearningLoop(with_human_review=True)
+
+        print("① 阶段一：跑到人工审批就暂停")
+        pending = loop.run(
+            word="gradient descent",
+            context="[01:23] The update rule is theta = theta minus alpha times gradient of L.",
+            thread_id="demo-stu-1",
+        )
+        print(f"   needs_review: {pending['needs_review']}")
+        req = pending.get("review_request") or {}
+        print(f"   待审问题  : {req.get('question')}")
+        print(f"   待审讲解  : {str(req.get('draft'))[:58]}")
+        print(f"   审校结论  : {req.get('verdict')}")
+        print(f"   可选动作  : {req.get('options')}")
+
+        print("\n② 阶段二：学生点「确认无误」，恢复执行")
+        final = loop.resume(thread_id="demo-stu-1", approved=True)
+        print(f"   approved   : {final['approved']}")
+        print(f"   needs_review: {final['needs_review']}")
+        print(f"   定稿讲解   : {final['draft']}")
+    finally:
+        base.get_chat_model = _orig
+
 def _demo_workflow() -> None:
     """演示多 Agent 协作：讲师生成 → 审校核对 → 不通过则退回重写"""
     import json
@@ -137,7 +191,8 @@ def _demo_workflow() -> None:
     _orig = base.get_chat_model
     base.get_chat_model = lambda **kw: Scripted(responses=["x"])
     try:
-        graph = build_review_loop(max_iterations=3)
+        # 链 8 演示全自动闭环（不启用人工审批），人工在环见链 9
+        graph = build_review_loop(max_iterations=3, with_human_review=False)
 
         print("① 图结构（LangGraph 编译产物）")
         nodes = list(graph.get_graph().nodes.keys())
@@ -397,9 +452,13 @@ def run_offline() -> None:
     hr("链 8 / 多 Agent 协作  LangGraph 生成-校验闭环")
     _demo_workflow()
 
+    # ---- 9. 人工在环（interrupt 两阶段定稿） ----
+    hr("链 9 / 人工在环  LangGraph interrupt() 两阶段定稿")
+    _demo_interrupt()
+
     hr()
     print("离线演示完成。链路的组装、编排、结构化输出、分级策略、Agent 工具调用、")
-    print("RAG 语义检索、多轮对话记忆与多 Agent 协作闭环全部验证通过。")
+    print("RAG 语义检索、多轮对话记忆、多 Agent 协作与人工在环定稿全部验证通过。")
 
 
 def _demo_agent_tool_loop(fake_model) -> None:

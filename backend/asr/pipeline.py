@@ -422,13 +422,45 @@ class ASRPipeline:
         """
         # ---- 通道 1：本地词表匹配 ----
         try:
-            from dictionary.terminology import match_terms_in_text
+            from dictionary.terminology import match_terms_in_text, FILLER_PHRASES
             matched = match_terms_in_text(text)
 
+            # 🔴 **只有「值得学」的词才入库**（2026-10-30，用户视角实测后修）
+            #
+            # 问题：`match_terms_in_text` 匹配的是**通用词表**（3804 条，
+            # 含 study / theory / knowledge / interest / procedure…）⇒
+            # **模型本来就会的普通词也被当成「术语」塞进生词本**。
+            # 实测一节课下来生词本 **187 条，其中自动入库 173 条全是噪音**，
+            # 而本课真正的 12 个术语只有 3 条在里面
+            # ⇒ 用户的复习队列被淹没 ⇒ 「生词本」失去意义。
+            #
+            # 依据（V7 实测，21 次对照）：**术语的价值取决于「模型会不会听错
+            # 这个词」，与它专不专业无关** —— 模型已经会的普通词，配进去
+            # **零收益还招致啰嗦** ⇒ 自动入库它们是纯负价值。
+            #
+            # ⇒ 判据（留用户明确关心的 + 专业名词的典型形态）：
+            #   ① 用户自己配的 custom_terms 命中 ⇒ 用户明确关注 ⇒ 入库
+            #   ② **多词短语** ⇒ 专业名词的典型形态 ⇒ 入库
+            #      —— 但**排除口语填充短语**（`first of all` / `note that` /
+            #      `in terms of`…，它们是短语但不是术语，模型早就会说）
+            #   ③ 单个普通词 ⇒ 模型已经会 ⇒ **不入库**（留给用户手动采集）
+            custom_terms = {
+                str(t).strip().lower()
+                for t in (self.course_config.get("custom_terms") or [])
+                if str(t).strip()
+            }
             new_terms = []
+            kept = 0
             for m in matched:
+                word = m["word"]
+                low = word.lower()
+                is_phrase = " " in word
+                is_filler = low in FILLER_PHRASES
+                if low not in custom_terms and (not is_phrase or is_filler):
+                    continue          # 普通单词 / 口语填充短语 ⇒ 不入库
+                kept += 1
                 self.on_term_extracted({
-                    "word": m["word"],
+                    "word": word,
                     "translation": m["translation"],
                     "definition": m["definition"],
                     "domain": self.course_config.get("domain", ""),
@@ -436,12 +468,16 @@ class ASRPipeline:
                     "source_subtitle_id": "",
                     "origin": "local_vocab",
                 })
-                if m["word"] not in self._discovered_terms:
-                    self._discovered_terms.append(m["word"])
-                    new_terms.append(m["word"])
+                if word not in self._discovered_terms:
+                    self._discovered_terms.append(word)
+                    new_terms.append(word)
 
             if matched:
-                logger.info(f"本地词表命中 {len(matched)} 个术语")
+                logger.info(
+                    f"本地词表命中 {len(matched)} 个术语，"
+                    f"其中 {kept} 个值得学（用户配的/多词短语）已入库，"
+                    f"{len(matched) - kept} 个普通词跳过"
+                )
 
             # 命中新术语 → 热更新 Whisper 热词，下一轮识别更准
             if new_terms:

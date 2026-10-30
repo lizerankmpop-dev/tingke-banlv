@@ -467,6 +467,31 @@ _MAX_NGRAM = 5
 # 停用词：这些词虽然词表里也有释义，但属于"学生本来就会"的基础词，
 # 混进术语表只会稀释专业词的权重，必须过滤掉。
 # 判定依据：不是学术术语，而是讲座中的高频口语/连接/基础动词。
+# 🔴 **口语填充短语**（2026-10-30）—— 它们是「短语」，但**不是术语**
+#
+# 为什么单列一个黑名单
+# ------------------
+# `match_terms_in_text` 匹配的是**通用词表**（3804 条）⇒ 短语也会命中，
+# 连 `first of all` / `note that` / `in terms of` 这种**口头禅/连接词**
+# 都会被当成「术语」⇒ 塞进生词本 ⇒ 复习队列被淹没。
+#
+# 依据仍是 V7 那条结论：**术语的价值取决于「模型会不会听错这个词」** ——
+# 填充短语模型早就会说 ⇒ 零价值。
+#
+# ⚠️ 这是**有限清单**（覆盖课堂口语里绝大多数填充短语）。
+#    漏几个只会让生词本多几噪音条目，不会造成功能故障；
+#    **但它不能用来判断「专业性」** —— 专业性要靠 custom_terms / 领域术语。
+FILLER_PHRASES: frozenset[str] = frozenset("""
+first of all so far note that in terms of by virtue of except for
+pretty much kind of sort of a lot of lots of at all of course
+on the other hand in other words as well as well now at this point
+in fact of course for example for instance in particular
+in general in principle as a matter of fact at least at most
+in this case in that case in this way that is to say
+all right all right now let us let's let us say
+i mean you know of course so to speak
+""".split())
+
 STOPWORDS: frozenset[str] = frozenset("""
 a an the this that these those and or but if then so such as of in on at to for with by from
 is are was were be been being am do does did done have has had having will would shall should

@@ -7,7 +7,8 @@
 
 > 🧠 **智能体层基于 [LangChain](https://github.com/langchain-ai/langchain) 1.x 构建**
 > —— 术语提取 / 单词讲解 / 课后摘要用 LCEL 编排，对话答疑用 `create_agent()` 做自主工具调用，
-> 并叠加 **RAG 全课语义检索** 与**多轮对话记忆**。本地 Ollama 离线运行。
+> 并叠加 **RAG 全课语义检索**、**多轮对话记忆** 与**多 Agent 协作（LangGraph）**，
+> 支持 `interrupt()` 人工在环定稿。本地 Ollama 离线运行。
 > 👉 详见 **[🧠 智能体架构](#-智能体架构基于-langchain-的四条-llm-链)**
 
 实时字幕工具，支持**在线网课**和**线下课堂**两种模式。捕获系统音频或麦克风收音，生成逐词同步字幕，点击单词即可学习。完全免费，本地运行。
@@ -275,6 +276,59 @@ RAG 把这件事交给向量检索：
 
 第 2、3、5 点正是手写循环容易写错的地方。
 
+### 🙋 人工在环：`interrupt()` 两阶段定稿
+
+前面所有环节都是全自动的 —— 但**「讲解能不能定稿」最终应该由学生说了算**。
+
+用 LangGraph 的 `interrupt()` 把这一步变成真正的「人工在环」：
+
+```
+① 审校通过 → 图不直接结束，而是 interrupt() 暂停
+   ├─ 把当前状态持久化到 checkpointer
+   └─ 抛出待审 payload（草稿 + 审校结论 + 可选项）
+
+② 前端把待审内容展示给学生
+   ├─ 「确认无误」→ Command(resume={approved: True})  → 定稿
+   └─ 「还要改」  → Command(resume={approved: False, note: "..."})
+                                  → 退回讲师重写 → 再次停在待审
+```
+
+```python
+def human_review(state):
+    decision = interrupt({
+        "type": "review_explanation",
+        "question": "这段讲解可以定稿吗？",
+        "word": state.get("word", ""),
+        "draft": state.get("draft", ""),
+        "verdict": state.get("verdict", {}),
+        "options": ["approve", "reject"],
+    })
+    return {"approved": bool(decision.get("approved")), ...}
+```
+
+#### 为什么这是框架不可替代的能力
+
+手写 while 循环要正确实现这套「暂停-持久化-恢复」语义，得自己维护断点、
+状态快照、恢复入口，且几乎必然在异常路径上出错 ——
+「进程重启后从哪继续」「并发调用怎么区分」这类问题，
+`interrupt()` + `checkpointer` 已经做进框架里。
+
+对外接口保持两阶段形态：
+
+```python
+loop = LearningLoop(with_human_review=True)
+
+pending = loop.run(word="gradient", thread_id="stu-1")
+if pending["needs_review"]:
+    # pending["review_request"] 就是给前端展示的待审内容
+    ...
+
+final = loop.resume(thread_id="stu-1", approved=True)
+```
+
+> `with_human_review=False`（默认）时不挂 checkpointer、不需要 thread_id，
+> 旧调用方式完全不受影响。
+
 ### 代码结构
 
 ```
@@ -296,7 +350,7 @@ backend/llm/
 └── qa.py             对话答疑（薄封装）
 
 examples/langchain_demo.py    链编排演示脚本（离线/真实两种模式）
-tests/test_langchain_chains.py  38 项回归守卫（Chain / Agent / RAG / Memory / Workflow）
+tests/test_langchain_chains.py  43 项回归守卫（Chain / Agent / RAG / Memory / Workflow / Interrupt）
 ```
 
 ### 关键实现要点
@@ -359,7 +413,7 @@ python examples/langchain_demo.py --live
 # 离线自检：30 项检查，覆盖模板/Schema/分支/降级
 cd backend && python -m llm.chains.verify
 
-# 回归守卫：38 项
+# 回归守卫：43 项
 cd backend && python -m pytest tests/test_langchain_chains.py -v
 ```
 
