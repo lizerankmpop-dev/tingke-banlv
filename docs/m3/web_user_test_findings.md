@@ -184,3 +184,89 @@ depth-first · admissible · probability
 再逐个加锁/串行化；而不是「改到哪儿算哪儿」——
 我前三次都是**只修了自己当时看到的那一处**。
 
+---
+
+## 六、第三轮（提交 `35fcdbb` / `90bc4c4`）：导出功能真正可用
+
+### 6.1 🔴 字幕从不写数据库 ⇒ 导出功能形同虚设
+
+`db.add_subtitle()` 一直存在，但**没有任何地方调用它**；字幕只经 `enqueue`
+推给前端（内存队列）⇒
+
+- `GET /api/courses/{id}/subtitles` **永远空**
+- `GET /api/courses/{id}/export-srt` **永远 `count=0`**
+- 关掉应用字幕就没了 ⇒「课程」失去了它最该有的东西（这节课讲了什么）
+
+修法：`_build_pipeline` 的 `on_subtitle` 回调**既推消息又入库**；
+回调来自**识别线程** ⇒ `run_coroutine_threadsafe` 回投；
+字段名要对齐（管道给 `start`/`end`/`isFinal`，数据库要
+`start_ms`/`end_ms`/`is_final`，后两者是**必需键**）；
+`interim` 不入库；入库失败只记日志。
+
+### 6.2 🔴 导出的时间轴对不上原视频
+
+字幕时间戳来自 **Whisper 在音频缓冲区里的相对位置** ⇒ **每次识别会话都从 0 起算**。
+
+修法：后端 `export-srt` 支持 `offsetMs`；前端导出按钮改成**小面板**
+（填「识别开始时视频播到第几秒」+ 说明）。
+实测：0s→`00:00:00,000` / 90s→`00:01:30,000` / 3661s→`01:01:01,000` ✓
+
+### 6.3 🔴 同一门课重跑 ⇒ 字幕累积、各批时间轴重叠 ⇒ SRT 错乱
+
+修法：**session_id**
+- `subtitles` 表加 `session_id` 列 + 老库自动 `ALTER TABLE` 迁移
+- 每次「开始识别」生成一个 session_id，随字幕入库
+- `export-srt` 默认**只导最新一次会话**（也可传 `sessionId`）
+
+实测：新会话 6 条带 session_id / 老数据 68 条不动 / 导出 `count=6`（不是 74）✓
+
+### 6.4 🔴 AI 不可用时显示的是硬编码的误导性文案
+
+原来固定显示「AI 讲解服务不可用（Ollama 未启动）」⇒ 真实原因可能是
+① 依赖没装 ② ollama 没装 ③ 模型没下 ④ 服务没起。
+
+修法：后端新增 `GET /api/ai/status`（**真实状态 + 真实原因** +
+`coreUnaffected: true`）；前端检查 `res.ok`（原来只看 `data.available`，
+而 503 的 body 是 `{"detail": ...}` ⇒ 真实原因被整个吞掉）⇒ 现在显示真实原因。
+
+实测：`{"available": false, "reason": "Ollama 未启动（安装后需 `ollama serve` 并拉取模型）",
+"provider": "ollama", "coreUnaffected": true}`
+
+---
+
+## 七、⚠️ 两个**环境坑**（今天排查了很久，值得单独记）
+
+### 7.1 🔴 `http_proxy` 环境变量会劫持 curl / urllib
+
+本机环境有 `http_proxy=http://127.0.0.1:52608` ⇒ **所有 curl 与 urllib
+请求都走代理** ⇒ 看到的是**代理转发/缓存的响应**，不是真实后端。
+
+⇒ 排查时因此反复困惑「改了代码怎么没生效」—— 实际是**旧进程**在服务
+（见 7.2），而 curl 又把真实状态掩盖了。
+
+⇒ **验证本机后端必须绕过代理**：
+
+```python
+op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+op.open("http://127.0.0.1:8765/api/courses")
+```
+
+### 7.2 🔴 Windows 强杀进程会留下**僵尸端口**
+
+`Stop-Process -Force` 之后，socket 留在内核里等清理 ⇒
+**端口仍显示 `LISTENING`，但已没有任何进程在听**：
+
+- 新进程 bind 失败：`[Errno 10048] 端口已被占用`
+- 而「**端口能否连上**」的检查**依然成功**（内核在 accept 队列里）
+  ⇒ 只看端口的健康检查会**误判「服务还活着」** ⇒ 永远不重启
+
+⇒ 两条对策（已落到 `安装空间/_start_web_test.py`）：
+1. 健康检查改成**真的发 HTTP 请求**（`http_ok`），不看端口
+2. 启动前**清场**（`kill_port_occupants`）⇒ 保证跑的是当前代码
+   （否则「健康就跳过」⇒ 旧代码一直活着 ⇒ 改代码看不到效果）
+3. 重试 3 次仍失败 ⇒ **自动换端口**（前后端一起换，Vite proxy 同步）
+
+⚠️ 附带发现：`netstat` 输出在中文 Windows 上是 **ANSI/GBK** ⇒
+`text=True`（默认 utf-8）会抛 `UnicodeDecodeError` ⇒ 要用
+`.stdout.decode("mbcs", errors="replace")`。
+
