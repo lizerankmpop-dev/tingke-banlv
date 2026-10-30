@@ -263,3 +263,141 @@ def test_safe_invoke_returns_default_on_error():
         label="test",
     )
     assert out is None
+
+
+# =============================================================================
+# 7. LangChain Agent（工具调用循环）—— 作业「智能应用」的核心证据
+# =============================================================================
+
+
+def test_agent_tools_are_well_defined():
+    """三个工具必须有名字与可读的说明书（LangChain Tool 的描述即接口）"""
+    from llm.chains.agent_tools import (
+        lookup_term,
+        match_course_terms,
+        search_subtitle_context,
+    )
+
+    for t in (lookup_term, match_course_terms, search_subtitle_context):
+        assert t.name
+        assert len(t.description) > 60, f"{t.name} 的说明书过短，模型难以正确调用"
+        assert t.args_schema is not None
+
+
+def test_agent_tools_execute_standalone():
+    """工具必须能在不经过模型的情况下独立执行（否则 Agent 调用会失败）"""
+    from llm.chains.agent_tools import lookup_term, search_subtitle_context
+
+    r = lookup_term.invoke({"word": "gradient"})
+    assert "gradient" in r
+
+    r2 = search_subtitle_context.invoke(
+        {"keyword": "gradient", "context": "we compute the gradient of the loss"}
+    )
+    assert "gradient" in r2
+
+    # 查不到时要明确说明，不能静默返回空
+    r3 = lookup_term.invoke({"word": "zzz_not_a_real_word_9x7q"})
+    assert "未收录" in r3
+
+
+def test_agent_runs_tool_call_loop(monkeypatch):
+    """Agent 必须能走完「模型决策 → 调工具 → 模型总结」完整循环"""
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    import llm.chains.base as base
+
+    class ToolCallingModel(FakeListChatModel):
+        """模拟真实模型：先要求调工具，拿到结果后再给最终回答"""
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _call(self, *args, **kwargs):
+            return "placeholder"
+
+        def _generate(self, *args, **kwargs):
+            if self.i == 0:
+                self.i += 1
+                msg = AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "lookup_term",
+                            "args": {"word": "gradient"},
+                            "id": "call_1",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            else:
+                msg = AIMessage(content="最终回答：gradient 指「梯度」。")
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+    monkeypatch.setattr(
+        base, "get_chat_model", lambda **kw: ToolCallingModel(responses=["x"])
+    )
+
+    from llm.chains.agent_tools import build_qa_agent
+
+    agent = build_qa_agent()
+    out = agent.invoke({"messages": [{"role": "user", "content": "gradient 是什么？"}]})
+    msgs = out["messages"] if isinstance(out, dict) else out.messages
+
+    kinds = []
+    for m in msgs:
+        if getattr(m, "tool_calls", None):
+            kinds.append("tool_call")
+        elif m.__class__.__name__ == "ToolMessage":
+            kinds.append("tool_result")
+        else:
+            kinds.append("answer")
+
+    assert "tool_call" in kinds, "Agent 未发起工具调用"
+    assert "tool_result" in kinds, "Agent 未收到工具结果"
+    assert kinds[-1] == "answer", "Agent 未给出最终回答"
+
+
+def test_chatqa_extract_text_from_agent_result():
+    """从 Agent 返回值中提取最终回答，必须跳过 tool_call 中间态"""
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    from llm.qa import ChatQA
+
+    msgs = [
+        AIMessage(content="", tool_calls=[{"name": "x", "args": {}, "id": "1", "type": "tool_call"}]),
+        ToolMessage(content="工具输出", tool_call_id="1"),
+        AIMessage(content="这是最终回答。"),
+    ]
+    out = ChatQA._extract_text(type("R", (), {"messages": msgs})())
+    assert out == "这是最终回答。"
+
+
+def test_chatqa_falls_back_to_chain_when_agent_fails(monkeypatch):
+    """Agent 失败时应自动回退链模式，保证答疑不彻底不可用"""
+    import llm.chains.base as base
+    from llm.qa import ChatQA
+
+    monkeypatch.setattr(base, "is_available", lambda: True)
+
+    qa = ChatQA(use_agent=True)
+
+    # 制造一个必然抛异常的 Agent
+    class BoomAgent:
+        def invoke(self, *a, **k):
+            raise RuntimeError("模拟 Agent 崩溃")
+
+    qa._agent = BoomAgent()
+
+    # 链模式可用（桩掉模型）
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+    monkeypatch.setattr(
+        base, "get_chat_model", lambda **kw: FakeListChatModel(responses=["链模式的回答"])
+    )
+    qa._chain = None
+
+    answer = qa.answer(question="什么是梯度？", context="ctx")
+    assert answer == "链模式的回答"

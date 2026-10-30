@@ -228,8 +228,86 @@ def run_offline() -> None:
         )
         print(f"\nQ: {q}\nA: {answer}")
 
+    # ---- 5. Agent 工具调用轨迹 ----
+    hr("链 5 / 对话答疑 Agent  create_agent() + 工具调用循环")
+    _demo_agent_tool_loop(fake_model)
+
     hr()
-    print("离线演示完成。链路的组装、编排、结构化输出与分级策略全部验证通过。")
+    print("离线演示完成。链路的组装、编排、结构化输出、分级策略与 Agent 工具调用全部验证通过。")
+
+
+def _demo_agent_tool_loop(fake_model) -> None:
+    """
+    演示 LangChain Agent 的工具调用循环。
+
+    构造一个会「先调工具、再作答」的假模型，走完
+    「模型决策 → 工具执行 → 模型总结」的完整 Agent 循环，
+    并把每一步打印出来 —— 这是 Agent 与普通 Chain 的本质区别。
+    """
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    import llm.chains.base as base
+    from llm.chains.agent_tools import build_qa_agent
+
+    class ToolCallingModel(type(fake_model)):
+        """模拟真实模型：第一次要求调用工具，第二次给出最终回答"""
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _call(self, *args, **kwargs):
+            return "placeholder"
+
+        def _generate(self, *args, **kwargs):
+            if self.i == 0:
+                self.i += 1
+                msg = AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "lookup_term",
+                            "args": {"word": "gradient descent"},
+                            "id": "call_1",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            else:
+                msg = AIMessage(
+                    content=(
+                        "根据课程术语库，gradient descent 在本课语境下指「梯度下降」——"
+                        "一种沿损失函数梯度反方向迭代更新参数的优化算法，"
+                        "更新步长由学习率 α 控制。"
+                    )
+                )
+            return ChatResult(generations=[ChatGeneration(message=msg)])
+
+    agent_model = ToolCallingModel(responses=["x"])
+    _orig = base.get_chat_model
+    base.get_chat_model = lambda **kw: agent_model
+    try:
+        agent = build_qa_agent()
+        out = agent.invoke(
+            {"messages": [{"role": "user", "content": "gradient descent 是什么意思？"}]}
+        )
+        msgs = out["messages"] if isinstance(out, dict) else out.messages
+
+        print("Agent 执行轨迹：")
+        for m in msgs:
+            tcs = getattr(m, "tool_calls", None)
+            if tcs:
+                for tc in tcs:
+                    args = ", ".join(f"{k}={v!r}" for k, v in (tc.get("args") or {}).items())
+                    print(f"  → 模型决定调用工具：{tc['name']}({args})")
+            elif m.__class__.__name__ == "ToolMessage":
+                print(f"  ← 工具返回：{str(m.content)[:100]}")
+            else:
+                content = getattr(m, "content", "")
+                if isinstance(content, str) and content.strip():
+                    print(f"  ✓ 最终回答：{content.strip()[:160]}")
+    finally:
+        base.get_chat_model = _orig
 
 
 # =============================================================================

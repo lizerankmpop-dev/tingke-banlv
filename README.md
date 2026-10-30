@@ -39,7 +39,7 @@
 - 🤖 **AI 术语提取** — LangChain 结构化输出链，自动提取专业词汇
 - 💡 **AI 深度讲解** — LangChain 分支链，结合课程语境解释"这个词在这里什么意思"
 - 📋 **课后摘要** — LangChain 结构化输出，一键生成摘要 / 知识点 / 生词复习清单
-- 💬 **对话式答疑** — LangChain 对话链，基于最近字幕上下文提问，"刚才那段没听懂"场景
+- 💬 **对话式答疑** — LangChain **Agent** 自主调用术语库/字幕检索工具，基于最近字幕上下文提问，"刚才那段没听懂"场景
 - 📚 **课程专属词典** — 每个课程独立管理词汇，支持生词本和搜索
 
 ## 术语识别优化
@@ -135,16 +135,57 @@ OpenAI 兼容 API。
 └─────────────────────────────────────────────────────────┘
 ```
 
+### 🛠️ 答疑链升级为 LangChain Agent
+
+前述四条链属于 **LCEL 编排（Chain）**：调用路径由开发者预先确定，模型只在既定步骤内填充内容。
+
+而 **Agent** 是 LangChain 的另一类范式 —— 把「该做什么」的决定权交给模型，
+模型在运行时自主选择调用哪些工具（Tool），直到信息足够才作答。
+
+答疑天然适合这一形态：
+
+```
+学生：「eigenvalue 和特征向量是什么关系？」
+  ↓ 模型自主判断需要查术语库
+  调用 lookup_term()          → 拿到课程语境下的释义
+  ↓ 仍需确认老师讲的是哪个
+  调用 search_subtitle_context() → 从字幕定位原句
+  ↓ 信息充分，生成回答
+```
+
+实现了三个工具（`backend/llm/chains/agent_tools.py`）：
+
+| 工具 | 作用 | 底层 |
+|---|---|---|
+| `lookup_term` | 查课程术语库中该术语的**本课语境**释义 | `dictionary.terminology.lookup_vocab` |
+| `match_course_terms` | 在字幕中匹配本课专业术语 | `dictionary.terminology.match_terms_in_text` |
+| `search_subtitle_context` | 从字幕里定位含关键词的原句 | 字符串检索 |
+
+> 💡 **LangChain Tool 的说明书就是给模型看的接口文档** ——
+> 三个工具的 docstring 都写明了「何时该用」与「返回什么」，
+> 模型据此决定调用与调用时机。这也是 `create_agent()` 的工作方式。
+
+**Agent 与链并存**，按场景切换（`ChatQA(use_agent=...)`）：
+
+| | Agent 模式（默认） | 链模式 |
+|---|---|---|
+| 适用 | 问题开放、需要查证 | 问题简单、上下文充分 |
+| 延迟 | 较高（多一轮决策循环） | 更低 |
+| token | 较高 | 更低 |
+
+Agent 构建失败或执行异常时，**自动回退到链模式**，保证答疑功能不中断。
+
 ### 代码结构
 
 ```
 backend/llm/
 ├── chains/
-│   ├── base.py       模型提供方抽象（ChatOllama / ChatOpenAI）+ 统一降级
-│   ├── prompts.py    ChatPromptTemplate 提示词模板
-│   ├── schemas.py    Pydantic 结构化输出模型（含容错 validator）
-│   ├── agents.py     四条业务链的 LCEL 编排
-│   └── verify.py     离线自检脚本（30 项检查，无需大模型）
+│   ├── base.py        模型提供方抽象（ChatOllama / ChatOpenAI）+ 统一降级
+│   ├── prompts.py     ChatPromptTemplate 提示词模板
+│   ├── schemas.py     Pydantic 结构化输出模型（含容错 validator）
+│   ├── agents.py      四条业务链的 LCEL 编排
+│   ├── agent_tools.py 答疑 Agent 的三个工具 + create_agent 组装
+│   └── verify.py      离线自检脚本（30 项检查，无需大模型）
 ├── client.py         统一 LLM 入口（已切换到 LangChain BaseChatModel）
 ├── extractor.py      术语提取（薄封装）
 ├── explainer.py      单词讲解（薄封装）
@@ -152,7 +193,7 @@ backend/llm/
 └── qa.py             对话答疑（薄封装）
 
 examples/langchain_demo.py    链编排演示脚本（离线/真实两种模式）
-tests/test_langchain_chains.py  16 项回归守卫
+tests/test_langchain_chains.py  21 项回归守卫（含 Agent 工具调用循环）
 ```
 
 ### 关键实现要点
@@ -215,7 +256,7 @@ python examples/langchain_demo.py --live
 # 离线自检：30 项检查，覆盖模板/Schema/分支/降级
 cd backend && python -m llm.chains.verify
 
-# 回归守卫：16 项
+# 回归守卫：21 项
 cd backend && python -m pytest tests/test_langchain_chains.py -v
 ```
 
