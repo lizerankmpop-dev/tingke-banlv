@@ -609,3 +609,189 @@ def test_make_thread_config():
 
     cfg = make_thread_config("abc")
     assert cfg["configurable"]["thread_id"] == "abc"
+
+
+# =============================================================================
+# 10. 多 Agent 协作工作流（LangGraph）
+# =============================================================================
+
+
+def _scripted_model(answers):
+    """构造按脚本顺序返回的假模型"""
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    class Scripted(FakeListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _call(self, *a, **k):
+            return "x"
+
+        def _generate(self, *a, **k):
+            text = answers.pop(0) if answers else "备用"
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
+
+    return Scripted(responses=["x"])
+
+
+def test_review_loop_graph_structure():
+    """工作流必须含讲师与审校两个节点，且有条件边"""
+    import llm.chains.base as base
+    from llm.chains.workflow import build_review_loop
+
+    monkey = base.get_chat_model
+    base.get_chat_model = lambda **kw: None
+    try:
+        g = build_review_loop(max_iterations=3)
+        nodes = list(g.get_graph().nodes.keys())
+        assert "lecture_node" in nodes, f"缺少讲师节点: {nodes}"
+        assert "fact_check_node" in nodes, f"缺少审校节点: {nodes}"
+        assert "__start__" in nodes and "__end__" in nodes
+    finally:
+        base.get_chat_model = monkey
+
+
+def test_review_loop_passes_when_fact_check_approves(monkeypatch):
+    """审校一次通过时，只迭代一轮"""
+    import json
+
+    import llm.chains.base as base
+    from llm.chains.workflow import build_review_loop
+
+    answers = [
+        "草稿：梯度是偏导数向量。",
+        json.dumps({"passed": True, "reason": "与字幕一致", "issues": []}, ensure_ascii=False),
+    ]
+    monkeypatch.setattr(base, "get_chat_model", lambda **kw: _scripted_model(answers))
+
+    g = build_review_loop(max_iterations=3)
+    out = g.invoke(
+        {
+            "word": "gradient",
+            "course_name": "机器学习",
+            "domain": "CS",
+            "context": "we compute the gradient of the loss",
+            "transcript": "",
+            "draft": "",
+            "verdict": {},
+            "issues": [],
+            "iteration": 0,
+        },
+        {"recursion_limit": 20},
+    )
+    assert out.get("iteration") == 1
+    assert out["verdict"]["passed"] is True
+    assert "偏导数" in out["draft"]
+
+
+def test_review_loop_retries_when_fact_check_rejects(monkeypatch):
+    """审校不通过时必须退回重写，迭代次数增加"""
+    import json
+
+    import llm.chains.base as base
+    from llm.chains.workflow import build_review_loop
+
+    answers = [
+        "草稿1：有问题的说法。",
+        json.dumps(
+            {"passed": False, "reason": "与字幕不符", "issues": ["字幕里没有这句"]},
+            ensure_ascii=False,
+        ),
+        "草稿2：修正后的说法。",
+        json.dumps({"passed": True, "reason": "已修正", "issues": []}, ensure_ascii=False),
+    ]
+    monkeypatch.setattr(base, "get_chat_model", lambda **kw: _scripted_model(answers))
+
+    g = build_review_loop(max_iterations=3)
+    out = g.invoke(
+        {
+            "word": "gradient",
+            "course_name": "机器学习",
+            "domain": "CS",
+            "context": "ctx",
+            "transcript": "",
+            "draft": "",
+            "verdict": {},
+            "issues": [],
+            "iteration": 0,
+        },
+        {"recursion_limit": 20},
+    )
+    # 重写后应采用第二版草稿
+    assert out.get("iteration") == 2
+    assert "修正后" in out["draft"]
+    # 首轮的审校意见必须被累积保留
+    assert any("字幕里没有这句" in i for i in out.get("issues", []))
+
+
+def test_review_loop_respects_max_iterations(monkeypatch):
+    """审校永远不通过时，必须在 max_iterations 后停止"""
+    import json
+
+    import llm.chains.base as base
+    from llm.chains.workflow import build_review_loop
+
+    always_fail = json.dumps(
+        {"passed": False, "reason": "一直不通过", "issues": ["x"]}, ensure_ascii=False
+    )
+    answers = ["草稿", always_fail] * 10
+    monkeypatch.setattr(base, "get_chat_model", lambda **kw: _scripted_model(answers))
+
+    g = build_review_loop(max_iterations=3)
+    out = g.invoke(
+        {
+            "word": "w",
+            "course_name": "c",
+            "domain": "d",
+            "context": "ctx",
+            "transcript": "",
+            "draft": "",
+            "verdict": {},
+            "issues": [],
+            "iteration": 0,
+        },
+        {"recursion_limit": 30},
+    )
+    assert out.get("iteration") == 3, f"未遵守迭代上限: {out.get('iteration')}"
+    assert out["verdict"]["passed"] is False
+
+
+def test_review_loop_handles_unparsable_verdict():
+    """审校输出无法解析时必须安全降级（按通过处理），不得抛异常"""
+    from llm.chains.workflow import _parse_verdict
+
+    v = _parse_verdict("这不是 JSON")
+    assert v["passed"] is True
+    assert v["issues"] == []
+
+
+def test_last_text_handles_dict_and_object(monkeypatch):
+    """
+    LangChain 1.x 的 Agent 返回 dict 而非 AIMessage 对象。
+    两种形态都必须能提取到文本 —— 这是迁移期真实踩过的坑。
+    """
+    from langchain_core.messages import AIMessage
+
+    from llm.chains.workflow import _last_text
+
+    msgs = [AIMessage(content="最终答案")]
+    assert _last_text({"messages": msgs}) == "最终答案"
+
+    class Obj:
+        messages = msgs
+
+    assert _last_text(Obj()) == "最终答案"
+    # 两种形态结果必须一致
+    assert _last_text({"messages": msgs}) == _last_text(Obj())
+
+
+def test_qa_extract_text_handles_dict_return():
+    """答疑链的文本提取也必须兼容 dict 返回形态"""
+    from langchain_core.messages import AIMessage
+
+    from llm.qa import ChatQA
+
+    msgs = [AIMessage(content="答疑内容")]
+    assert ChatQA._extract_text({"messages": msgs}) == "答疑内容"

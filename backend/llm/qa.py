@@ -248,28 +248,37 @@ class ChatQA:
         """
         从 Agent 返回值中提取最终回答文本。
 
-        Agent 返回的是 AIMessage，其中可能包含 tool_call 中间态；
-        最终回答是最后一条不含 tool_calls 的 AIMessage。
+        注意：LangChain 1.x 的 Agent 返回的是 **dict**（形如 {"messages": [...]}），
+        而非 AIMessage 对象 —— 早期版本返回的是对象。
+        两种形态都要兼容，否则会静默取到空串（答疑变成「什么都没说」）。
         """
-        messages = getattr(result, "messages", None)
-        if messages:
-            for msg in reversed(messages):
-                content = getattr(msg, "content", "")
-                if getattr(msg, "tool_calls", None):
-                    continue
-                if isinstance(content, str) and content.strip():
-                    return content.strip()
-                # 部分模型返回 content 为列表
-                if isinstance(content, list):
-                    parts = [
-                        c.get("text", "")
-                        for c in content
-                        if isinstance(c, dict) and c.get("text")
-                    ]
-                    if parts:
-                        return "".join(parts).strip()
+        if isinstance(result, dict):
+            messages = result.get("messages") or []
+        else:
+            messages = getattr(result, "messages", None) or []
+
+        for msg in reversed(messages):
+            content = getattr(msg, "content", "")
+            if getattr(msg, "tool_calls", None):
+                continue
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+            # 部分模型返回 content 为列表
+            if isinstance(content, list):
+                parts = [
+                    c.get("text", "")
+                    for c in content
+                    if isinstance(c, dict) and c.get("text")
+                ]
+                if parts:
+                    return "".join(parts).strip()
+
         # 兜底：直接取 content
-        content = getattr(result, "content", None)
+        content = (
+            result.get("content")
+            if isinstance(result, dict)
+            else getattr(result, "content", None)
+        )
         if isinstance(content, str) and content.strip():
             return content.strip()
         return ""
