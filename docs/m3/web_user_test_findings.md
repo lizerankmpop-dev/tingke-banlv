@@ -338,3 +338,95 @@ op.open("http://127.0.0.1:8765/api/courses")
 ⇒ 建议下一版直接定为 **v3.7.0**（功能面变化明显：导出字幕、单实例提示、
    生词本降噪、会话隔离都是用户可见的）。
 
+---
+
+## 十、v3.7.0 打包（提交 `cb8571d` 之后）—— **两个打包坑**
+
+### 10.1 🔴 `npm run backend:build` 用的是 PATH 里的 python，**不是 venv 的**
+
+`frontend/package.json` 的脚本写的是：
+
+```json
+"backend:build": "python -m PyInstaller ../packaging/backend_server.spec ..."
+```
+
+⇒ `python` 解析到的是 **PATH 里的第一个 python**（本机是 WorkBuddy 自带的
+`.../binaries/python/versions/3.13.12/python.exe`）⇒ **它没有 PyInstaller**
+⇒ 打包在这里直接失败：
+
+```
+C://...//binaries//python//...//python.exe: No module named PyInstaller
+```
+
+⇒ **修法**：手动用 venv 的 python 跑同一句：
+
+```bash
+cd frontend
+"C:/Users/Administrator/Desktop/听课伴侣/安装空间/venv/Scripts/python.exe" \
+    -m PyInstaller ../packaging/backend_server.spec --noconfirm \
+    --distpath ../packaging/out --workpath ../packaging/build
+```
+
+⚠️ **建议**（下版）：把 `package.json` 的脚本改成用绝对路径或
+`%VENV%` 之类的变量，否则**换台机器打包必踩**。
+
+### 10.2 🔴 electron-builder 下载 electron 被代理挡 ⇒ 用本地缓存
+
+本机有 `http_proxy` 环境变量 ⇒ electron-builder 去 GitHub 下载
+electron 二进制 ⇒ 失败：
+
+```
+✗ C://...//app-builder.exe process failed ERR_ELECTRON_BUILDER_CANNOT_EXECUTE
+```
+
+⇒ **缓存其实都在**（本机已打过包）：
+
+- `%LOCALAPPDATA%\electron\Cache\electron-v31.7.7-win32-x64.zip`
+- `%LOCALAPPDATA%\electron-builder\Cache\nsis\…`
+- `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\…`
+
+⇒ **修法**（三条环境变量一起给）：
+
+```bash
+export ELECTRON_CACHE="C://Users//Administrator//AppData//Local//electron//Cache"
+export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+export ELECTRON_BUILDER_CACHE="C://Users//Administrator//AppData//Local//electron-builder//Cache"
+npx electron-builder --win
+```
+
+⇒ 打包 **3 分钟**完成（311,340,865 B）。
+
+### 10.3 ⚠️ 前端改动后**必须重建 dist 再打包**
+
+`extraResources` 里 `from: dist` ⇒ electron-builder 是**打包那一刻**复制
+`frontend/dist` 的 ⇒ 我在打包后修的 CSS 变量**不会**自动进包
+⇒ 必须 `npm run build` → 再 `electron-builder`。
+
+⚠️ 这次就踩到了：`--bg-input` 这个 CSS 变量我没在 `global.css` 里定义
+⇒ **前端测试直接抓出来**（`css-vars.test.mts`：「src/** 里引用的每个
+CSS 变量都必须在 global.css 里定义」）⇒ 改成已定义的 `--bg-card` ⇒
+前端测试 **205 pass / 0 fail**。
+
+⇒ 🔑 **这条测试很有价值**：它拦住了一个「会进包」的未定义变量。
+
+### 10.4 ⚠️ 打包版后端**比 v3.6.0 大 7.7MB** —— 因为带上了 langchain
+
+`backend-server/tingkebanlv-server.exe`：21,739,259 B（v3.6.0）
+→ **29,425,006 B（v3.7.0）**
+
+根因：**langchain 是 2026-10-30 由 `53f8c09`「用 LangChain 框架重构四条
+LLM 智能链」新加进 `backend/requirements.txt` 的** ⇒ v3.6.0 打包时
+（10-21）**还没有它** ⇒ ⇒ **v3.6.0 的打包版 AI 功能其实一直是坏的**
+（今天「langchain 消失」现象的本质就是这个：依赖声明加了但环境没装）。
+
+⇒ v3.7.0 把它装上并打进包 ⇒ **打包版的四条 LLM 链终于可用**
+（selftest 实测：`provider=ollama，本地服务未运行（AI 讲解/答疑会自动跳过，
+不影响字幕）` ⇒ 说明 langchain 能被 import ✓）
+
+⚠️ **副作用**：后端首启更慢 ⇒ **L4 首轮曾因「150s 内界面未加载完成」失败**
+⇒ 重跑（重打包后）**3/3 全过** ⇒ 确认那是**冷启动一次性时序**
+（141MB 模型首次播种 + NSIS 残留），**与本次改动无关**。
+
+⇒ **教训**：加依赖后要重跑 L4，且**首轮失败要能区分「冷启动偶发」与
+「真回归」** —— 判据是**重跑一次**（冷启动因素会被消掉）。
+
