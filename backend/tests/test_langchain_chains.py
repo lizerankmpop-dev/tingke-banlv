@@ -666,7 +666,7 @@ def test_review_loop_passes_when_fact_check_approves(monkeypatch):
     ]
     monkeypatch.setattr(base, "get_chat_model", lambda **kw: _scripted_model(answers))
 
-    g = build_review_loop(max_iterations=3)
+    g = build_review_loop(max_iterations=3, with_human_review=False)
     out = g.invoke(
         {
             "word": "gradient",
@@ -704,7 +704,7 @@ def test_review_loop_retries_when_fact_check_rejects(monkeypatch):
     ]
     monkeypatch.setattr(base, "get_chat_model", lambda **kw: _scripted_model(answers))
 
-    g = build_review_loop(max_iterations=3)
+    g = build_review_loop(max_iterations=3, with_human_review=False)
     out = g.invoke(
         {
             "word": "gradient",
@@ -739,7 +739,7 @@ def test_review_loop_respects_max_iterations(monkeypatch):
     answers = ["草稿", always_fail] * 10
     monkeypatch.setattr(base, "get_chat_model", lambda **kw: _scripted_model(answers))
 
-    g = build_review_loop(max_iterations=3)
+    g = build_review_loop(max_iterations=3, with_human_review=False)
     out = g.invoke(
         {
             "word": "w",
@@ -795,3 +795,114 @@ def test_qa_extract_text_handles_dict_return():
 
     msgs = [AIMessage(content="答疑内容")]
     assert ChatQA._extract_text({"messages": msgs}) == "答疑内容"
+
+
+# =============================================================================
+# 11. 人工审批（LangGraph interrupt）
+# =============================================================================
+
+
+def test_workflow_graph_includes_human_review():
+    """启用人工审批时，图里必须有 human_review 节点"""
+    import llm.chains.base as base
+    from llm.chains.workflow import build_review_loop
+
+    monkey = base.get_chat_model
+    base.get_chat_model = lambda **kw: None
+    try:
+        g = build_review_loop(with_human_review=True)
+        nodes = list(g.get_graph().nodes.keys())
+        assert "human_review" in nodes, f"缺少人工审批节点: {nodes}"
+
+        g2 = build_review_loop(with_human_review=False)
+        nodes2 = list(g2.get_graph().nodes.keys())
+        assert "human_review" not in nodes2, f"未启用时不应有该节点: {nodes2}"
+    finally:
+        base.get_chat_model = monkey
+
+
+def test_interrupt_pauses_and_resumes(monkeypatch):
+    """interrupt 必须暂停在待审状态，恢复后才继续到定稿"""
+    import json
+
+    import llm.chains.base as base
+    from llm.chains.workflow import LearningLoop
+
+    answers = [
+        "草稿：梯度下降沿梯度负方向迭代更新参数。",
+        json.dumps({"passed": True, "reason": "ok", "issues": []}, ensure_ascii=False),
+    ]
+    monkeypatch.setattr(base, "get_chat_model", lambda **kw: _scripted_model(answers))
+
+    loop = LearningLoop(with_human_review=True)
+
+    # 阶段一：跑到人工审批就暂停
+    r1 = loop.run(word="gradient descent", context="ctx", thread_id="t-review-1")
+    assert r1["needs_review"] is True, "未停在人工审批"
+    req = r1["review_request"]
+    assert req is not None
+    assert req["type"] == "review_explanation"
+    assert "draft" in req and req["draft"], "待审内容必须带讲解草稿"
+    assert req["options"] == ["approve", "reject"]
+
+    # 阶段二：学生确认 → 恢复并定稿
+    r2 = loop.resume(thread_id="t-review-1", approved=True)
+    assert r2["approved"] is True
+    assert r2["needs_review"] is False
+    assert "梯度下降" in r2["draft"]
+
+
+def test_interrupt_rejection_triggers_rewrite(monkeypatch):
+    """学生要求修改时应退回重写，并再次停在待审"""
+    import json
+
+    import llm.chains.base as base
+    from llm.chains.workflow import LearningLoop
+
+    answers = [
+        "草稿1：初版。",
+        json.dumps({"passed": True, "reason": "ok", "issues": []}, ensure_ascii=False),
+        "草稿2：按批注改过的版本。",
+        json.dumps({"passed": True, "reason": "ok", "issues": []}, ensure_ascii=False),
+    ]
+    monkeypatch.setattr(base, "get_chat_model", lambda **kw: _scripted_model(answers))
+
+    loop = LearningLoop(with_human_review=True)
+    r1 = loop.run(word="w", context="ctx", thread_id="t-review-2")
+    assert r1["needs_review"] is True
+    iter_before = r1["iteration"]
+
+    r2 = loop.resume(thread_id="t-review-2", approved=False, note="改得更具体些")
+    assert r2["approved"] is False
+    assert r2["iteration"] > iter_before, "要求修改后未触发重写"
+    assert r2["needs_review"] is True, "重写后应再次停在待审"
+
+
+def test_learning_loop_without_human_review_runs_to_end(monkeypatch):
+    """不启用人工审批时应一次跑完（兼容原有调用方式）"""
+    import json
+
+    import llm.chains.base as base
+    from llm.chains.workflow import LearningLoop
+
+    answers = [
+        "草稿：讲解内容。",
+        json.dumps({"passed": True, "reason": "ok", "issues": []}, ensure_ascii=False),
+    ]
+    monkeypatch.setattr(base, "get_chat_model", lambda **kw: _scripted_model(answers))
+
+    loop = LearningLoop(with_human_review=False)
+    r = loop.run(word="w", context="ctx")
+    assert r["needs_review"] is False
+    assert r["iteration"] == 1
+    assert r["draft"]
+
+
+def test_learning_loop_rejects_empty_word():
+    """空词必须短路返回，不得触发任何模型调用"""
+    from llm.chains.workflow import LearningLoop
+
+    loop = LearningLoop()
+    r = loop.run(word="   ")
+    assert r["draft"] is None
+    assert r["needs_review"] is False

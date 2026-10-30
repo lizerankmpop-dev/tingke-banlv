@@ -84,10 +84,35 @@ class ReviewState(TypedDict, total=False):
     issues: Annotated[list, _append]  # 累积的审校意见
     iteration: int                 # 当前迭代轮次
 
+    # ---- 人工审批 ----
+    approved: bool                 # 学生是否确认定稿
+    human_note: str                # 学生的批注（要求重写时的说明）
+
 
 def _append(left: list, right: list) -> list:
     """reducer：累积列表而非覆盖"""
     return (left or []) + (right or [])
+
+
+# =============================================================================
+# 一·补、工作流的 checkpointer
+# =============================================================================
+#
+# interrupt() 的暂停点必须被持久化 —— 否则图不知道「刚才停在哪、等谁回复」。
+# 这里用 LangGraph 的 InMemorySaver（进程内）。
+# 需要跨进程时换成 Redis/SQLite 版 saver 即可，图的定义不用动。
+
+_workflow_saver = None
+
+
+def get_workflow_saver():
+    """获取工作流专用的 checkpointer（单例）"""
+    global _workflow_saver
+    if _workflow_saver is None:
+        from langgraph.checkpoint.memory import InMemorySaver
+
+        _workflow_saver = InMemorySaver()
+    return _workflow_saver
 
 
 # =============================================================================
@@ -253,23 +278,90 @@ def _make_fact_check_node(knowledge_base=None, model: str | None = None):
     return fact_check_node
 
 
-def _make_route_node(max_iterations: int = 3):
+def _make_route_node(max_iterations: int = 3, with_human_review: bool = False):
     """
-    路由节点：决定「通过 → 结束」还是「不通过 → 退回重写」。
+    路由节点：决定「通过 → 交人工审批 / 直接结束」还是「不通过 → 退回重写」。
 
     这是 LangGraph 条件边的典型用法 —— 路由函数只返回下一个节点名，
     不关心怎么走。
     """
 
-    def route(state: ReviewState) -> Literal["lecture_node", "__end__"]:
+    def route(state: ReviewState) -> Literal["human_review", "lecture_node", "__end__"]:
         verdict = state.get("verdict") or {}
         passed = bool(verdict.get("passed"))
         iteration = state.get("iteration", 1)
 
         if passed:
-            return "__end__"
+            return "human_review" if with_human_review else "__end__"
         if iteration >= max_iterations:
             logger.info(f"已达最大迭代 {max_iterations} 轮，采用最后一版草稿")
+            return "__end__"
+        return "lecture_node"
+
+    return route
+
+
+# =============================================================================
+# 三·补、人工审批节点（LangGraph interrupt）
+# =============================================================================
+
+
+def _make_human_review_node():
+    """
+    人工审批节点：用 LangGraph 的 ``interrupt()`` 暂停工作流，等人确认。
+
+    这是 LangGraph 最有价值的能力之一，也是**手写 while 循环极难做好**的部分：
+
+    - 图会把当前状态**持久化到 checkpointer**，然后抛出一个待审 payload
+    - 调用方（前端 / API）拿到 payload，展示给学生确认
+    - 学生点「确认无误」→ 用 ``Command(resume={"approved": True})`` 恢复
+    - 学生点「还要改」→ 恢复为 ``{"approved": False, "note": "..."}``，
+      节点把批注写回 State，图继续走「退回重写」分支
+
+    手写要正确实现这套「暂停-持久化-恢复」的语义，需要自己维护
+    断点、状态快照、恢复入口，且几乎必然在异常路径上出错。
+    """
+
+    def human_review(state: ReviewState) -> dict:
+        from langgraph.types import interrupt
+
+        decision = interrupt(
+            {
+                "type": "review_explanation",
+                "question": "这段讲解可以定稿吗？",
+                "word": state.get("word", ""),
+                "draft": state.get("draft", ""),
+                "verdict": state.get("verdict", {}),
+                "options": ["approve", "reject"],
+            }
+        )
+
+        approved = bool((decision or {}).get("approved", False))
+        note = str((decision or {}).get("note", "") or "")
+        logger.info(
+            f"人工审批：approved={approved}" + (f"，批注：{note[:40]}" if note else "")
+        )
+        return {"approved": approved, "human_note": note}
+
+    return human_review
+
+
+def _make_human_route_node(max_iterations: int = 3):
+    """
+    人工审批后的路由：确认 → 结束；要求修改 → 退回讲师重写。
+
+    学生明确要求修改时优先于迭代上限 —— 人的意愿高于自动策略。
+    """
+
+    def route(state: ReviewState) -> Literal["lecture_node", "__end__"]:
+        if state.get("approved"):
+            return "__end__"
+        note = (state.get("human_note") or "").strip()
+        if note:
+            # 学生给了具体批注 —— 必须重写
+            return "lecture_node"
+        iteration = state.get("iteration", 1)
+        if iteration >= max_iterations:
             return "__end__"
         return "lecture_node"
 
@@ -359,14 +451,16 @@ def build_review_loop(
     knowledge_base=None,
     model: str | None = None,
     max_iterations: int = 3,
+    with_human_review: bool = True,
 ):
     """
-    构建「生成-校验」多 Agent 协作图。
+    构建「生成-校验-人工审批」多 Agent 协作图。
 
     Args:
         knowledge_base: SubtitleKnowledgeBase 实例；提供后两个 Agent 都能检索字幕
         model: 显式模型名
         max_iterations: 最大迭代轮次（防止无限重写）
+        with_human_review: True 启用人工审批节点（LangGraph interrupt）
 
     Returns:
         编译后的 LangGraph（可直接 invoke，也可 .get_graph() 可视化）
@@ -380,15 +474,41 @@ def build_review_loop(
 
     builder.add_edge(START, "lecture_node")
     builder.add_edge("lecture_node", "fact_check_node")
-    builder.add_conditional_edges(
-        "fact_check_node",
-        _make_route_node(max_iterations),
-        {
-            "lecture_node": "lecture_node",   # 不通过 → 退回重写
-            "__end__": END,                    # 通过 → 结束
-        },
-    )
 
+    if with_human_review:
+        # 人工审批：审校通过后暂停，等学生确认
+        builder.add_node("human_review", _make_human_review_node())
+        builder.add_conditional_edges(
+            "fact_check_node",
+            _make_route_node(max_iterations, with_human_review=True),
+            {
+                "human_review": "human_review",   # 通过 → 人工审批
+                "lecture_node": "lecture_node",   # 不通过 → 退回重写
+                "__end__": END,                    # 迭代超限 → 结束
+            },
+        )
+        builder.add_conditional_edges(
+            "human_review",
+            _make_human_route_node(max_iterations),
+            {
+                "lecture_node": "lecture_node",   # 学生要求修改 → 退回重写
+                "__end__": END,                    # 学生确认 → 定稿
+            },
+        )
+    else:
+        builder.add_conditional_edges(
+            "fact_check_node",
+            _make_route_node(max_iterations, with_human_review=False),
+            {
+                "lecture_node": "lecture_node",   # 不通过 → 退回重写
+                "__end__": END,                    # 通过 → 结束
+            },
+        )
+
+    # interrupt 需要 checkpointer 才能持久化暂停点；
+    # 未启用人工审批时不需要挂 checkpointer（也就无需 thread_id）
+    if with_human_review:
+        return builder.compile(checkpointer=get_workflow_saver())
     return builder.compile()
 
 
@@ -396,13 +516,29 @@ class LearningLoop:
     """
     多 Agent 协作的对外封装。
 
-    用法：
+    两种用法：
 
-        loop = LearningLoop(knowledge_base=kb)
+    **① 自动跑完（无人工审批）**
+
+        loop = LearningLoop(knowledge_base=kb, with_human_review=False)
         result = loop.run(word="gradient", context=..., transcript=...)
         result["draft"]        # 最终讲解
         result["verdict"]      # 审校结论
         result["iteration"]    # 实际迭代轮次
+
+    **② 两阶段（人工审批）**
+
+        loop = LearningLoop(knowledge_base=kb, with_human_review=True)
+
+        # 第一阶段：跑到人工确认就暂停，返回待审内容
+        pending = loop.run(word="gradient", context=..., thread_id="stu-1")
+        if pending["needs_review"]:
+            # 前端把 pending["review_request"] 展示给学生
+            ...
+
+        # 第二阶段：学生点了「确认无误」，恢复执行
+        final = loop.resume(thread_id="stu-1", approved=True)
+        final["draft"]         # 定稿
     """
 
     def __init__(
@@ -410,10 +546,12 @@ class LearningLoop:
         knowledge_base=None,
         model: str | None = None,
         max_iterations: int = 3,
+        with_human_review: bool = False,
     ):
         self.knowledge_base = knowledge_base
         self.model = model
         self.max_iterations = max_iterations
+        self.with_human_review = with_human_review
         self._graph = None
 
     def _get_graph(self):
@@ -422,8 +560,18 @@ class LearningLoop:
                 knowledge_base=self.knowledge_base,
                 model=self.model,
                 max_iterations=self.max_iterations,
+                with_human_review=self.with_human_review,
             )
         return self._graph
+
+    @staticmethod
+    def _extract_pending(result: dict) -> dict | None:
+        """从结果里取出 interrupt 抛出的待审 payload"""
+        interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
+        if not interrupts:
+            return None
+        first = interrupts[0]
+        return getattr(first, "value", None)
 
     def run(
         self,
@@ -432,9 +580,10 @@ class LearningLoop:
         course_name: str = "",
         domain: str = "",
         transcript: str = "",
+        thread_id: str = "",
     ) -> dict:
         """
-        跑完整闭环，返回最终讲解与审校过程。
+        跑闭环，返回最终讲解；若启用了人工审批且尚未确认，则返回待审内容。
 
         Args:
             word: 要讲解的词
@@ -442,12 +591,24 @@ class LearningLoop:
             course_name: 课程名
             domain: 课程领域
             transcript: 整节课字幕（可选，供 RAG 检索）
+            thread_id: 会话标识（启用人工审批时必须提供，用于恢复）
 
         Returns:
-            {draft, verdict, issues, iteration}
+            {
+              draft, verdict, issues, iteration,
+              needs_review: 是否停在人工审批,
+              review_request: 待审内容（需展示给学生）
+            }
         """
         if not word or not word.strip():
-            return {"draft": None, "verdict": None, "issues": [], "iteration": 0}
+            return {
+                "draft": None,
+                "verdict": None,
+                "issues": [],
+                "iteration": 0,
+                "needs_review": False,
+                "review_request": None,
+            }
 
         if self.knowledge_base is not None and transcript:
             try:
@@ -470,14 +631,56 @@ class LearningLoop:
         }
 
         graph = self._get_graph()
-        # recursion_limit 防止图内循环失控（与 max_iterations 双保险）
-        result = graph.invoke(initial, {"recursion_limit": max(10, self.max_iterations * 4)})
+        config = {"recursion_limit": max(10, self.max_iterations * 4)}
+        if thread_id:
+            config["configurable"] = {"thread_id": thread_id}
+
+        result = graph.invoke(initial, config)
+
+        pending = self._extract_pending(result) if isinstance(result, dict) else None
 
         return {
-            "draft": result.get("draft", ""),
-            "verdict": result.get("verdict", {}),
-            "issues": result.get("issues", []),
-            "iteration": result.get("iteration", 0),
+            "draft": result.get("draft", "") if isinstance(result, dict) else "",
+            "verdict": result.get("verdict", {}) if isinstance(result, dict) else {},
+            "issues": result.get("issues", []) if isinstance(result, dict) else [],
+            "iteration": result.get("iteration", 0) if isinstance(result, dict) else 0,
+            "approved": result.get("approved", False) if isinstance(result, dict) else False,
+            "needs_review": pending is not None,
+            "review_request": pending,
+        }
+
+    def resume(self, thread_id: str, approved: bool, note: str = "") -> dict:
+        """
+        恢复被 interrupt 暂停的工作流。
+
+        Args:
+            thread_id: 与 run 时相同的会话标识
+            approved: True 学生确认定稿；False 要求重写
+            note: 学生的批注（要求重写时的说明，会带回给讲师 Agent）
+
+        Returns:
+            与 run() 相同结构的字典
+        """
+        from langgraph.types import Command
+
+        graph = self._get_graph()
+        config = {
+            "recursion_limit": max(10, self.max_iterations * 4),
+            "configurable": {"thread_id": thread_id},
+        }
+        result = graph.invoke(
+            Command(resume={"approved": approved, "note": note}), config
+        )
+
+        pending = self._extract_pending(result) if isinstance(result, dict) else None
+        return {
+            "draft": result.get("draft", "") if isinstance(result, dict) else "",
+            "verdict": result.get("verdict", {}) if isinstance(result, dict) else {},
+            "issues": result.get("issues", []) if isinstance(result, dict) else [],
+            "iteration": result.get("iteration", 0) if isinstance(result, dict) else 0,
+            "approved": result.get("approved", False) if isinstance(result, dict) else False,
+            "needs_review": pending is not None,
+            "review_request": pending,
         }
 
 
@@ -485,6 +688,7 @@ __all__ = [
     "ReviewState",
     "LearningLoop",
     "build_review_loop",
+    "get_workflow_saver",
     "LECTURER_PROMPT",
     "FACT_CHECK_PROMPT",
 ]
