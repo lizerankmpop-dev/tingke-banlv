@@ -8,8 +8,9 @@ import csv
 import io
 import logging
 import asyncio
-import platform
 import time
+import uuid
+import platform
 from collections import deque
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import Response
@@ -333,8 +334,25 @@ def _ms_to_date_str(ms) -> str:
 
 
 @router.get("/courses/{course_id}/export-srt")
-async def export_srt(course_id: str):
-    """导出课程字幕为 SRT 格式"""
+async def export_srt(course_id: str, offsetMs: int = Query(default=0, ge=0),
+                     sessionId: str = Query(default="")):
+    """导出课程字幕为 SRT 格式
+
+    🔴 `offsetMs` —— **视频起点偏移**（2026-10-30）
+    ------------------------------------------------
+    字幕的时间戳来自 **Whisper 在音频缓冲区里的相对位置**
+    （`pipeline.py`: `words[0].start`）⇒ **每次识别会话都从 0 开始算**。
+
+    ⇒ 直接导出的 SRT 时间轴是「**从开始识别那一刻**」起算，
+      **不能直接贴在原视频上**（视频那时已经播了 N 秒）。
+    ⇒ 加一个偏移量：用户填「识别开始时视频播到第几秒」，
+      导出时加上 ⇒ 时间轴就与原视频对齐。
+
+    ⚠️ 当前数据模型里**没有 videos 表**（一门课 = 一段音频），
+    所以这个偏移**只能由用户提供**，后端无从得知。
+    （「同一门课多次识别 ⇒ 字幕累积且各自从 0 起算」是另一个已知缺口，
+    见 `docs/m3/web_user_test_findings.md` 待办。）
+    """
     course = await db.get_course(course_id)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
@@ -343,17 +361,33 @@ async def export_srt(course_id: str):
     # 数据库按 start_ms DESC 返回，SRT 需要时间正序
     subtitles = list(reversed(subtitles))
 
+    # 🔴 **只导出一个会话**（2026-10-30）
+    #    同一门课重跑识别 ⇒ 字幕累积，**每批的时间轴都从 0 起算**
+    #    ⇒ 全导出来会**互相重叠**，SRT 直接错乱。
+    #    ⇒ 默认只导**最新一次会话**（`session_id` 最大 = 最后写入的那批）。
+    #    · 不传 `sessionId` ⇒ 取最新会话
+    #    · 传了 ⇒ 取指定会话
+    #    · 老库存量行 `session_id` 为空 ⇒ 不在任何会话里 ⇒ 忽略
+    if sessionId:
+        subtitles = [s for s in subtitles if (s.get("session_id") or "") == sessionId]
+    else:
+        sessions = [s.get("session_id") for s in subtitles if s.get("session_id")]
+        if sessions:
+            latest = max(sessions, key=lambda x: str(x))
+            subtitles = [s for s in subtitles if (s.get("session_id") or "") == latest]
+
     lines = []
     for i, sub in enumerate(subtitles, 1):
-        start = _ms_to_srt_time(sub.get("start_ms", sub.get("start", 0)))
-        end = _ms_to_srt_time(sub.get("end_ms", sub.get("end", 0)))
+        start = _ms_to_srt_time(sub.get("start_ms", sub.get("start", 0)) + offsetMs)
+        end = _ms_to_srt_time(sub.get("end_ms", sub.get("end", 0)) + offsetMs)
         text = sub.get("text", "")
         lines.append(str(i))
         lines.append(f"{start} --> {end}")
         lines.append(text)
         lines.append("")
 
-    return {"srt": "\n".join(lines), "count": len(subtitles)}
+    return {"srt": "\n".join(lines), "count": len(subtitles), "offsetMs": offsetMs,
+            "sessionId": sessionId or (subtitles[0].get("session_id") if subtitles else "")}
 
 
 # ============ 词汇 API ============
@@ -1011,6 +1045,12 @@ async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
     #   · 回调来自**识别线程**（非事件循环）⇒ 用 `run_coroutine_threadsafe` 回投
     #   · `interim`（临时结果）**不入库** —— 那是半成品，入了库会重复
     #   · 入库失败**绝不能影响识别**（吞掉异常并记日志）
+    # 🔴 **session_id**（2026-10-30）—— 区分「不同的识别会话」
+    #    字幕时间戳是**本次会话内**的相对位置 ⇒ 同一门课重跑几次，
+    #    几批字幕的时间轴会**互相重叠** ⇒ 导出 SRT 直接错乱。
+    #    ⇒ 每次「开始识别」生成一个 session_id，随字幕一起入库。
+    session_id = f"{int(time.time() * 1000):x}-{uuid.uuid4().hex[:6]}"
+
     def _on_subtitle(data: dict) -> None:
         enqueue("subtitle", data)
         try:
@@ -1025,6 +1065,7 @@ async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
                 "end_ms": int(data.get("end_ms", data.get("end", 0)) or 0),
                 "is_final": bool(data.get("is_final", data.get("isFinal", True))),
                 "video_id": data.get("video_id", ""),
+                "session_id": session_id,
             }
             fut = asyncio.run_coroutine_threadsafe(db.add_subtitle(row), loop)
             fut.add_done_callback(_log_subtitle_persist_error)

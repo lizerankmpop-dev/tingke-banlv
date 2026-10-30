@@ -130,11 +130,17 @@ export default function SubtitleOverlay() {
   // 导出字幕为 SRT —— 后端 `GET /api/courses/{id}/export-srt` 一直都有，
   // 但前端**从来没调用过**（2026-10-30 补上这个入口）
   const [exportMsg, setExportMsg] = useState('')
+  // 🔴 **视频起点偏移**（秒）—— 字幕时间戳是「从开始识别那刻」起算的，
+  //    要贴到原视频上就得让用户告诉后端「识别开始时视频播到第几秒」。
+  const [exportOffset, setExportOffset] = useState('')
+  const [exportPanel, setExportPanel] = useState(false)
   const exportSrt = async () => {
     if (!courseId) return
     setExportMsg('导出中…')
     try {
-      const res = await fetch(`/api/courses/${courseId}/export-srt`)
+      const sec = parseFloat(exportOffset)
+      const offsetMs = Number.isFinite(sec) && sec > 0 ? Math.round(sec * 1000) : 0
+      const res = await fetch(`/api/courses/${courseId}/export-srt?offsetMs=${offsetMs}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       const count = data?.count ?? 0
@@ -218,7 +224,7 @@ export default function SubtitleOverlay() {
           <button onClick={fetchSummary} style={styles.ctrlBtn} title="AI 课摘要">
             <FileText size={15} />
           </button>
-          <button onClick={exportSrt} style={styles.ctrlBtn} title="导出字幕为 SRT 文件">
+          <button onClick={() => setExportPanel(v => !v)} style={styles.ctrlBtn} title="导出字幕为 SRT 文件">
             <Download size={15} />
           </button>
           <button onClick={() => setView('dictionary')} style={styles.ctrlBtn} title="课程词典">
@@ -235,6 +241,49 @@ export default function SubtitleOverlay() {
           </button>
         </div>
       </div>
+
+      {/* 🔴 导出面板：带「视频起点偏移」，否则导出的 SRT 对不上原视频 */}
+      {exportPanel && (
+        <div style={{
+          position: 'absolute', top: 44, right: 10, zIndex: 21,
+          padding: 10, borderRadius: 8, width: 260,
+          background: 'rgba(20,24,32,0.97)', color: 'var(--text-primary)',
+          border: '1px solid var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,.45)',
+          fontSize: 12,
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>导出字幕（SRT）</div>
+          <label style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: 4 }}>
+            识别开始时，视频播到第几秒？
+          </label>
+          <input
+            type="number" min="0" step="0.5" value={exportOffset}
+            onChange={(e) => setExportOffset(e.target.value)}
+            placeholder="0"
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '5px 7px',
+              borderRadius: 5, border: '1px solid var(--border)',
+              background: 'var(--bg-input, #12161d)', color: 'var(--text-primary)',
+              fontSize: 12, marginBottom: 8,
+            }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 8 }}>
+            字幕时间戳从「开始识别」那刻算起。填入视频当时的秒数，
+            导出的时间轴就能对齐原视频。
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={exportSrt} style={{
+              flex: 1, padding: '5px 8px', borderRadius: 5, cursor: 'pointer',
+              border: 'none', background: 'var(--accent-light)', color: '#0e1116',
+              fontSize: 12, fontWeight: 600,
+            }}>导出</button>
+            <button onClick={() => setExportPanel(false)} style={{
+              padding: '5px 10px', borderRadius: 5, cursor: 'pointer',
+              border: '1px solid var(--border)', background: 'transparent',
+              color: 'var(--text-secondary)', fontSize: 12,
+            }}>关闭</button>
+          </div>
+        </div>
+      )}
 
       {/* 导出反馈（点了要让人知道结果，不能静默）*/}
       {exportMsg && (

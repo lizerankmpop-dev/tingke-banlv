@@ -130,6 +130,7 @@ class DatabaseManager:
                 end_ms INTEGER NOT NULL,
                 is_final INTEGER DEFAULT 1,
                 created_at INTEGER NOT NULL,
+                session_id TEXT DEFAULT '',
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
             );
 
@@ -169,6 +170,20 @@ class DatabaseManager:
 
     async def _migrate(self):
         """数据库迁移：为已有数据库补充新字段（只增列，不动老数据）"""
+        # 🔴 subtitles.session_id（2026-10-30）—— 区分「不同的识别会话」
+        #    字幕时间戳是**每次识别会话内**的相对位置 ⇒ 同一门课重跑几次，
+        #    几批字幕的时间轴会**互相重叠** ⇒ 导出 SRT 直接错乱。
+        #    ⇒ 用 session_id 把每次会话的字幕隔开。
+        #    （老库存量行 session_id 为空 ⇒ 视为「未知会话」）
+        cursor = await self.db.execute("PRAGMA table_info(subtitles)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "session_id" not in columns:
+            await self.db.execute(
+                "ALTER TABLE subtitles ADD COLUMN session_id TEXT DEFAULT ''"
+            )
+            await self.db.commit()
+            logger.info("数据库迁移：subtitles 表已添加 session_id 列")
+
         # 检查 courses 表是否有 language 列
         cursor = await self.db.execute("PRAGMA table_info(courses)")
         columns = [row[1] for row in await cursor.fetchall()]
@@ -314,8 +329,8 @@ class DatabaseManager:
         subtitle_id = str(uuid.uuid4())
         now = int(time.time() * 1000)
         await self.db.execute(
-            """INSERT INTO subtitles (id, course_id, video_id, text, words_json, start_ms, end_ms, is_final, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO subtitles (id, course_id, video_id, text, words_json, start_ms, end_ms, is_final, created_at, session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 subtitle_id,
                 data["course_id"],
@@ -326,6 +341,7 @@ class DatabaseManager:
                 data["end_ms"],
                 1 if data.get("is_final", True) else 0,
                 now,
+                data.get("session_id", ""),
             ),
         )
         await self.db.commit()
