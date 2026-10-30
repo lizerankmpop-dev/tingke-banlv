@@ -1,57 +1,32 @@
 """
-AI 单词讲解器
-使用 Ollama 本地大模型，结合课程领域和字幕上下文，生成单词的深度讲解
+AI 单词讲解器（LangChain 实现）
 
-与 local_dict / extractor 的分工：
-- local_dict: 离线查表（基础词表，无需 AI）
-- extractor:  从字幕流中批量提取术语
-- explainer:  用户点击单词时，按需生成"这个词在这门课里是什么意思"
+原实现的分级策略是手写 if/else：「查内置词表 → 命中就返回 → 未命中才调 LLM」。
+现改为 LangChain 的 `RunnableBranch`：
+
+    条件（词表是否命中）
+      ├── True  → 本地词库分支（零延迟、零 LLM 成本）
+      └── False → LLM 讲解分支（提示词 → 模型 → 结构化讲解）
+
+结构化输出由 Pydantic schema 保证，不再依赖手写 JSON 正则解析。
+
+对外接口 `WordExplainer.explain()` 与迁移前完全一致。
 """
 
-import json
-import logging
-import re
+from __future__ import annotations
 
-from llm.client import chat as llm_chat, is_available as llm_available
+import logging
+
+from llm.chains.agents import WordExplanationAgent
 
 logger = logging.getLogger(__name__)
 
-# 讲解 prompt 模板
-EXPLAIN_PROMPT = """You are a professional bilingual study assistant helping a Chinese student follow a foreign course.
-
-The student just clicked on a word while reading live subtitles.
-
-Word: "{word}"
-Course: {course_name}
-Domain: {domain}
-Sentence where the word appeared (may be empty):
-"{context}"
-
-Instructions:
-1. Explain this word FOR THIS COURSE CONTEXT, in simplified Chinese
-2. Respond ONLY with a JSON object (no other text) with these fields:
-   - translation: 简洁的中文翻译（该词最常见的意思）
-   - meaning_in_context: 在上述课程语境中的具体含义（2-3 句，说明老师在这里讲的是什么）
-   - example: 一个简短的英文例句（与课程领域相关）及其中文翻译
-   - related: 相关词/近义词列表（最多 4 个，中英对照，如 "gradient 梯度"）
-3. If the "word" is actually a common word with no special meaning here, still explain it but keep it brief
-4. If the word is a technical term, prioritize the technical meaning in this domain
-
-Example response:
-{{
-  "translation": "梯度",
-  "meaning_in_context": "在本课中，gradient 指损失函数的梯度……",
-  "example": "We compute the gradient of the loss function. 我们计算损失函数的梯度。",
-  "related": ["slope 斜率", "derivative 导数", "gradient descent 梯度下降"]
-}}"""
-
 
 class WordExplainer:
-    """单词讲解器（按需调用，带内存缓存；LLM 由统一 client 管理）"""
+    """单词讲解器（LangChain RunnableBranch 分级实现；带内存缓存）"""
 
     def __init__(self, model: str = None):
-        self._cache: dict[str, dict] = {}  # key: word|context_hash
-        self._available: bool | None = None
+        self._agent = WordExplanationAgent(model=model)
 
     def explain(
         self,
@@ -65,109 +40,14 @@ class WordExplainer:
 
         流程：
             1. 查缓存
-            2. 查内置词表（3000+ 词，命中即返回，零延迟零成本）
-            3. 词表未命中 → 调用 LLM 生成语境讲解
+            2. RunnableBranch 分级：词表命中 → 本地返回；未命中 → LLM 讲解
 
         Returns:
             {translation, meaning_in_context, example, related[], source} 或 None
         """
-        word = word.strip()
-        if not word:
-            return None
-
-        # 缓存命中（相同词 + 相同上下文才复用）
-        cache_key = f"{word.lower()}|{hash(context_sentence)}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-
-        # ---- 本地词表优先：命中就不调 LLM ----
-        from dictionary.terminology import lookup_vocab
-        local = lookup_vocab(word)
-        if local:
-            result = {
-                "translation": local.get("translation", ""),
-                "meaning_in_context": local.get("definition", ""),
-                "example": "",
-                "related": [],
-                "source": "local_vocab",
-            }
-            self._cache[cache_key] = result
-            return result
-
-        # ---- 词表未命中 → LLM ----
-        # 检查 LLM 可用性（结果缓存）
-        if self._available is None:
-            self._available = llm_available()
-        if not self._available:
-            logger.warning("LLM 不可用，无法生成 AI 讲解")
-            return None
-
-        prompt = EXPLAIN_PROMPT.format(
+        return self._agent.explain(
             word=word,
-            course_name=course_name or "未知课程",
-            domain=domain or "通用",
-            context=context_sentence or "（无上下文）",
+            domain=domain,
+            course_name=course_name,
+            context_sentence=context_sentence,
         )
-
-        try:
-            content = llm_chat(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a precise bilingual dictionary assistant. Always respond with valid JSON only.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.3,
-                num_predict=768,
-            )
-            if content is None:
-                self._available = False
-                return None
-
-            result = self._parse_response(content)
-            if result:
-                result["source"] = "ai"
-                # 限制缓存大小
-                if len(self._cache) > 200:
-                    self._cache.clear()
-                self._cache[cache_key] = result
-            return result
-
-        except Exception as e:
-            logger.error(f"AI 讲解生成失败: {e}")
-            return None
-
-    def _parse_response(self, content: str) -> dict | None:
-        """解析 Ollama 返回的 JSON 对象"""
-        candidates = [content]
-
-        # 尝试提取 ```json ... ``` 代码块
-        m = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
-        if m:
-            candidates.append(m.group(1))
-
-        # 尝试提取第一个 {...} 对象
-        m = re.search(r'\{[\s\S]*\}', content)
-        if m:
-            candidates.append(m.group(0))
-
-        for candidate in candidates:
-            try:
-                obj = json.loads(candidate)
-                if isinstance(obj, dict) and ("translation" in obj or "meaning_in_context" in obj):
-                    # 规范化字段
-                    related = obj.get("related", [])
-                    if isinstance(related, str):
-                        related = [related]
-                    return {
-                        "translation": str(obj.get("translation", "")),
-                        "meaning_in_context": str(obj.get("meaning_in_context", "")),
-                        "example": str(obj.get("example", "")),
-                        "related": [str(r) for r in related][:4],
-                    }
-            except json.JSONDecodeError:
-                continue
-
-        logger.warning(f"无法解析 AI 讲解响应: {content[:200]}")
-        return None

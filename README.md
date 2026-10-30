@@ -66,6 +66,141 @@ Whisper 只保留 `initial_prompt` 的**末尾 223 token**，因此各层按 **t
 > Windows 的 WASAPI 回环采集由 `PyAudioWPatch` 提供，**不需要**安装 VB-Cable
 > 之类的虚拟声卡，也不需要在系统声音设置里把默认播放设备改掉。
 
+---
+
+## 🧠 智能体架构：基于 LangChain 的四条 LLM 链
+
+项目的四项 AI 能力（术语提取、单词讲解、课后摘要、对话答疑）全部基于
+**LangChain 1.x** 构建，离线运行在本地 Ollama（Qwen2.5）上，可一键切换云端
+OpenAI 兼容 API。
+
+### 为什么用 LangChain
+
+最初的实现是「手写 prompt 拼接 + 手写 JSON 正则解析」。它能跑，但在实践中
+暴露了三个问题：
+
+| 原实现的问题 | LangChain 的解法 |
+|---|---|
+| `prompt.format(...)` 漏变量时静默产出畸形 prompt | `ChatPromptTemplate` 在**构图期**校验变量 |
+| 模型输出带 ```json 围栏 / 尾随逗号 → 解析静默失败返回空 | `with_structured_output()` + Pydantic schema，框架负责解析与类型校验 |
+| 「词表优先、AI 兜底」写成手写 if/else | `RunnableBranch` 声明式表达分支策略 |
+
+### 链路总览
+
+```
+┌── 术语提取链 ────────────────────────────────────────────┐
+│  字幕文本 ─→ ChatPromptTemplate ─→ 模型 ─→ 结构化术语列表  │
+│                                    └→ RunnableLambda 补上下文句 │
+└─────────────────────────────────────────────────────────┘
+
+┌── 单词讲解链（RunnableBranch 分级） ────────────────────┐
+│                    ┌─ 词表命中 → 本地词库（零延迟零成本）    │
+│  点击的单词 ───────┤                                       │
+│                    └─ 未命中 → 提示词 → 模型 → 结构化讲解   │
+└─────────────────────────────────────────────────────────┘
+
+┌── 课后摘要链 ──────────────────────────────────────────┐
+│  字幕全文 + 生词表 ─→ 提示词 ─→ 模型 ─→ 摘要/知识点/生词    │
+└─────────────────────────────────────────────────────────┘
+
+┌── 对话答疑链 ──────────────────────────────────────────┐
+│  问题 + 最近字幕 ─→ 提示词 ─→ 模型 ─→ 纯文本答案          │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 代码结构
+
+```
+backend/llm/
+├── chains/
+│   ├── base.py       模型提供方抽象（ChatOllama / ChatOpenAI）+ 统一降级
+│   ├── prompts.py    ChatPromptTemplate 提示词模板
+│   ├── schemas.py    Pydantic 结构化输出模型（含容错 validator）
+│   ├── agents.py     四条业务链的 LCEL 编排
+│   └── verify.py     离线自检脚本（30 项检查，无需大模型）
+├── client.py         统一 LLM 入口（已切换到 LangChain BaseChatModel）
+├── extractor.py      术语提取（薄封装）
+├── explainer.py      单词讲解（薄封装）
+├── summarizer.py     课后摘要（薄封装）
+└── qa.py             对话答疑（薄封装）
+
+examples/langchain_demo.py    链编排演示脚本（离线/真实两种模式）
+tests/test_langchain_chains.py  16 项回归守卫
+```
+
+### 关键实现要点
+
+**① 模型统一抽象，换模型不改业务代码**
+
+```python
+# backend/llm/chains/base.py
+def get_chat_model(temperature=0.3, num_predict=1024, model=None) -> BaseChatModel:
+    if get_provider() == "cloud":
+        return _build_cloud_model(...)   # ChatOpenAI → DeepSeek/Kimi/智谱/OpenAI
+    return _build_ollama_model(...)      # ChatOllama → 本地 Qwen2.5
+```
+
+**② 结构化输出取代正则解析**
+
+```python
+# backend/llm/chains/base.py
+def build_structured_chain(prompt, schema, ...):
+    def _bind(payload):
+        chat_model = get_chat_model(...)
+        structured = chat_model.with_structured_output(schema)
+        return structured.invoke(prompt.invoke(payload))
+    return RunnableLambda(_bind)
+```
+
+模型在**调用期**才绑定，因此链本身是可复用的纯结构，
+既能注入假模型做离线测试，也能随时换模型。
+
+**③ RunnableBranch 表达分级策略**
+
+```python
+# backend/llm/chains/agents.py
+return RunnableBranch(
+    (RunnableLambda(lambda p: _local_lookup(p) is not None), local_branch),  # 词表命中
+    ai_branch,                                                                # AI 兜底
+)
+```
+
+> ⚠️ 这里有个容易踩的坑：**LLM 可用性检查必须放在分支内部**，不能提到调用之前。
+> 原实现的语义是「先查词表，命中立即返回；未命中才检查 LLM」——
+> 若提前检查，无 LLM 环境下词表命中的路径会被错误地短路成 `None`。
+> `tests/test_langchain_chains.py` 专门为此设了守卫。
+
+**④ 统一降级语义**
+
+所有链经 `safe_invoke()` 包裹，任何异常都降级为 `None` / `[]`，
+不会中断前端 —— 与迁移前的失败语义完全一致。
+
+### 运行演示
+
+```bash
+# 离线演示：无需大模型，秒级跑通四条链
+python examples/langchain_demo.py --offline
+
+# 真实模型：需先启动 Ollama 并拉取 qwen2.5:7b
+ollama pull qwen2.5:7b
+python examples/langchain_demo.py --live
+
+# 离线自检：30 项检查，覆盖模板/Schema/分支/降级
+cd backend && python -m llm.chains.verify
+
+# 回归守卫：16 项
+cd backend && python -m pytest tests/test_langchain_chains.py -v
+```
+
+### 对外接口零变更
+
+LangChain 改造完全发生在 `backend/llm/` 内部。
+`TermExtractor` / `WordExplainer` / `LectureSummarizer` / `ChatQA`
+四个类的公开方法签名与返回结构**逐字未变**，
+因此 `api/routes.py` 与前端**零改动**——这是一个可安全回滚的架构升级。
+
+---
+
 ## 技术栈
 
 | 层级 | 技术 |
@@ -75,11 +210,12 @@ Whisper 只保留 `initial_prompt` 的**末尾 223 token**，因此各层按 **t
 | ASR 引擎 | Faster-Whisper（默认 `base`，可配置） |
 | 语音检测 | Silero VAD（ONNX 后端） |
 | 音频捕获 | PyAudioWPatch（WASAPI Loopback，Windows）/ PyAudio（麦克风） |
-| 术语提取 | Ollama + Qwen2.5（可切换云端 API） |
+| 术语提取 | LangChain + Ollama + Qwen2.5（可切换云端 API） |
 | 术语热词 | 内置领域术语库 + 自定义术语 → Whisper initial_prompt |
 | 本地词典 | ECDICT + 内置词表（3300+ 词） |
 | 数据存储 | SQLite |
 | 后端 | Python (FastAPI + WebSocket/HTTP 轮询) |
+| **智能体框架** | **LangChain 1.x**（LCEL 链 / 结构化输出 / RunnableBranch） |
 
 ### 环境变量
 

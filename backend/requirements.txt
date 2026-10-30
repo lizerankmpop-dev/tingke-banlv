@@ -24,6 +24,17 @@ aiosqlite>=0.20.0
 numpy>=1.26.0
 soundfile>=0.12.1
 
+# LLM —— LangChain 框架层
+# 第四章作业：智能应用开发要求基于 LangChain 框架构建，
+# 这里把原先手写的 prompt 拼接 + JSON 正则解析改造为声明式 LCEL 链。
+langchain-core>=1.0.0
+langchain>=1.0.0
+langchain-ollama>=1.0.0
+# 云端 OpenAI 兼容 API（DeepSeek / Kimi / 智谱 / OpenAI）走 langchain-openai
+langchain-openai>=0.3.0
+# 结构化输出依赖 Pydantic
+pydantic>=2.0.0
+
 # LLM (Ollama client)
 ollama>=0.3.0
 
