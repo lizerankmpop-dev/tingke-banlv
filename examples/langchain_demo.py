@@ -100,6 +100,71 @@ def _demo_rag() -> None:
     print("  真实模式用本地 Ollama 的 nomic-embed-text，召回按语义排序）")
 
 
+
+def _demo_workflow() -> None:
+    """演示多 Agent 协作：讲师生成 → 审校核对 → 不通过则退回重写"""
+    import json
+
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    import llm.chains.base as base
+    from llm.chains.workflow import build_review_loop
+
+    # 脚本：讲师写一版 → 审校不通过 → 讲师重写 → 审校通过
+    answers = [
+        "草稿1：梯度下降就是让参数往梯度反方向走。",
+        json.dumps(
+            {"passed": False, "reason": "与字幕不符", "issues": ["字幕中老师说的是偏导数向量，不是反方向走"]},
+            ensure_ascii=False,
+        ),
+        "草稿2：据字幕，梯度下降沿损失函数梯度的负方向迭代更新参数，更新步长由学习率 α 控制。",
+        json.dumps({"passed": True, "reason": "与字幕一致", "issues": []}, ensure_ascii=False),
+    ]
+
+    class Scripted(FakeListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+        def _call(self, *a, **k):
+            return "x"
+
+        def _generate(self, *a, **k):
+            text = answers.pop(0) if answers else "备用"
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
+
+    _orig = base.get_chat_model
+    base.get_chat_model = lambda **kw: Scripted(responses=["x"])
+    try:
+        graph = build_review_loop(max_iterations=3)
+
+        print("① 图结构（LangGraph 编译产物）")
+        nodes = list(graph.get_graph().nodes.keys())
+        print(f"   节点: {nodes}")
+
+        print("\n② 执行闭环")
+        out = graph.invoke(
+            {
+                "word": "gradient descent",
+                "course_name": "深度学习导论",
+                "domain": "机器学习",
+                "context": "[01:23] The update rule is theta = theta minus alpha times gradient of L.",
+                "transcript": "",
+                "draft": "",
+                "verdict": {},
+                "issues": [],
+                "iteration": 0,
+            },
+            {"recursion_limit": 20},
+        )
+        print(f"   迭代轮次: {out.get('iteration')}（讲师写 2 次、审校 2 次）")
+        print(f"   审校结论: passed={out.get('verdict', {}).get('passed')}")
+        print(f"   累积意见: {out.get('issues')}")
+        print(f"   最终讲解: {out.get('draft')}")
+    finally:
+        base.get_chat_model = _orig
+
 def _demo_memory() -> None:
     """演示 Memory：同一 thread 历史累积，不同 thread 相互隔离"""
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
@@ -328,9 +393,13 @@ def run_offline() -> None:
     hr("链 7 / Memory 多轮对话  checkpointer 按 thread_id 隔离")
     _demo_memory()
 
+    # ---- 8. 多 Agent 协作工作流 ----
+    hr("链 8 / 多 Agent 协作  LangGraph 生成-校验闭环")
+    _demo_workflow()
+
     hr()
     print("离线演示完成。链路的组装、编排、结构化输出、分级策略、Agent 工具调用、")
-    print("RAG 语义检索与多轮对话记忆全部验证通过。")
+    print("RAG 语义检索、多轮对话记忆与多 Agent 协作闭环全部验证通过。")
 
 
 def _demo_agent_tool_loop(fake_model) -> None:

@@ -230,6 +230,51 @@ RAG 把这件事交给向量检索：
 
 记忆按 `thread_id` 隔离（建议用「课程ID:学生ID」组合），换课程即换 thread，不会串味。
 
+### 🤝 多 Agent 协作：让「生成」和「校验」分开
+
+前面四条链与答疑 Agent 都是**单 Agent**形态 —— 模型自己调工具、自己给答案。
+但「生成一段讲解」有天然的可靠性问题：讲师 Agent 可能记错、夸大甚至**编造**
+老师没讲过的内容（幻觉）。单 Agent 无法自我校验 ——
+让它自己检查自己写的，等于让它自己给自己打分。
+
+多 Agent 协作的价值在于把两件事**拆给两个不同的 Agent**：
+校验方拥有独立的检索能力（能翻字幕原文）和独立的判断立场。
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                                                            │
+│   ┌───────────────┐      ┌────────────────┐                │
+│   │ lecture_node  │─────►│ fact_check_node│─────┐          │
+│   │  讲师 Agent   │      │   审校 Agent    │     │          │
+│   │  写讲解草稿   │      │ 查字幕原文核对   │     │          │
+│   └───────────────┘      └────────────────┘     │          │
+│           ▲                                     │          │
+│           └───────── 不通过（带意见）───────────┘          │
+│                                     │ 通过                 │
+│                                     ▼                     │
+└────────────────────────────────────────────────────────────┘
+```
+
+![多 Agent 协作工作流](docs/images/multi-agent-workflow.png)
+
+两个 Agent 是**独立实例**（不同 system prompt、不同工具集、不同职责）——
+不是同一个 Agent 换个提示词，而是两个角色互相配合。
+
+审校 Agent 输出结构化结论 `{passed, reason, issues[]}`；
+不通过时意见被累积进 State，退回讲师重写（最多 `max_iterations` 轮）。
+
+#### 为什么用 LangGraph 而不是手写 while 循环
+
+| 能力 | 手写循环 | LangGraph |
+|---|---|---|
+| 状态共享 | 自己维护 dict，容易漏传 | 节点读写同一份 State，自动合并 |
+| 条件分叉 | 手写 if/else 嵌套 | `add_conditional_edges` 声明式 |
+| 防死循环 | 自己数计数 | `recursion_limit` + `max_iterations` 双保险 |
+| 可观测 | 只能 print | 编译出的图可直接可视化 |
+| 加节点 | 改控制流 | 加节点即可，不动分叉逻辑 |
+
+第 2、3、5 点正是手写循环容易写错的地方。
+
 ### 代码结构
 
 ```
@@ -242,6 +287,7 @@ backend/llm/
 │   ├── agent_tools.py 答疑 Agent 的四个工具 + create_agent 组装
 │   ├── rag.py         字幕向量索引与语义检索（RAG）
 │   ├── memory.py      会话持久化（checkpointer，Memory）
+│   ├── workflow.py    多 Agent 协作（LangGraph 生成-校验闭环）
 │   └── verify.py      离线自检脚本（30 项检查，无需大模型）
 ├── client.py         统一 LLM 入口（已切换到 LangChain BaseChatModel）
 ├── extractor.py      术语提取（薄封装）
@@ -250,7 +296,7 @@ backend/llm/
 └── qa.py             对话答疑（薄封装）
 
 examples/langchain_demo.py    链编排演示脚本（离线/真实两种模式）
-tests/test_langchain_chains.py  31 项回归守卫（Agent / RAG / Memory）
+tests/test_langchain_chains.py  38 项回归守卫（Chain / Agent / RAG / Memory / Workflow）
 ```
 
 ### 关键实现要点
@@ -313,7 +359,7 @@ python examples/langchain_demo.py --live
 # 离线自检：30 项检查，覆盖模板/Schema/分支/降级
 cd backend && python -m llm.chains.verify
 
-# 回归守卫：31 项
+# 回归守卫：38 项
 cd backend && python -m pytest tests/test_langchain_chains.py -v
 ```
 

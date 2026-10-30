@@ -64,6 +64,7 @@ backend/llm/chains/
 ├── agent_tools.py 答疑 Agent 的四个工具 + create_agent 组装
 ├── rag.py         字幕向量索引与语义检索（RAG）
 ├── memory.py      会话持久化（checkpointer，Memory）
+├── workflow.py    多 Agent 协作（LangGraph 生成-校验闭环）
 └── verify.py      离线自检脚本（30 项检查，无需大模型）
 ```
 
@@ -80,6 +81,7 @@ backend/llm/chains/
 | **Agent（自主决策）** | 对话答疑 | 模型运行时自主决定调用哪个工具、调几次 |
 | **RAG（检索增强）** | 字幕语义检索 | 字幕→语义分块→向量索引→按语义召回，突破固定窗口限制 |
 | **Memory（会话记忆）** | 多轮对话 | checkpointer 按 thread_id 隔离，历史逐轮累积 |
+| **多 Agent 协作** | 讲解生成-校验闭环 | LangGraph StateGraph：讲师 Agent 写 → 审校 Agent 查 → 不通过退回重写 |
 
 Agent 的三个工具：
 
@@ -116,6 +118,27 @@ Agent 异常时自动回退链模式，答疑功能不中断。
 实现抽出 `CheckpointStore` 抽象，换 Redis/SQLite 只需实现同一接口。
 记忆按 `thread_id` 隔离（建议「课程ID:学生ID」），换课程不串味。
 
+### 多 Agent 协作（生成-校验闭环）
+
+单 Agent 无法自我校验 —— 让它检查自己写的，等于让它自己给自己打分。
+多 Agent 协作把「生成」与「校验」拆给两个**独立实例**：
+
+```
+lecture_node ──► fact_check_node ──► 路由
+（讲师：写讲解）    （审校：查原文核对）   ├─ 通过 → END
+                                        └─ 不通过（带意见）─┘
+```
+
+| 维度 | 手写 while 循环 | LangGraph StateGraph |
+|---|---|---|
+| 状态共享 | 自己维护 dict，容易漏传 | 节点读写同一份 State，自动合并 |
+| 条件分叉 | 手写 if/else 嵌套 | `add_conditional_edges` 声明式 |
+| 防死循环 | 自己数计数 | `recursion_limit` + `max_iterations` 双保险 |
+| 可观测 | 只能 print | 编译出的图可直接可视化 |
+| 加节点 | 改控制流 | 加节点即可，不动分叉逻辑 |
+
+实现：`backend/llm/chains/workflow.py`（`LearningLoop` / `build_review_loop`）。
+
 ---
 
 ## 四、一键验证
@@ -147,9 +170,9 @@ ollama pull qwen2.5:7b
 
 | 项目 | 结果 |
 |---|---|
-| 全量测试套件 | **478 passed** / 9 skipped（改造前 447 passed，无回归） |
+| 全量测试套件 | **485 passed** / 9 skipped（改造前 447 passed，无回归） |
 | LangChain 链离线自检 | **30 / 30** 通过 |
-| LangChain 专项回归守卫 | **31 / 31** 通过（Agent / RAG / Memory） |
+| LangChain 专项回归守卫 | **38 / 38** 通过（Chain / Agent / RAG / Memory / Workflow） |
 | 链编排演示 | 四条链全部正确输出 |
 
 ---
