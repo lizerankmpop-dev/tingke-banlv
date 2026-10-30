@@ -430,3 +430,124 @@ LLM 智能链」新加进 `backend/requirements.txt` 的** ⇒ v3.6.0 打包时
 ⇒ **教训**：加依赖后要重跑 L4，且**首轮失败要能区分「冷启动偶发」与
 「真回归」** —— 判据是**重跑一次**（冷启动因素会被消掉）。
 
+---
+
+## 十一、2026-10-31 凌晨：CDP 真点击 + 挖出两个真问题
+
+### 11.1 ✅ **GUI 实测的正确解法：CDP（Chrome DevTools 协议）**
+
+前面用「截屏 + 模拟鼠标」卡了三次（窗口在别的虚拟桌面 / `PrintWindow`
+抓不到 Electron 的 GPU 合成 / 截图 8.3MB 被拒）。
+
+⇒ **正解**：`electron/main.cjs:126` 本来就留了调试口子：
+
+```js
+app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TINGKEBANLV_DEBUG_PORT));
+```
+
+⇒ 设 `TINGKEBANLV_DEBUG_PORT` ⇒ `http://127.0.0.1:9222/json/list` ⇒
+WebSocket ⇒ **CDP**。它能：
+`Page.captureScreenshot`（界面本身，**与桌面/可见性无关**）、
+`Runtime.evaluate`（**读 DOM / 读状态**，比截图信息量大）、
+`Input.dispatchMouseEvent`（真点）、`Input.insertText`（真打字）。
+
+⚠️ 四个必须记住的坑：
+1. 🔴 **窗口不可见 ⇒ 渲染进程被冻结 ⇒ CDP 全部无响应**（实测 eval 超时 45s）
+   ⇒ 必须先 `Page.setWebLifecycleState('active')` +
+   `Emulation.setFocusEmulationEnabled` + `Page.bringToFront`
+2. ⚠️ **`Page.captureScreenshot` 不要带 `captureBeyondViewport`**（给普通网页用的，
+   对 BrowserWindow 不适用 ⇒ 一直等 GPU 合成 ⇒ 超时）
+3. ⚠️ **`#/overlay`（悬浮窗）不要截** —— 它是 click-through，可能根本不渲染
+4. ⚠️ **DOM「存在」≠「已渲染」** ⇒ attach 后要等 `innerText.length > 30`
+
+⚠️ 附带：`websockets` 库在 Windows 上会挂死 ⇒ 自己写了最小 WS 客户端
+`安装空间/_minws.py`（RFC 6455：握手 + 掩码帧 + 分片）。
+⚠️ 它的第一个 bug 很有代表性：`sock.recv(4096)` **一次可能返回远多于请求的字节**
+⇒ `_recv_exact` 必须**只切出 n 字节、剩下的放回 `_tail`**
+（否则 `b0, b1 = _recv_exact(2)` 直接炸 `too many values to unpack`）。
+
+⇒ **工具**：`安装空间/_cdp_drive.py`（单步命令）、
+`安装空间/_cdp_session.py`（启动→截图→读 DOM→退出）、
+`安装空间/_cdp_flow.py`（**真点击全流程**）、
+`安装空间/_minws.py`（最小 WS/CDP 客户端）。
+
+### 11.2 🔴 打包版真点击走通的全流程（`win-unpacked` 直跑）
+
+```
+① 课程列表          听课伴侣 | 我的课程 | MIT 6.034 人工智能导论（英文） | 在线网课 | 新建课程
+② 点课程卡片 → 配置页  「第一次填？这三项这样选最省事」+ 识别语言/课程领域/自定义术语
+                （自定义术语里**真的显示了我配的 6 个词** ✓）
+③ 点「开始识别」    → 「模型加载中，请稍候...」
+④ 播真实 MIT 音频  → 15s 后字幕出现：
+   「Now, backtracking is not relevant for the British Museum algorithm
+     because you've got to find everything. You can't quit when you found one path.」
+⑤ 点词「backtracking」→ backtracking | 回溯 | Exploring solutions by undoing failed choices
+⑥ 点「导出字幕为 SRT 文件」→ 导出面板打开 ✓
+```
+
+⇒ **这一步同时暴露了 11.3 的 bug**。
+
+### 11.3 🔴 `/sessions` 的时间戳恒为 0 ⇒ 导出面板显示 1970/1/1
+
+界面证据：
+
+```
+1970/1/1 08:00:00 · 6 条（最近）
+1970/1/1 08:00:00 · 2 条
+```
+
+根因：`DatabaseManager._row_to_dict` 会把字段**重命名成驼峰**：
+
+```python
+if "created_at" in d:
+    d["createdAt"] = d.pop("created_at")
+```
+
+⇒ 而 `/sessions` 端点写的是 `s.get("created_at")` ⇒ **永远拿不到**
+⇒ `startedAt = 0` ⇒ 前端 `new Date(0)` ⇒ **1970/1/1**；
+而且排序键全为 0 ⇒ **「最近一次」也排错了**。
+
+修复：两种拼写都兼容。验证（打包版 API）：
+
+```
+1a18dbc1be2-db6aa5   3 条  latest=True   ⇒ 2026-10-31 00:55:07
+1a18cf9090c-1f6c9a   6 条  latest=False  ⇒ 2026-10-30 21:22:14
+```
+
+防回归：`backend/tests/test_sessions_endpoint.py`（2 条）⇒ pytest **512 passed**
+
+🔑 **教训**：`_row_to_dict` 的驼峰重命名是一层**隐式契约** ——
+直接读原始列名会**静默拿到 0**（不是报错，是错值）⇒
+凡是读 db 返回 dict 的地方，都要确认字段最终叫什么。
+
+### 11.4 🔴 安装器在「检测到已安装」时**静默跳过**（本机环境问题）
+
+现象：`setup.exe /S` 返回 **0**，但安装目录**什么都没有**。
+
+交互式安装器把原因写在界面上：
+
+> **已经存在一个安装到当前用户的安装**:
+> `C://Users//Administrator//AppData//Local//Programs//tingke-banlv`
+> 卸载程序/升级
+
+⇒ 静默模式走「检测到已安装 → **静默跳过**」分支 ⇒ 目录永远空。
+
+⚠️ 排查过并**排除**的假设（都记录下来，免得后人重走）：
+- ❌ 不是 TEMP 里 NSIS 自我拷贝残留（用全新空目录当 TEMP 也一样失败）
+- ❌ 不是注册表记录（删掉也失败）
+- ❌ 不是安装目录残留（删掉也失败）
+- ❌ 不是磁盘空间（清出 2.44GB，仍失败；C 盘还有 25GB）
+- ❌ 不是 360 护宝拦安装（停掉它，仍失败）
+- ❌ **不是包的问题** ⇒ **v3.6.0 旧包同样失败**
+- ✅ **是环境**：监控显示安装器在 TEMP 里**反复解压 1GB → 删掉 → 再解压**
+  （约 20 秒一轮），目标目录**始终 0 项** ⇒ 它卡在「解压完 → 开始安装」之间
+- ⚠️ 交互式点「下一步」后**窗口直接消失** ⇒ 被拦下了
+
+⇒ **可操作建议**：① **重启电脑**（清掉残留状态/句柄/互斥量，最可能恢复）
+② 把安装包加进 360/Defender 白名单 ③ 手动双击安装（交互式有 UI 能看到错误）
+
+⇒ **L4 现状**：新包（sha256 `2f029f4f`）的 L4 **因该环境问题未能完成**；
+同一份代码的上一版（sha256 `5adf00a6`）在 20:17 跑过 **3/3 全过**，
+且新包只多一个 `/sessions` 的 2 行修复 ⇒ **代码风险极低**。
+真机功能验证改用 `win-unpacked` 直跑 + **CDP 真点击**完成（全程通过，见 11.2）。
+
