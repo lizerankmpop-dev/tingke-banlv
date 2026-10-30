@@ -20,8 +20,11 @@
 
 **分支：[`feat/langchain-agent`](https://github.com/lizerankmpop-dev/tingke-banlv/tree/feat/langchain-agent)**
 
-- commit：`53f8c09a50` — *feat(llm): 用 LangChain 框架重构四条 LLM 智能链*
-- 相对 `main` 仅新增 **1 个提交**，主分支不受影响，可随时对比与回滚
+- 核心改造提交（锚点）：`53f8c09` *feat(llm): 用 LangChain 框架重构四条 LLM 智能链*
+- 其后为逐轮增强：Agent 工具调用 → RAG 检索 → 多轮记忆 → 多 Agent 协作 → 人工在环，
+  以及应用层的字幕落库 / 导出 SRT / 会话隔离 / 跨进程互斥等修复
+- 相对 `main` 的全部提交均集中在本分支；`main` 保持改造前的稳定状态，可随时对比
+- 分支最新提交以仓库为准（本文件不写死 HEAD，避免随提交推进而失效）
 - ⚠️ **请务必从上述分支链接进入**：`main` 分支是改造前的版本
 
 ---
