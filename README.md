@@ -5,8 +5,8 @@
 
 > 📚 **《开源软件构建技术》第七章《智能应用开发》作业分支**
 > 本次作业基于 **LangChain 1.x** + 离线大模型（Ollama / Qwen2.5）实现，
-> 覆盖 LangChain 五种范式：LCEL 链、Agent 工具调用、RAG 检索增强、
-> 多轮记忆、以及 LangGraph 多 Agent 协作（生成-校验闭环）。
+> 覆盖 LangChain 五种范式：LCEL 链、Agent 工具调用、RAG 检索增强、多轮记忆、
+> LangGraph 多 Agent 协作（生成-校验闭环）与 `interrupt()` 人工在环定稿。
 > 👉 作业代码与说明请见分支：[`feat/langchain-agent`](https://github.com/lizerankmpop-dev/tingke-banlv/tree/feat/langchain-agent)
 > ｜ 作业提交说明：[`SUBMISSION.md`](https://github.com/lizerankmpop-dev/tingke-banlv/blob/feat/langchain-agent/SUBMISSION.md)
 
