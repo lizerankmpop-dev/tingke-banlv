@@ -663,6 +663,89 @@ def build_onboarding_checklist(paths: dict[str, str]) -> str:
 
 # ============ 主流程 ============
 
+def cleanup_half_installed(local_appdata: Path) -> dict:
+    r"""
+    🔴🔴 清掉「**半装状态**」—— 静默安装失败的真凶（2026-10-31）
+
+    现象
+    ----
+    `setup.exe /S` 返回 **0**，但安装目录里**什么都没有**，
+    而交互式安装器把原因写在界面上：
+
+        已经存在一个安装到当前用户的安装:
+        C://Users//Administrator//AppData//Local//Programs//tingke-banlv
+        卸载程序/升级
+
+    ⇒ NSIS 检测到「已安装」⇒ 静默模式走「**静默跳过**」分支。
+
+    为什么会进「半装状态」
+    -------------------
+    安装器的顺序是「**先写注册表 → 再拷文件**」⇒
+    中途被打断（进程被杀 / 磁盘满 / 被安全软件拦）⇒
+    **注册表有记录、文件没拷完** ⇒
+    此后每一次 `/S` 都命中「已安装」⇒ **永久性失败**。
+    （实测：清掉注册表后立刻就能装上；而 v3.6.0 旧包同样失败 ⇒ 与包无关。）
+
+    ⇒ 所以每次验证**必须**先把这个状态清干净，否则 L4 会永远卡在
+       「静默安装（/S）：退出码 0，180s 内未发现 exe」。
+
+    做了什么
+    --------
+    ① 删掉 HKCU\...\Uninstall 下属于本产品的注册表项
+    ② 删掉安装目录（若存在）
+    ③ 清掉 TEMP 里 NSIS 的自我拷贝残留（*.tmp，>300KB）
+
+    ⚠️ 只动**本产品**的东西：注册表按 DisplayName 精确匹配，
+       目录按 `discover_install_dir` 探测（要看到 exe 才算），
+       TEMP 只删 *.tmp。
+    """
+    out = {"registry": [], "dir": None, "tmpFiles": 0}
+    # ① 注册表
+    try:
+        import winreg
+        uk = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uk) as k:
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(k, i); i += 1
+                except OSError:
+                    break
+                try:
+                    with winreg.OpenKey(k, sub) as sk:
+                        dn = str(winreg.QueryValueEx(sk, "DisplayName")[0])
+                except OSError:
+                    continue
+                if APP_NAME in dn or "听课伴侣" in dn:
+                    try:
+                        winreg.DeleteKey(k, sub)
+                        out["registry"].append(dn)
+                    except OSError:
+                        pass
+    except Exception:
+        pass
+    # ② 安装目录
+    d = discover_install_dir(local_appdata)
+    if d is not None:
+        try:
+            shutil.rmtree(d, ignore_errors=True)
+            out["dir"] = str(d)
+        except Exception:
+            pass
+    # ③ TEMP 里的 NSIS 自我拷贝残留
+    tmp = Path(os.environ.get("TEMP") or (Path.home() / "AppData" / "Local" / "Temp"))
+    try:
+        for f in tmp.rglob("*.tmp"):
+            try:
+                if f.is_file() and f.stat().st_size > 300_000:
+                    f.unlink(); out["tmpFiles"] += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return out
+
+
 def discover_install_dir(local_appdata: Path) -> Path | None:
     """
     找到实际安装目录
@@ -776,6 +859,17 @@ def main() -> int:
     expected_dir = local_appdata / "Programs" / APP_NAME
     home = Path(os.environ.get("TINGKEBANLV_HOME") or (Path.home() / ".tingkebanlv"))
     log_file = home / "logs" / "electron.log"
+
+    # 🔴🔴 **先清「半装状态」**（否则静默安装会一直静默跳过 ⇒ L4 永久卡死）
+    cleaned = cleanup_half_installed(local_appdata)
+    if cleaned["registry"] or cleaned["dir"] or cleaned["tmpFiles"]:
+        report.step(
+            "清理半装状态",
+            True,
+            f"注册表 {cleaned['registry']} · 目录 {cleaned['dir']} · "
+            f"TEMP 残留 {cleaned['tmpFiles']} 个",
+            critical=False,
+        )
 
     # 安装前若有历史残留，先记一笔（卸载是否彻底要能对照）
     stale = discover_install_dir(local_appdata)
