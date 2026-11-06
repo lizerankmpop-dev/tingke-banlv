@@ -82,6 +82,23 @@ APP_NAME = "听课伴侣"
 BACKEND_EXE = "tingkebanlv-server.exe"
 UNINSTALLER = f"Uninstall {APP_NAME}.exe"
 
+# 安装目录候选名：当前产品名 + 历史「鬼影目录」名。
+# electron-builder 的 $INSTDIR 取 package.json 顶层 productName，缺省退化为
+# `name`；历史上曾退化为 `tingke-banlv-frontend` / `tingke-banlv`，这些**半装**
+# 残留目录里不一定有 `听课伴侣.exe`，但照样会让 `/S` 命中「已安装」而静默跳过。
+# 因此清理时必须按「目录名」识别并清除，不能只认 exe。
+KNOWN_INSTALL_DIR_NAMES = (
+    APP_NAME,            # 期望落点：%LOCALAPPDATA%\Programs\听课伴侣
+    "tingke-banlv-frontend",
+    "tingke-banlv",
+)
+# 目录下任一 exe 命中即视为本产品安装（覆盖 productName 变化导致的 exe 改名）
+KNOWN_PRODUCT_EXES = (
+    f"{APP_NAME}.exe",
+    "tingke-banlv-frontend.exe",
+    "tingke-banlv.exe",
+)
+
 # 这些字样出现在日志里就说明启动链路出了问题
 LOG_ERROR_MARKERS = (
     "FATAL",
@@ -663,6 +680,36 @@ def build_onboarding_checklist(paths: dict[str, str]) -> str:
 
 # ============ 主流程 ============
 
+def _delete_regkey_recursive(parent_key, subkey_name: str) -> bool:
+    """递归删除注册表项（含所有子项）。
+
+    ⚠️ `winreg.DeleteKey` 遇到含子项的键会抛 `OSError` 并**静默失败**——
+    这就是早期 cleanup 没把注册表清干净、导致 `/S` 一直命中「已安装」的真凶。
+    这里先深度优先删光子项，再删自身。
+    """
+    import winreg
+
+    try:
+        with winreg.OpenKey(parent_key, subkey_name, access=winreg.KEY_ALL_ACCESS) as k:
+            subs = []
+            i = 0
+            while True:
+                try:
+                    subs.append(winreg.EnumKey(k, i))
+                    i += 1
+                except OSError:
+                    break
+            for s in subs:
+                _delete_regkey_recursive(k, s)
+    except OSError:
+        pass
+    try:
+        winreg.DeleteKey(parent_key, subkey_name)
+        return True
+    except OSError:
+        return False
+
+
 def cleanup_half_installed(local_appdata: Path) -> dict:
     r"""
     🔴🔴 清掉「**半装状态**」—— 静默安装失败的真凶（2026-10-31）
@@ -696,7 +743,7 @@ def cleanup_half_installed(local_appdata: Path) -> dict:
     ③ 清掉 TEMP 里 NSIS 的自我拷贝残留（*.tmp，>300KB）
 
     ⚠️ 只动**本产品**的东西：注册表按 DisplayName 精确匹配，
-       目录按 `discover_install_dir` 探测（要看到 exe 才算），
+       目录按 `discover_install_dir` 探测（含鬼影目录名兜底，不要求必有 exe），
        TEMP 只删 *.tmp。
     """
     out = {"registry": [], "dir": None, "tmpFiles": 0}
@@ -704,7 +751,9 @@ def cleanup_half_installed(local_appdata: Path) -> dict:
     try:
         import winreg
         uk = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uk) as k:
+        # 🔴 用 KEY_ALL_ACCESS 打开父键：否则 DeleteKey 删含子项的键会
+        #    因权限不足静默失败（OSError 被吞）。
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uk, access=winreg.KEY_ALL_ACCESS) as k:
             i = 0
             while True:
                 try:
@@ -717,11 +766,8 @@ def cleanup_half_installed(local_appdata: Path) -> dict:
                 except OSError:
                     continue
                 if APP_NAME in dn or "听课伴侣" in dn:
-                    try:
-                        winreg.DeleteKey(k, sub)
+                    if _delete_regkey_recursive(k, sub):
                         out["registry"].append(dn)
-                    except OSError:
-                        pass
     except Exception:
         pass
     # ② 安装目录
@@ -748,7 +794,7 @@ def cleanup_half_installed(local_appdata: Path) -> dict:
 
 def discover_install_dir(local_appdata: Path) -> Path | None:
     """
-    找到实际安装目录
+    找到实际安装目录（含「半装鬼影目录」）
 
     为什么不直接拼 `%LOCALAPPDATA%\\Programs\\<产品名>`：
     electron-builder 的 NSIS `$INSTDIR` 取的是 **package.json 顶层 productName**
@@ -756,12 +802,26 @@ def discover_install_dir(local_appdata: Path) -> Path | None:
     实测踩过一次：没写顶层 productName 时，目录被建成 `tingke-banlv-frontend`
     （npm 包名，还暴露了 frontend 这个内部实现词）。
     所以这里以探测为准，期望路径只作为首选候选。
+
+    识别规则（命中任一即返回；**先 exe 后鬼影名**，保证真实安装优先）：
+      ① 目录下存在任一已知产品 exe（听课伴侣.exe / tingke-banlv*.exe）
+      ② 目录名命中 KNOWN_INSTALL_DIR_NAMES（覆盖「有目录但 exe 没拷完」的半装态）
+    规则 ② 很关键：半装残留目录里可能**没有 exe**，但照样让 `/S` 命中「已安装」
+    而静默跳过，因此清理时必须按目录名兜底清掉。正常安装后真实目录同时命中 ①，故
+    不会被同名鬼影目录抢先匹配。
     """
     programs = local_appdata / "Programs"
     if not programs.is_dir():
         return None
+    # 第一趟：优先返回含真实产品 exe 的目录
     for child in sorted(programs.iterdir()):
-        if child.is_dir() and (child / f"{APP_NAME}.exe").is_file():
+        if not child.is_dir():
+            continue
+        if any((child / exename).is_file() for exename in KNOWN_PRODUCT_EXES):
+            return child
+    # 第二趟：兜底返回已知名字的鬼影目录（半装态，无 exe）
+    for child in sorted(programs.iterdir()):
+        if child.is_dir() and child.name in KNOWN_INSTALL_DIR_NAMES:
             return child
     return None
 

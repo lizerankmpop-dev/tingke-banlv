@@ -819,10 +819,13 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
 
     # 按 512 样本（32ms）喂入，与 audio/capture.py 的真实块大小一致
     starvation = 0.0
+    rt_speed = max(0.1, float(args.realtime_speed))
     for i in range(0, len(audio), CHUNK_SIZE):
         vad.process_chunk(audio[i : i + CHUNK_SIZE])
         if args.realtime:
-            target = feed_start + min(i + CHUNK_SIZE, len(audio)) / SAMPLE_RATE
+            audio_elapsed = min(i + CHUNK_SIZE, len(audio)) / SAMPLE_RATE
+            # rt_speed>1 时压缩墙钟但保持分块/块间步结构 ⇒ 流式分段不变、WER 等价
+            target = feed_start + audio_elapsed / rt_speed
             gap = target - time.perf_counter()
             if gap > 0:
                 time.sleep(gap)
@@ -899,6 +902,7 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
         "pipelineSeconds": round(pipeline_elapsed, 2),
         "tailSeconds": tail,
         "realtime": bool(args.realtime),
+        "realtimeSpeed": round(rt_speed, 2) if args.realtime else None,
         "starvationSeconds": round(starvation, 3),
         "droppedSegments": delta("droppedSegments"),
         "mergedCalls": delta("mergedCalls"),
@@ -1412,6 +1416,14 @@ def main() -> int:
     src.add_argument("--audio-dir", help="音频目录（递归扫描）")
     src.add_argument("--audio", help="单个音频文件")
     parser.add_argument("--realtime", action="store_true", help="按真实速率喂入（测延迟与稳定性）")
+    parser.add_argument(
+        "--realtime-speed",
+        type=float,
+        default=1.0,
+        help="实时喂入速率倍率（仅 --realtime 生效）。1.0=严格 1x 墙钟；>1 加快喂入"
+        "（如 2.0=半墙钟）但仍按 512 样本分块、块间留步，保持流式分段结构不变。"
+        "用途：本沙箱单进程最长存活受限时，用 2x 在更短墙钟内得到等价 WER。",
+    )
     parser.add_argument("--model", default=None, help="模型规格，默认取管道默认值（base）")
     parser.add_argument("--model-timeout", type=float, default=300.0, help="模型加载超时（秒）")
     parser.add_argument("--language", default="auto", help="auto|zh|en")
