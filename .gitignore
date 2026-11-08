@@ -114,3 +114,4 @@ testset/chinese_lecture/real/*
 # 边界（不变）：`*.preproof.*`（预校对 txt/json/suspects/review.html）与草稿、
 # 音频一样都是**逐字稿**，一律不入库；规则表里也只有短片段，不含成篇讲课文本。
 !testset/chinese_lecture/real/*.corrections.tsv
+backend/.venv/
