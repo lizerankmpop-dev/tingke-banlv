@@ -1,0 +1,246 @@
+{
+  "generatedAt": "2026-10-06T18:03:28+08:00",
+  "config": {
+    "model": "base",
+    "language": "auto",
+    "terms": "on",
+    "domain": "",
+    "realtime": false,
+    "maxWer": null
+  },
+  "summary": {
+    "files": 5,
+    "failed": 0,
+    "withReference": 5,
+    "meanWer": 1.0,
+    "meanCer": 1.0,
+    "meanRtf": 1.0782,
+    "maxRtf": 2.6,
+    "maxTailSeconds": 28.458,
+    "totalDropped": 0,
+    "totalMerged": 0,
+    "totalSegments": 8,
+    "totalSubtitles": 0,
+    "peakLatency": null,
+    "meanLatency": null,
+    "byScenario": {
+      "clean": {
+        "files": 1,
+        "meanWer": 1.0,
+        "meanCer": 1.0,
+        "meanRtf": 0.89
+      },
+      "fast": {
+        "files": 1,
+        "meanWer": 1.0,
+        "meanCer": 1.0,
+        "meanRtf": 0.185
+      },
+      "lowvol": {
+        "files": 1,
+        "meanWer": 1.0,
+        "meanCer": 1.0,
+        "meanRtf": 2.6
+      },
+      "multi": {
+        "files": 1,
+        "meanWer": 1.0,
+        "meanCer": 1.0,
+        "meanRtf": 0.136
+      },
+      "noise": {
+        "files": 1,
+        "meanWer": 1.0,
+        "meanCer": 1.0,
+        "meanRtf": 1.58
+      }
+    }
+  },
+  "verdict": {
+    "passed": false,
+    "notes": [
+      "✗ 切出了片段但没有任何字幕（片段未送入识别引擎）—— 本次结果无效",
+      "✓ 未丢弃任何片段",
+      "✓ 未触发合并降级",
+      "✗ 平均 RTF 1.0782 ≥ 1 —— 字幕会持续滞后",
+      "⚠ 以下文件片段数与字幕数不等，未做延迟配对（延迟数字缺失是如实标记，不是算错）：synth_clean_jfk.wav, synth_fast_jfk.wav, synth_lowvol_jfk.wav…"
+    ]
+  },
+  "results": [
+    {
+      "file": "synth_clean_jfk.wav",
+      "scenario": "clean",
+      "audioSeconds": 11.0,
+      "segments": 2,
+      "subtitles": 0,
+      "rtf": 0.89,
+      "feedSeconds": 0.15,
+      "pipelineSeconds": 9.78,
+      "tailSeconds": 9.631,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 1.0,
+        "cer": 1.0,
+        "refUnits": 22,
+        "hypUnits": 0,
+        "edits": 22
+      }
+    },
+    {
+      "file": "synth_fast_jfk.wav",
+      "scenario": "fast",
+      "audioSeconds": 8.15,
+      "segments": 1,
+      "subtitles": 0,
+      "rtf": 0.185,
+      "feedSeconds": 0.1,
+      "pipelineSeconds": 1.51,
+      "tailSeconds": 1.403,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 1.0,
+        "cer": 1.0,
+        "refUnits": 22,
+        "hypUnits": 0,
+        "edits": 22
+      }
+    },
+    {
+      "file": "synth_lowvol_jfk.wav",
+      "scenario": "lowvol",
+      "audioSeconds": 11.0,
+      "segments": 2,
+      "subtitles": 0,
+      "rtf": 2.6,
+      "feedSeconds": 0.14,
+      "pipelineSeconds": 28.6,
+      "tailSeconds": 28.458,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 1.0,
+        "cer": 1.0,
+        "refUnits": 22,
+        "hypUnits": 0,
+        "edits": 22
+      }
+    },
+    {
+      "file": "synth_multi_jfk.wav",
+      "scenario": "multi",
+      "audioSeconds": 11.35,
+      "segments": 1,
+      "subtitles": 0,
+      "rtf": 0.136,
+      "feedSeconds": 0.14,
+      "pipelineSeconds": 1.55,
+      "tailSeconds": 1.403,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 1.0,
+        "cer": 1.0,
+        "refUnits": 22,
+        "hypUnits": 0,
+        "edits": 22
+      }
+    },
+    {
+      "file": "synth_noise_jfk.wav",
+      "scenario": "noise",
+      "audioSeconds": 11.0,
+      "segments": 2,
+      "subtitles": 0,
+      "rtf": 1.58,
+      "feedSeconds": 0.14,
+      "pipelineSeconds": 17.38,
+      "tailSeconds": 17.239,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 1.0,
+        "cer": 1.0,
+        "refUnits": 22,
+        "hypUnits": 0,
+        "edits": 22
+      }
+    }
+  ]
+}

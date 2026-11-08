@@ -1,0 +1,247 @@
+{
+  "generatedAt": "2026-10-06T18:07:51+08:00",
+  "config": {
+    "model": "base",
+    "language": "auto",
+    "terms": "on",
+    "domain": "",
+    "realtime": false,
+    "maxWer": null
+  },
+  "summary": {
+    "files": 5,
+    "failed": 0,
+    "withReference": 5,
+    "meanWer": 0.5091,
+    "meanCer": 0.5229,
+    "meanRtf": 1.181,
+    "maxRtf": 2.619,
+    "maxTailSeconds": 28.659,
+    "totalDropped": 0,
+    "totalMerged": 0,
+    "totalSegments": 8,
+    "totalSubtitles": 11,
+    "peakLatency": null,
+    "meanLatency": null,
+    "byScenario": {
+      "clean": {
+        "files": 1,
+        "meanWer": 0.8182,
+        "meanCer": 0.7711,
+        "meanRtf": 0.885
+      },
+      "fast": {
+        "files": 1,
+        "meanWer": 0.2273,
+        "meanCer": 0.2651,
+        "meanRtf": 0.309
+      },
+      "lowvol": {
+        "files": 1,
+        "meanWer": 1.0909,
+        "meanCer": 1.1566,
+        "meanRtf": 2.619
+      },
+      "multi": {
+        "files": 1,
+        "meanWer": 0.3636,
+        "meanCer": 0.3976,
+        "meanRtf": 0.226
+      },
+      "noise": {
+        "files": 1,
+        "meanWer": 0.0455,
+        "meanCer": 0.0241,
+        "meanRtf": 1.866
+      }
+    }
+  },
+  "verdict": {
+    "passed": false,
+    "notes": [
+      "✓ 管道连通：8 个片段 → 11 条字幕",
+      "✓ 未丢弃任何片段",
+      "✓ 未触发合并降级",
+      "✗ 平均 RTF 1.181 ≥ 1 —— 字幕会持续滞后",
+      "— 非实时模式不计算推送延迟（音频被加速灌入，延迟必然为负、无意义）",
+      "— 平均 WER 0.5091｜CER 0.5229（5 个有逐字稿）"
+    ]
+  },
+  "results": [
+    {
+      "file": "synth_clean_jfk.wav",
+      "scenario": "clean",
+      "audioSeconds": 11.0,
+      "segments": 2,
+      "subtitles": 3,
+      "rtf": 0.885,
+      "feedSeconds": 0.15,
+      "pipelineSeconds": 9.74,
+      "tailSeconds": 9.589,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "and so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. Ask not what your country can do for you, ask not what your country can do for you.",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 0.8182,
+        "cer": 0.7711,
+        "refUnits": 22,
+        "hypUnits": 40,
+        "edits": 18
+      }
+    },
+    {
+      "file": "synth_fast_jfk.wav",
+      "scenario": "fast",
+      "audioSeconds": 8.15,
+      "segments": 1,
+      "subtitles": 1,
+      "rtf": 0.309,
+      "feedSeconds": 0.1,
+      "pipelineSeconds": 2.52,
+      "tailSeconds": 2.418,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "Ask not what your country can do for you, ask what you can do for your country.",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 0.2273,
+        "cer": 0.2651,
+        "refUnits": 22,
+        "hypUnits": 17,
+        "edits": 5
+      }
+    },
+    {
+      "file": "synth_lowvol_jfk.wav",
+      "scenario": "lowvol",
+      "audioSeconds": 11.0,
+      "segments": 2,
+      "subtitles": 4,
+      "rtf": 2.619,
+      "feedSeconds": 0.15,
+      "pipelineSeconds": 28.81,
+      "tailSeconds": 28.659,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "And so my fellow Americans. Thank you very much. Ask not what your country can do for you, ask what you can do for your country. Ask not what your country can do for your country. Ask not what your country can do for your country.",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 1.0909,
+        "cer": 1.1566,
+        "refUnits": 22,
+        "hypUnits": 46,
+        "edits": 24
+      }
+    },
+    {
+      "file": "synth_multi_jfk.wav",
+      "scenario": "multi",
+      "audioSeconds": 11.35,
+      "segments": 1,
+      "subtitles": 1,
+      "rtf": 0.226,
+      "feedSeconds": 0.15,
+      "pipelineSeconds": 2.57,
+      "tailSeconds": 2.423,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "Ask not what your country can do for you. Ask not what your country can do for your country.",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 0.3636,
+        "cer": 0.3976,
+        "refUnits": 22,
+        "hypUnits": 19,
+        "edits": 8
+      }
+    },
+    {
+      "file": "synth_noise_jfk.wav",
+      "scenario": "noise",
+      "audioSeconds": 11.0,
+      "segments": 2,
+      "subtitles": 2,
+      "rtf": 1.866,
+      "feedSeconds": 0.14,
+      "pipelineSeconds": 20.52,
+      "tailSeconds": 20.38,
+      "realtime": false,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "And so my fellow America. Ask NOT what your country can do for you. Ask what you can do for your country.",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 0.0455,
+        "cer": 0.0241,
+        "refUnits": 22,
+        "hypUnits": 22,
+        "edits": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# CI 冻结的历史评测夹具：按原始字节存储，禁止换行归一化
+packaging/eval/long-realtime.json -text
+packaging/eval/p2_probe_short_clean.json -text
+packaging/eval/real_zhlecture_ab4_phrases.phrases-on.json -text
+packaging/eval/short-terms.json -text
+packaging/eval/short.json -text

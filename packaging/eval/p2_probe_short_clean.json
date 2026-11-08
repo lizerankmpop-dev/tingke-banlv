@@ -1,0 +1,112 @@
+{
+  "generatedAt": "2026-10-10T17:34:41+08:00",
+  "config": {
+    "model": "base",
+    "language": "zh",
+    "termLanguage": "zh",
+    "terms": "on",
+    "domain": "",
+    "realtime": true,
+    "maxWer": null,
+    "termPromptMd5": "d41d8cd98f00b204e9800998ecf8427e",
+    "termPromptSections": {
+      "custom": 0,
+      "discovered": 0,
+      "domain": 0,
+      "phrases": 0
+    }
+  },
+  "summary": {
+    "files": 1,
+    "failed": 0,
+    "withReference": 1,
+    "meanWer": 0.1847,
+    "meanCer": 0.1847,
+    "meanRtf": null,
+    "maxRtf": null,
+    "maxTailSeconds": 2.271,
+    "totalDropped": 0,
+    "totalMerged": 0,
+    "totalSegments": 6,
+    "totalSubtitles": 9,
+    "totalInSegments": 6,
+    "totalOutSegments": 9,
+    "totalRepetitionEvents": 0,
+    "degradedFiles": [],
+    "filesWithMoreSubtitlesThanSegments": [
+      "short_zhlecture_cnn.wav"
+    ],
+    "termPromptChars": 0,
+    "peakLatency": null,
+    "meanLatency": null,
+    "byScenario": {
+      "other": {
+        "files": 1,
+        "meanWer": 0.1847,
+        "meanCer": 0.1847,
+        "meanRtf": null
+      }
+    }
+  },
+  "verdict": {
+    "passed": true,
+    "notes": [
+      "✓ 管道连通：6 个片段 → 9 条字幕",
+      "✓ 未丢弃任何片段",
+      "✓ 未触发合并降级",
+      "— 实时模式不计算 RTF（恒 ≈1 无信息量）；收尾最长 2.271s（大 = 结束时有积压）",
+      "— 平均 WER 0.1847｜CER 0.1847（1 个有逐字稿）",
+      "⚠ 以下文件片段数与字幕数不等，未做延迟配对（延迟数字缺失是如实标记，不是算错）：short_zhlecture_cnn.wav"
+    ]
+  },
+  "results": [
+    {
+      "file": "short_zhlecture_cnn.wav",
+      "scenario": "other",
+      "audioSeconds": 80.52,
+      "segments": 6,
+      "subtitles": 9,
+      "rtf": null,
+      "feedSeconds": 80.52,
+      "pipelineSeconds": 82.79,
+      "tailSeconds": 2.271,
+      "realtime": true,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "同学们好,今天这节课我们来讲《卷机神经》网络,以及它背后最重要的训练算法,反向传播。 这部分内容是深度学习的核心,也是后面所有模型的基础,希望大家认真听。 我们先回顾一个概念,什么叫神经网络。 简单说,它是有很多曾神经元堆叠起来的韩术逼近器,每一层做的事情都是对上一层的输出,做一次现行变换,再接一个非现性的几乎韩术。 常用的几乎韩术游,sick mode, tan和锐炉,其中锐炉计算最简单,收脸也最快。 那么问题来了,如果只做线形变换,多层网络和单层网络其实是等价的。 正因为有了非线性几乎韩术,网络才具备了你和复杂韩术的能力。 这一点非常关键,很多同学在这里会绕不够弯。 一定要想清楚。 接下来讲卷机。 卷机这个概念来自信号处理, 它的本质是用一个小的卷机盒, 再输入特征图上滑动, 每一步做一次加卷球盒。 卷机盒的权重是共享的, 也就是说同一组参数在整张图上反复使用, 这就是所谓参数共享, 它让模型的参数量大幅下降。",
+      "reference": "同学们好，今天这节课我们来讲卷积神经网络，以及它背后最重要的训练算法，反向传播。这部分内容是深度学习的核心，也是后面所有模型的基础，希望大家认真听。我们先回顾一个概念，什么叫神经网络。简单说，它是由很多层神经元堆叠起来的函数逼近器，每一层做的事情都是对上一层的输出做一次线性变换，再接一个非线性的激活函数。常用的激活函数有sigmoid、tanh和relu，其中relu计算最简单，收敛也最快。那么问题来了，如果只做线性变换，多层网络和单层网络其实是等价的。正因为有了非线性激活函数，网络才具备了拟合复杂函数的能力。这一点非常关键，很多同学在这里会绕不过弯，一定要想清楚。接下来讲卷积。卷积这个概念来自信号处理，它的本质是用一个小的卷积核，在输入特征图上滑动，每一步做一次加权求和。这个操作我们称为convolution。卷积核的权重是共享的，也就是说同一组参数在整张图上反复使用，这就是所谓参数共享，它让模型的参数量大幅下降。",
+      "referenceSource": "short_zhlecture_cnn.txt",
+      "termPromptChars": 0,
+      "termPromptDegraded": false,
+      "termAutoDegrade": true,
+      "repetitionEvents": 0,
+      "degradeEvents": 0,
+      "promptTokens": 74,
+      "promptBudget": 220,
+      "promptTokenExact": true,
+      "droppedTerms": [],
+      "lastRepeat": "未检测到重复循环（窗内重复率 0.000，最长重复 0 字符）",
+      "inSegments": 6,
+      "outSegments": 9,
+      "paired": false,
+      "latency": {
+        "mean": null,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": null,
+        "firstHalfMean": null,
+        "secondHalfMean": null
+      },
+      "accuracy": {
+        "wer": 0.1847,
+        "cer": 0.1847,
+        "refUnits": 379,
+        "hypUnits": 356,
+        "edits": 70
+      }
+    }
+  ]
+}

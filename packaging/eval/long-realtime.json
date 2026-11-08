@@ -1,0 +1,868 @@
+{
+  "generatedAt": "2026-10-06T18:21:55+08:00",
+  "config": {
+    "model": "base",
+    "language": "auto",
+    "terms": "off",
+    "domain": "",
+    "realtime": true,
+    "maxWer": null
+  },
+  "summary": {
+    "files": 1,
+    "failed": 0,
+    "withReference": 1,
+    "meanWer": 0.0019,
+    "meanCer": 0.0005,
+    "meanRtf": null,
+    "maxRtf": null,
+    "maxTailSeconds": 1.967,
+    "totalDropped": 0,
+    "totalMerged": 0,
+    "totalSegments": 98,
+    "totalSubtitles": 98,
+    "peakLatency": 1.246,
+    "meanLatency": 0.716,
+    "byScenario": {
+      "long": {
+        "files": 1,
+        "meanWer": 0.0019,
+        "meanCer": 0.0005,
+        "meanRtf": null
+      }
+    }
+  },
+  "verdict": {
+    "passed": true,
+    "notes": [
+      "✓ 管道连通：98 个片段 → 98 条字幕",
+      "✓ 未丢弃任何片段",
+      "✓ 未触发合并降级",
+      "— 实时模式不计算 RTF（恒 ≈1 无信息量）；收尾最长 1.967s（大 = 结束时有积压）",
+      "— 平均 WER 0.0019｜CER 0.0005（1 个有逐字稿）"
+    ]
+  },
+  "results": [
+    {
+      "file": "synth_long_jfk.wav",
+      "scenario": "long",
+      "audioSeconds": 720.0,
+      "segments": 98,
+      "subtitles": 98,
+      "rtf": null,
+      "feedSeconds": 720.0,
+      "pipelineSeconds": 721.97,
+      "tailSeconds": 1.967,
+      "realtime": true,
+      "starvationSeconds": 0.0,
+      "droppedSegments": 0,
+      "mergedCalls": 0,
+      "backlogRemaining": 0,
+      "drained": true,
+      "recognition": "And so my fellow Americans! Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so, my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans! Ask not what your country can do for you, ask what you can do for your country. And so, my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so, my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so, my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so am I fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so, my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so, my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you. Ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country. And so my fellow Americans. Ask not what your country can do for you, ask what you can do for your country.",
+      "reference": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.\nAnd so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+      "paired": true,
+      "latency": {
+        "mean": 0.716,
+        "p50": 0.758,
+        "p95": 1.082,
+        "max": 1.246,
+        "firstHalfMean": 0.729,
+        "secondHalfMean": 0.704
+      },
+      "accuracy": {
+        "wer": 0.0019,
+        "cer": 0.0005,
+        "refUnits": 1078,
+        "hypUnits": 1079,
+        "edits": 2
+      },
+      "segmentDetail": [
+        {
+          "index": 0,
+          "audioStart": 0.352,
+          "audioEnd": 3.392,
+          "duration": 3.04,
+          "latency": 0.714,
+          "text": "And so my fellow Americans!"
+        },
+        {
+          "index": 1,
+          "audioStart": 3.296,
+          "audioEnd": 12.064,
+          "duration": 8.768,
+          "latency": 0.529,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 2,
+          "audioStart": 14.336,
+          "audioEnd": 17.536,
+          "duration": 3.2,
+          "latency": 0.873,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 3,
+          "audioStart": 17.312,
+          "audioEnd": 26.048,
+          "duration": 8.736,
+          "latency": 1.246,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 4,
+          "audioStart": 26.272,
+          "audioEnd": 29.408,
+          "duration": 3.136,
+          "latency": 0.831,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 5,
+          "audioStart": 29.216,
+          "audioEnd": 38.016,
+          "duration": 8.8,
+          "latency": 1.102,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 6,
+          "audioStart": 39.744,
+          "audioEnd": 42.912,
+          "duration": 3.168,
+          "latency": 0.75,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 7,
+          "audioStart": 42.688,
+          "audioEnd": 51.456,
+          "duration": 8.768,
+          "latency": 0.752,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 8,
+          "audioStart": 55.296,
+          "audioEnd": 58.496,
+          "duration": 3.2,
+          "latency": 0.464,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 9,
+          "audioStart": 58.272,
+          "audioEnd": 67.04,
+          "duration": 8.768,
+          "latency": 0.758,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 10,
+          "audioStart": 69.408,
+          "audioEnd": 72.576,
+          "duration": 3.168,
+          "latency": 0.454,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 11,
+          "audioStart": 72.352,
+          "audioEnd": 81.12,
+          "duration": 8.768,
+          "latency": 0.767,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 12,
+          "audioStart": 81.856,
+          "audioEnd": 85.024,
+          "duration": 3.168,
+          "latency": 0.458,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 13,
+          "audioStart": 84.832,
+          "audioEnd": 93.6,
+          "duration": 8.768,
+          "latency": 0.716,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 14,
+          "audioStart": 98.56,
+          "audioEnd": 101.696,
+          "duration": 3.136,
+          "latency": 0.47,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 15,
+          "audioStart": 101.504,
+          "audioEnd": 110.272,
+          "duration": 8.768,
+          "latency": 0.743,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 16,
+          "audioStart": 114.592,
+          "audioEnd": 117.76,
+          "duration": 3.168,
+          "latency": 0.464,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 17,
+          "audioStart": 117.536,
+          "audioEnd": 126.304,
+          "duration": 8.768,
+          "latency": 0.775,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 18,
+          "audioStart": 129.952,
+          "audioEnd": 133.12,
+          "duration": 3.168,
+          "latency": 0.451,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 19,
+          "audioStart": 132.896,
+          "audioEnd": 141.632,
+          "duration": 8.736,
+          "latency": 0.769,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 20,
+          "audioStart": 145.088,
+          "audioEnd": 148.256,
+          "duration": 3.168,
+          "latency": 0.441,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 21,
+          "audioStart": 148.032,
+          "audioEnd": 156.8,
+          "duration": 8.768,
+          "latency": 0.745,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 22,
+          "audioStart": 157.184,
+          "audioEnd": 160.352,
+          "duration": 3.168,
+          "latency": 0.445,
+          "text": "And so, my fellow Americans."
+        },
+        {
+          "index": 23,
+          "audioStart": 160.128,
+          "audioEnd": 168.896,
+          "duration": 8.768,
+          "latency": 0.772,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 24,
+          "audioStart": 172.448,
+          "audioEnd": 175.648,
+          "duration": 3.2,
+          "latency": 0.462,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 25,
+          "audioStart": 175.424,
+          "audioEnd": 184.192,
+          "duration": 8.768,
+          "latency": 0.789,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 26,
+          "audioStart": 188.832,
+          "audioEnd": 192.0,
+          "duration": 3.168,
+          "latency": 0.455,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 27,
+          "audioStart": 191.776,
+          "audioEnd": 200.544,
+          "duration": 8.768,
+          "latency": 0.779,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 28,
+          "audioStart": 204.64,
+          "audioEnd": 207.808,
+          "duration": 3.168,
+          "latency": 0.447,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 29,
+          "audioStart": 207.616,
+          "audioEnd": 216.384,
+          "duration": 8.768,
+          "latency": 0.767,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 30,
+          "audioStart": 218.688,
+          "audioEnd": 221.888,
+          "duration": 3.2,
+          "latency": 0.474,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 31,
+          "audioStart": 221.664,
+          "audioEnd": 230.432,
+          "duration": 8.768,
+          "latency": 0.804,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 32,
+          "audioStart": 234.24,
+          "audioEnd": 237.408,
+          "duration": 3.168,
+          "latency": 0.469,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 33,
+          "audioStart": 237.216,
+          "audioEnd": 245.984,
+          "duration": 8.768,
+          "latency": 1.082,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 34,
+          "audioStart": 249.472,
+          "audioEnd": 252.64,
+          "duration": 3.168,
+          "latency": 0.773,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 35,
+          "audioStart": 252.416,
+          "audioEnd": 261.184,
+          "duration": 8.768,
+          "latency": 1.246,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 36,
+          "audioStart": 265.344,
+          "audioEnd": 268.544,
+          "duration": 3.2,
+          "latency": 0.811,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 37,
+          "audioStart": 268.32,
+          "audioEnd": 277.056,
+          "duration": 8.736,
+          "latency": 1.218,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 38,
+          "audioStart": 278.528,
+          "audioEnd": 281.696,
+          "duration": 3.168,
+          "latency": 0.933,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 39,
+          "audioStart": 281.472,
+          "audioEnd": 290.24,
+          "duration": 8.768,
+          "latency": 1.192,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 40,
+          "audioStart": 291.392,
+          "audioEnd": 294.56,
+          "duration": 3.168,
+          "latency": 0.771,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 41,
+          "audioStart": 294.368,
+          "audioEnd": 303.136,
+          "duration": 8.768,
+          "latency": 1.063,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 42,
+          "audioStart": 306.912,
+          "audioEnd": 310.08,
+          "duration": 3.168,
+          "latency": 0.763,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 43,
+          "audioStart": 309.856,
+          "audioEnd": 318.624,
+          "duration": 8.768,
+          "latency": 0.738,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 44,
+          "audioStart": 322.24,
+          "audioEnd": 325.408,
+          "duration": 3.168,
+          "latency": 0.53,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 45,
+          "audioStart": 325.184,
+          "audioEnd": 333.952,
+          "duration": 8.768,
+          "latency": 0.791,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 46,
+          "audioStart": 334.752,
+          "audioEnd": 337.952,
+          "duration": 3.2,
+          "latency": 0.509,
+          "text": "And so my fellow Americans!"
+        },
+        {
+          "index": 47,
+          "audioStart": 337.728,
+          "audioEnd": 346.464,
+          "duration": 8.736,
+          "latency": 0.807,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 48,
+          "audioStart": 351.36,
+          "audioEnd": 354.528,
+          "duration": 3.168,
+          "latency": 0.54,
+          "text": "And so, my fellow Americans."
+        },
+        {
+          "index": 49,
+          "audioStart": 354.336,
+          "audioEnd": 363.136,
+          "duration": 8.8,
+          "latency": 0.829,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 50,
+          "audioStart": 363.776,
+          "audioEnd": 366.944,
+          "duration": 3.168,
+          "latency": 0.505,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 51,
+          "audioStart": 366.752,
+          "audioEnd": 375.52,
+          "duration": 8.768,
+          "latency": 0.841,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 52,
+          "audioStart": 378.08,
+          "audioEnd": 381.248,
+          "duration": 3.168,
+          "latency": 0.527,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 53,
+          "audioStart": 381.056,
+          "audioEnd": 389.824,
+          "duration": 8.768,
+          "latency": 0.851,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 54,
+          "audioStart": 392.224,
+          "audioEnd": 395.392,
+          "duration": 3.168,
+          "latency": 0.545,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 55,
+          "audioStart": 395.168,
+          "audioEnd": 403.904,
+          "duration": 8.736,
+          "latency": 0.833,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 56,
+          "audioStart": 408.992,
+          "audioEnd": 412.16,
+          "duration": 3.168,
+          "latency": 0.529,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 57,
+          "audioStart": 411.936,
+          "audioEnd": 420.704,
+          "duration": 8.768,
+          "latency": 0.866,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 58,
+          "audioStart": 424.48,
+          "audioEnd": 427.648,
+          "duration": 3.168,
+          "latency": 0.532,
+          "text": "And so, my fellow Americans."
+        },
+        {
+          "index": 59,
+          "audioStart": 427.424,
+          "audioEnd": 436.192,
+          "duration": 8.768,
+          "latency": 0.851,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 60,
+          "audioStart": 438.24,
+          "audioEnd": 441.408,
+          "duration": 3.168,
+          "latency": 0.544,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 61,
+          "audioStart": 441.184,
+          "audioEnd": 449.824,
+          "duration": 8.64,
+          "latency": 0.871,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 62,
+          "audioStart": 453.44,
+          "audioEnd": 456.64,
+          "duration": 3.2,
+          "latency": 0.526,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 63,
+          "audioStart": 456.416,
+          "audioEnd": 465.184,
+          "duration": 8.768,
+          "latency": 0.845,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 64,
+          "audioStart": 466.144,
+          "audioEnd": 469.312,
+          "duration": 3.168,
+          "latency": 0.56,
+          "text": "And so, my fellow Americans."
+        },
+        {
+          "index": 65,
+          "audioStart": 469.088,
+          "audioEnd": 477.856,
+          "duration": 8.768,
+          "latency": 0.836,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 66,
+          "audioStart": 482.976,
+          "audioEnd": 486.144,
+          "duration": 3.168,
+          "latency": 0.572,
+          "text": "And so am I fellow Americans."
+        },
+        {
+          "index": 67,
+          "audioStart": 485.92,
+          "audioEnd": 494.688,
+          "duration": 8.768,
+          "latency": 0.875,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 68,
+          "audioStart": 497.888,
+          "audioEnd": 501.088,
+          "duration": 3.2,
+          "latency": 0.603,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 69,
+          "audioStart": 500.864,
+          "audioEnd": 509.632,
+          "duration": 8.768,
+          "latency": 0.886,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 70,
+          "audioStart": 512.8,
+          "audioEnd": 515.968,
+          "duration": 3.168,
+          "latency": 0.578,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 71,
+          "audioStart": 515.744,
+          "audioEnd": 524.512,
+          "duration": 8.768,
+          "latency": 0.889,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 72,
+          "audioStart": 529.632,
+          "audioEnd": 532.768,
+          "duration": 3.136,
+          "latency": 0.572,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 73,
+          "audioStart": 532.576,
+          "audioEnd": 541.344,
+          "duration": 8.768,
+          "latency": 0.793,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 74,
+          "audioStart": 544.416,
+          "audioEnd": 547.584,
+          "duration": 3.168,
+          "latency": 0.528,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 75,
+          "audioStart": 547.36,
+          "audioEnd": 556.128,
+          "duration": 8.768,
+          "latency": 0.84,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 76,
+          "audioStart": 560.256,
+          "audioEnd": 563.424,
+          "duration": 3.168,
+          "latency": 0.576,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 77,
+          "audioStart": 563.2,
+          "audioEnd": 571.968,
+          "duration": 8.768,
+          "latency": 0.843,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 78,
+          "audioStart": 575.488,
+          "audioEnd": 578.688,
+          "duration": 3.2,
+          "latency": 0.552,
+          "text": "And so, my fellow Americans."
+        },
+        {
+          "index": 79,
+          "audioStart": 578.464,
+          "audioEnd": 587.232,
+          "duration": 8.768,
+          "latency": 0.865,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 80,
+          "audioStart": 589.536,
+          "audioEnd": 592.704,
+          "duration": 3.168,
+          "latency": 0.541,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 81,
+          "audioStart": 592.48,
+          "audioEnd": 601.248,
+          "duration": 8.768,
+          "latency": 0.837,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 82,
+          "audioStart": 603.808,
+          "audioEnd": 606.976,
+          "duration": 3.168,
+          "latency": 0.523,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 83,
+          "audioStart": 606.752,
+          "audioEnd": 615.392,
+          "duration": 8.64,
+          "latency": 0.852,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 84,
+          "audioStart": 620.192,
+          "audioEnd": 623.36,
+          "duration": 3.168,
+          "latency": 0.527,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 85,
+          "audioStart": 623.168,
+          "audioEnd": 631.936,
+          "duration": 8.768,
+          "latency": 0.902,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 86,
+          "audioStart": 635.68,
+          "audioEnd": 638.848,
+          "duration": 3.168,
+          "latency": 0.579,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 87,
+          "audioStart": 638.624,
+          "audioEnd": 647.392,
+          "duration": 8.768,
+          "latency": 0.865,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 88,
+          "audioStart": 651.776,
+          "audioEnd": 654.976,
+          "duration": 3.2,
+          "latency": 0.514,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 89,
+          "audioStart": 654.752,
+          "audioEnd": 663.52,
+          "duration": 8.768,
+          "latency": 0.821,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 90,
+          "audioStart": 665.024,
+          "audioEnd": 668.192,
+          "duration": 3.168,
+          "latency": 0.535,
+          "text": "And so, my fellow Americans."
+        },
+        {
+          "index": 91,
+          "audioStart": 667.968,
+          "audioEnd": 676.736,
+          "duration": 8.768,
+          "latency": 0.854,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 92,
+          "audioStart": 676.896,
+          "audioEnd": 680.032,
+          "duration": 3.136,
+          "latency": 0.612,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 93,
+          "audioStart": 679.872,
+          "audioEnd": 688.64,
+          "duration": 8.768,
+          "latency": 0.828,
+          "text": "Ask not what your country can do for you. Ask what you can do for your country."
+        },
+        {
+          "index": 94,
+          "audioStart": 693.024,
+          "audioEnd": 696.192,
+          "duration": 3.168,
+          "latency": 0.551,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 95,
+          "audioStart": 695.968,
+          "audioEnd": 704.736,
+          "duration": 8.768,
+          "latency": 0.896,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        },
+        {
+          "index": 96,
+          "audioStart": 708.384,
+          "audioEnd": 711.584,
+          "duration": 3.2,
+          "latency": 0.539,
+          "text": "And so my fellow Americans."
+        },
+        {
+          "index": 97,
+          "audioStart": 711.36,
+          "audioEnd": 720.096,
+          "duration": 8.736,
+          "latency": 0.859,
+          "text": "Ask not what your country can do for you, ask what you can do for your country."
+        }
+      ]
+    }
+  ]
+}
