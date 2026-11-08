@@ -403,7 +403,6 @@ class ASRPipeline:
         combined_text = " ".join(self._accumulated_text[-10:])
 
         # 异步提取术语（不阻塞主流程）
-        import threading
         t = threading.Thread(
             target=self._extract_terms,
             args=(combined_text,),

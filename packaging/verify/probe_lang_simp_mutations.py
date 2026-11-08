@@ -305,9 +305,9 @@ def main() -> int:
             passed, tail = run_pytest(node)
         finally:
             path.write_bytes(original)
-            if path.read_bytes() != original:
-                print(f"!! 还原失败，请立即检查 {rel}")
-                return 2
+        if path.read_bytes() != original:
+            print(f"!! 还原失败，请立即检查 {rel}")
+            return 2
 
         caught = not passed
         mark = "✓ 抓住" if caught else "✗ 漏掉"

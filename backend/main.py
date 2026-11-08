@@ -133,7 +133,7 @@ def _resolve_dist_dir() -> Path | None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(application: FastAPI):
     """应用生命周期管理"""
     # 🔴 单实例检测要在**最前面**（2026-10-30）
     #    音频设备只能被一个回环流使用 ⇒ 两个实例会互相抢

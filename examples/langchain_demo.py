@@ -104,9 +104,7 @@ def _demo_rag() -> None:
 
 def _demo_interrupt() -> None:
     """演示 interrupt()：图暂停待审 → 学生确认 → 恢复定稿"""
-    import json
 
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -157,9 +155,7 @@ def _demo_interrupt() -> None:
 
 def _demo_workflow() -> None:
     """演示多 Agent 协作：讲师生成 → 审校核对 → 不通过则退回重写"""
-    import json
 
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -222,7 +218,6 @@ def _demo_workflow() -> None:
 
 def _demo_memory() -> None:
     """演示 Memory：同一 thread 历史累积，不同 thread 相互隔离"""
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
 

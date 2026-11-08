@@ -17,6 +17,7 @@
 实测数值固化成回归断言：阈值一旦被改动，`test_calibration_margin` 会立刻失败。
 """
 
+import math
 import sys
 from pathlib import Path
 
@@ -225,8 +226,8 @@ def test_normalize_strips_punctuation_and_space():
 
 def test_pure_helpers_edge_cases():
     """纯函数边界：空串、超长 n、无重复文本"""
-    assert R.dup_ngram_ratio("", 8) == 0.0
-    assert R.dup_ngram_ratio("abc", 8) == 0.0
+    assert math.isclose(R.dup_ngram_ratio("", 8), 0.0)
+    assert math.isclose(R.dup_ngram_ratio("abc", 8), 0.0)
     assert R.longest_repeat_len("") == 0
     assert R.longest_repeat_len("abcabc", lo=1) == 3
     assert R.top_repeat_gram("abc", 8) == []

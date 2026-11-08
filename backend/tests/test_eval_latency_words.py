@@ -128,7 +128,7 @@ def test_on_subtitle_without_words_marks_none_not_zero(ev):
     r.feed_t0 = 100.0
     r.on_subtitle("无词戳", [])
     assert r.subtitles[0]["audioWordsEnd"] is None
-    assert r.subtitles[0]["audioWordsEnd"] is not 0
+    assert r.subtitles[0]["audioWordsEnd"] != 0
 
 
 def test_on_subtitle_ignores_blank_text(ev):

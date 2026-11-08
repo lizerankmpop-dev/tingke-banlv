@@ -303,7 +303,6 @@ def test_agent_tools_execute_standalone():
 
 def test_agent_runs_tool_call_loop(monkeypatch):
     """Agent 必须能走完「模型决策 → 调工具 → 模型总结」完整循环"""
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -392,7 +391,6 @@ def test_chatqa_falls_back_to_chain_when_agent_fails(monkeypatch):
     qa._agent = BoomAgent()
 
     # 链模式可用（桩掉模型）
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
     monkeypatch.setattr(
         base, "get_chat_model", lambda **kw: FakeListChatModel(responses=["链模式的回答"])
@@ -522,7 +520,6 @@ def test_checkpoint_store_roundtrip():
 
 def test_agent_memory_accumulates_across_turns(monkeypatch):
     """同一 thread 的多轮对话，历史必须逐轮累积"""
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -561,7 +558,6 @@ def test_agent_memory_accumulates_across_turns(monkeypatch):
 
 def test_agent_memory_isolates_threads(monkeypatch):
     """不同 thread 的历史必须互相隔离"""
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -618,7 +614,6 @@ def test_make_thread_config():
 
 def _scripted_model(answers):
     """构造按脚本顺序返回的假模型"""
-    from langchain_core.language_models.fake_chat_models import FakeListChatModel
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
 
@@ -655,7 +650,6 @@ def test_review_loop_graph_structure():
 
 def test_review_loop_passes_when_fact_check_approves(monkeypatch):
     """审校一次通过时，只迭代一轮"""
-    import json
 
     import llm.chains.base as base
     from llm.chains.workflow import build_review_loop
@@ -688,7 +682,6 @@ def test_review_loop_passes_when_fact_check_approves(monkeypatch):
 
 def test_review_loop_retries_when_fact_check_rejects(monkeypatch):
     """审校不通过时必须退回重写，迭代次数增加"""
-    import json
 
     import llm.chains.base as base
     from llm.chains.workflow import build_review_loop
@@ -728,7 +721,6 @@ def test_review_loop_retries_when_fact_check_rejects(monkeypatch):
 
 def test_review_loop_respects_max_iterations(monkeypatch):
     """审校永远不通过时，必须在 max_iterations 后停止"""
-    import json
 
     import llm.chains.base as base
     from llm.chains.workflow import build_review_loop
@@ -823,7 +815,6 @@ def test_workflow_graph_includes_human_review():
 
 def test_interrupt_pauses_and_resumes(monkeypatch):
     """interrupt 必须暂停在待审状态，恢复后才继续到定稿"""
-    import json
 
     import llm.chains.base as base
     from llm.chains.workflow import LearningLoop
@@ -854,7 +845,6 @@ def test_interrupt_pauses_and_resumes(monkeypatch):
 
 def test_interrupt_rejection_triggers_rewrite(monkeypatch):
     """学生要求修改时应退回重写，并再次停在待审"""
-    import json
 
     import llm.chains.base as base
     from llm.chains.workflow import LearningLoop
@@ -880,7 +870,6 @@ def test_interrupt_rejection_triggers_rewrite(monkeypatch):
 
 def test_learning_loop_without_human_review_runs_to_end(monkeypatch):
     """不启用人工审批时应一次跑完（兼容原有调用方式）"""
-    import json
 
     import llm.chains.base as base
     from llm.chains.workflow import LearningLoop

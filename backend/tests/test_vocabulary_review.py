@@ -9,6 +9,7 @@
   3. **导入备份不能删旧词** —— 导入一份旧备份把后来的新词冲掉是典型事故
 """
 
+import math
 import asyncio
 import sqlite3
 import time
@@ -178,11 +179,11 @@ def test_review_clamps_absurd_schedule(tmp_path, monkeypatch):
 
 
 def test_safe_numeric_helpers():
-    assert _safe_float(None, 2.5, 1.3, 5.0) == 2.5
-    assert _safe_float("x", 2.5, 1.3, 5.0) == 2.5
-    assert _safe_float(float("nan"), 2.5, 1.3, 5.0) == 2.5
-    assert _safe_float(float("inf"), 2.5, 1.3, 5.0) == 2.5
-    assert _safe_float(9.9, 2.5, 1.3, 5.0) == 5.0
+    assert math.isclose(_safe_float(None, 2.5, 1.3, 5.0), 2.5)
+    assert math.isclose(_safe_float("x", 2.5, 1.3, 5.0), 2.5)
+    assert math.isclose(_safe_float(float("nan"), 2.5, 1.3, 5.0), 2.5)
+    assert math.isclose(_safe_float(float("inf"), 2.5, 1.3, 5.0), 2.5)
+    assert math.isclose(_safe_float(9.9, 2.5, 1.3, 5.0), 5.0)
     assert _safe_int("7", 0, 0, 10) == 7
     assert _safe_int(None, 3, 0, 10) == 3
     assert _safe_int(-4, 0, 0, 10) == 0

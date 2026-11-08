@@ -16,6 +16,7 @@ ASR 链路集成测试
     TINGKEBANLV_TEST_MODEL_DIR=/path/to/whisper_models   # 内含 models--Systran--faster-whisper-<size>
 """
 
+import math
 import asyncio
 import os
 import sys
@@ -512,7 +513,7 @@ class TestBackpressure:
         b = np.full(8000, 0.25, dtype=np.float32)      # 0.5s @2.5
         audio, start, duration = WhisperEngine._merge_jobs([(a, 0.0, 1.0), (b, 2.5, 0.5)])
 
-        assert start == 0.0
+        assert math.isclose(start, 0.0)
         assert duration == pytest.approx(3.0, abs=0.05)
         # 1s 语音 + 1.5s 静音 + 0.5s 语音 = 3s
         assert len(audio) == pytest.approx(16000 * 3.0, abs=1600)
@@ -1207,8 +1208,6 @@ class TestTruncateToTokensEdge:
 
         单字 ≈ 4 token 这个性质只有它能体现；不可用时返回 None，由调用方跳过。
         """
-        import os
-        from pathlib import Path
 
         candidates = []
         env = os.environ.get("TINGKEBANLV_TOKENIZER_JSON")
@@ -1233,7 +1232,6 @@ class TestTruncateToTokensEdge:
     def _require_tokenizer(self):
         count = self._real_tokenizer()
         if count is None:
-            import pytest
             pytest.skip("真 tokenizer 不可用（设 TINGKEBANLV_TOKENIZER_JSON 可指定）")
         return count
 
