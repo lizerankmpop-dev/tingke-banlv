@@ -102,7 +102,7 @@ def read_text(path: Path) -> tuple[str, list[str]]:
 
 def audit(
     text: str,
-    audio_seconds: float | None,
+    audio_sec: float | None,
     draft_text: str | None,
     notes: list[str] | None = None,
 ) -> list[Finding]:
@@ -123,26 +123,26 @@ def audit(
     else:
         out.append(Finding("OK", "字数下限", f"{chars} 字 ≥ {MIN_CHARS}"))
 
-    if audio_seconds:
+    if audio_sec:
         # 🔴 语速检查按语言换口径（2026-10-26）：中文字/秒，英文词/分钟。
         # 判据是「文本量与时长是否匹配」，不是「字符密度」——
         # 用错单位会让英文稿稳定误判 FAIL（见 CPS_RANGE 上方说明）。
         cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
         is_zh = cjk * 6 >= max(1, chars)      # 六分之一以上的非空白字符是汉字 ⇒ 判中文稿
         if is_zh:
-            rate = chars / audio_seconds
+            rate = chars / audio_sec
             lo, hi = CPS_RANGE
             out.append(Finding(
                 "OK" if lo <= rate <= hi else "FAIL", "语速区间",
-                f"{chars} 字 / {audio_seconds / 60:.2f} 分钟 = {rate:.2f} 字/秒"
+                f"{chars} 字 / {audio_sec / 60:.2f} 分钟 = {rate:.2f} 字/秒"
                 f"（中文合理区间 {lo}~{hi}）"))
         else:
             words = len(re.findall(r"[A-Za-z0-9']+", text))
-            wpm = words / audio_seconds * 60
+            wpm = words / audio_sec * 60
             lo, hi = WPM_RANGE
             out.append(Finding(
                 "OK" if lo <= wpm <= hi else "FAIL", "语速区间",
-                f"{words} 词 / {audio_seconds / 60:.2f} 分钟 = {wpm:.1f} 词/分"
+                f"{words} 词 / {audio_sec / 60:.2f} 分钟 = {wpm:.1f} 词/分"
                 f"（英文合理区间 {lo:.0f}~{hi:.0f} wpm）"))
     else:
         out.append(Finding("WARN", "语速区间", "未提供音频，跳过（时长对不上通常是截断或串稿）"))

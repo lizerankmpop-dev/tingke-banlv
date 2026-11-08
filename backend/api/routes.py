@@ -934,7 +934,6 @@ async def preview_terminology(req: PreviewTerminologyRequest):
 @router.get("/audio/check-loopback")
 async def check_loopback():
     """检查 Loopback 设备是否可用，返回安装指引"""
-    import asyncio
 
     from audio.capture import AudioCapture, AUDIO_BACKEND, _HAS_LOOPBACK_API
 

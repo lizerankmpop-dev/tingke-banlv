@@ -259,7 +259,7 @@ fails = [r for r in results if r[0] == FAIL]
 print(f"总计 {len(results)} 项检查，通过 {len(results)-len(fails)}，失败 {len(fails)}")
 if fails:
     print("\n失败项：")
-    for _, name, detail in fails:
-        print(f"  - {name} {detail}")
+    for _, fail_name, fail_detail in fails:
+        print(f"  - {fail_name} {fail_detail}")
     sys.exit(1)
 print("全部通过 ✓")

@@ -417,7 +417,7 @@ def http_ok(url: str, timeout: float = 5.0) -> bool:
     try:
         with _NO_PROXY_OPENER.open(url, timeout=timeout) as resp:
             return resp.status == 200
-    except (urllib.error.URLError, OSError, ValueError):
+    except (OSError, ValueError):
         return False
 
 

@@ -202,10 +202,10 @@ def main() -> int:
                     print(f"        另有用例也变红 → {others}（该变异确实牵动多条规则）")
         finally:
             _write_src(original_text, eol)
-            now_md5 = hashlib.md5(SRC.read_bytes()).hexdigest()
-            if now_md5 != original_md5:
-                print(f"!! 还原失败！md5 {original_md5} -> {now_md5}，请手动 checkout")
-                return 2
+        now_md5 = hashlib.md5(SRC.read_bytes()).hexdigest()
+        if now_md5 != original_md5:
+            print(f"!! 还原失败！md5 {original_md5} -> {now_md5}，请手动 checkout")
+            return 2
 
     print()
     if failures:
