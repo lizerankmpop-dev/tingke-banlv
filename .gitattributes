@@ -5,3 +5,9 @@ packaging/eval/real_zhlecture_ab4_phrases.phrases-on.json -text
 packaging/eval/short-terms.json -text
 packaging/eval/short.json -text
 ci/backend/requirements-linux-py311.lock -text
+# 后端 CI 构建与脚本：强制 LF，避免容器内 shebang 与 Docker 解析问题
+ci/backend/Dockerfile.py311-v3 text eol=lf
+ci/backend/fetch_model.py text eol=lf
+ci/backend/verify-environment.sh text eol=lf
+ci/backend/run-backend-tests.sh text eol=lf
+ci/backend/prepare_test_resources.py text eol=lf

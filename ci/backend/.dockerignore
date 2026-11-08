@@ -1,3 +1,7 @@
 **
 !Dockerfile
+!Dockerfile.py311-v3
 !.dockerignore
+!requirements-linux-py311.lock
+!fetch_model.py
+!verify-environment.sh

@@ -1,0 +1,61 @@
+FROM python:3.11-slim-bookworm
+
+ARG MODEL_REVISION=ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66
+ARG LOCK_SHA256=c7fa61338a14f0a437e355b6b297e62a948e8eea0d993ad25deeece7f60835d3
+ARG HF_ENDPOINT=https://hf-mirror.com
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HUB_DISABLE_XET=1 \
+    HF_HUB_DISABLE_TELEMETRY=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential \
+       portaudio19-dev \
+       libsndfile1 \
+       ffmpeg \
+       ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -c "import sys; assert sys.version_info[:2] == (3, 11)" \
+    && test -f /usr/include/portaudio.h
+
+RUN printf '#include <stdlib.h>\n#include <portaudio.h>\nint main(void) { return Pa_GetVersion() > 0 ? EXIT_SUCCESS : EXIT_FAILURE; }\n' \
+    | gcc -x c - -o /tmp/ci-portaudio-check -lportaudio \
+    && /tmp/ci-portaudio-check \
+    && rm /tmp/ci-portaudio-check
+
+WORKDIR /opt/tingke-ci
+COPY requirements-linux-py311.lock /opt/tingke-ci/requirements.lock
+RUN echo "${LOCK_SHA256}  /opt/tingke-ci/requirements.lock" | sha256sum -c -
+
+RUN python -m pip install --no-cache-dir --no-deps --requirement /opt/tingke-ci/requirements.lock \
+    && python -m pip check > /opt/tingke-ci/pip-check.txt
+
+COPY fetch_model.py /tmp/fetch_model.py
+RUN HF_ENDPOINT="${HF_ENDPOINT}" \
+    MODEL_REPO_ID="Systran/faster-whisper-base" \
+    MODEL_REVISION="${MODEL_REVISION}" \
+    MODEL_DIR="/opt/tingke-ci/model" \
+    TINGKE_CI_ROOT="/opt/tingke-ci" \
+    python /tmp/fetch_model.py \
+    && rm -f /tmp/fetch_model.py
+
+RUN cd /opt/tingke-ci/model \
+    && sha256sum -c /opt/tingke-ci/model.sha256
+
+RUN { \
+        printf 'python_version=%s\n' "$(python -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')"; \
+        printf 'lock_sha256=%s\n' "$(sha256sum /opt/tingke-ci/requirements.lock | cut -d' ' -f1)"; \
+        printf 'model_repo_id=%s\n' "Systran/faster-whisper-base"; \
+        printf 'model_revision=%s\n' "$(cat /opt/tingke-ci/model-revision.txt)"; \
+        printf 'pip_check=ok\n'; \
+    } > /opt/tingke-ci/environment.txt
+
+COPY verify-environment.sh /opt/tingke-ci/verify-environment.sh
+RUN chmod 0755 /opt/tingke-ci/verify-environment.sh \
+    && /opt/tingke-ci/verify-environment.sh
+
+CMD ["/opt/tingke-ci/verify-environment.sh"]
