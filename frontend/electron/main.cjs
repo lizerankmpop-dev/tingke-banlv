@@ -425,7 +425,17 @@ function resolvePythonCommand() {
     return { command: process.env.TINGKEBANLV_PYTHON, args: [], display: process.env.TINGKEBANLV_PYTHON, frozen: false };
   }
 
-  // 3) 项目自带 venv
+  // 3) 贡献者机器的标准 venv：backend/.venv
+  //    这是 README/复刻手册教的标准流程（python -m venv .venv），
+  //    必须在「开发机布局」之前探测——外部贡献者机器上没有 安装空间/。
+  const backendVenv = process.platform === 'win32'
+    ? path.join(backendDir, '.venv', 'Scripts', 'python.exe')
+    : path.join(backendDir, '.venv', 'bin', 'python');
+  if (fs.existsSync(backendVenv)) {
+    return { command: backendVenv, args: [], display: backendVenv, frozen: false };
+  }
+
+  // 4) 开发机自带 venv（安装空间布局）
   const venvPython = process.platform === 'win32'
     ? path.join(backendDir, '..', '..', '安装空间', 'venv', 'Scripts', 'python.exe')
     : path.join(backendDir, '..', '..', '安装空间', 'venv', 'bin', 'python');
@@ -433,7 +443,7 @@ function resolvePythonCommand() {
     return { command: venvPython, args: [], display: venvPython, frozen: false };
   }
 
-  // 4) 系统解释器候选（顺序即优先级）
+  // 5) 系统解释器候选（顺序即优先级）
   const candidates = process.platform === 'win32'
     ? [
         { command: 'py', args: ['-3'], display: 'py -3' },

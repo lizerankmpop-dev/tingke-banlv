@@ -211,7 +211,7 @@ python main.py
 
 `frontend/electron/main.cjs` 的逻辑（不可省略）：
 1. 启动时**动态挑选一个空闲端口**（避免与已占用端口冲突）。
-2. 开发模式：用系统 Python 直接 `spawn python ../backend/main.py`；打包模式：spawn PyInstaller 冻结出的 `backend-server/backend-server.exe`。
+2. 开发模式按以下优先级解析 Python 解释器：`TINGKEBANLV_PYTHON` 环境变量 → `backend/.venv`（贡献者标准流程）→ `安装空间/venv`（开发机布局）→ 系统 `py -3`/`python`（须能 `import fastapi, uvicorn`）；解析到后 `spawn <python> main.py`（工作目录 backend）。打包模式：spawn PyInstaller 冻结出的 `backend-server/backend-server.exe`。
 3. 轮询 `GET /api/ping`，直到返回 ok（超时则弹错误）。
 4. 把端口写入前端可读取的位置（环境变量 `TINGKEBANLV_PORT` / 注入到渲染进程）。
 5. 前端**以 HTTP 轮询（每 500ms）** 而非 WebSocket 与后端通信：`POST /asr/start` 开流，`GET /asr/poll` 取字幕增量。
