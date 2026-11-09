@@ -61,7 +61,8 @@
           "!**/*.pyc",
           "!**/.pytest_cache/**",
           "!tests/**",
-          "!dictionary/_backup_batches/**"
+          "!dictionary/_backup_batches/**",
+          "!.venv/**"
         ]
       },
       {
