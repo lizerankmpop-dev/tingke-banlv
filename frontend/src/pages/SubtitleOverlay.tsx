@@ -6,6 +6,18 @@ import { useOverlayStore } from '../stores/useOverlayStore'
 import OverlayControlPanel from '../components/OverlayControlPanel'
 import { X, MinusCircle, BookOpen, Mic, MicOff, Settings, Loader2, AlertCircle, School, Monitor, Sparkles, FileText, ListChecks, GraduationCap, MessageCircle, Send, PictureInPicture2, Download } from 'lucide-react'
 
+/**
+ * 词间分隔：Whisper 中文输出的 token 是逐字切分的，若每个 token 后都补一个
+ * ASCII 空格，字幕就成了「每 个 字 之 间 都 有 空 格」（用户实测投诉）。
+ * 规则：只有当前词以拉丁字母/数字结尾、或下一个词以拉丁字母/数字开头时才补空格——
+ * 即英文/数字保留词距，纯中文词之间不补。
+ */
+function wordSeparator(cur: string, next?: string): string {
+  if (/[A-Za-z0-9]$/.test(cur)) return ' '
+  if (next !== undefined && /^[A-Za-z0-9]/.test(next)) return ' '
+  return ''
+}
+
 export default function SubtitleOverlay() {
   const { courseId, stopListening, setView } = useAppStore()
   const { courses } = useCourseStore()
@@ -392,7 +404,7 @@ export default function SubtitleOverlay() {
             {line.words?.length > 0 ? (
               line.words.map((w, i) => (
                 <span key={i} onClick={() => handleWordClick(w.word)} style={styles.wordLink}>
-                  {w.word}{' '}
+                  {w.word}{wordSeparator(w.word, line.words[i + 1]?.word)}
                 </span>
               ))
             ) : (
@@ -407,7 +419,7 @@ export default function SubtitleOverlay() {
             {currentWords.length > 0 ? (
               currentWords.map((w, i) => (
                 <span key={i} onClick={() => handleWordClick(w.word)} style={styles.activeWord}>
-                  {w.word}{' '}
+                  {w.word}{wordSeparator(w.word, currentWords[i + 1]?.word)}
                 </span>
               ))
             ) : (
