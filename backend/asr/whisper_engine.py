@@ -18,6 +18,7 @@ from asr.model_bootstrap import check_installed, ensure_model, model_root
 from asr import prompt_budget
 from asr import repetition
 from asr.prompt_echo import EchoCleaner
+from asr.text_norm import normalize_cjk_spacing
 
 logger = logging.getLogger(__name__)
 
@@ -709,7 +710,9 @@ class WhisperEngine:
 
             # 处理识别结果
             for segment in segments:
-                raw_text = segment.text.strip()
+                # CJK 空白归一化放在最前面：Whisper 中文输出会在字间插空格，
+                # 越早归一化，回显清洗 / 提示词上下文 / 字幕展示看到的越一致。
+                raw_text = normalize_cjk_spacing(segment.text.strip())
 
                 # 提示词回显清洗，位置是刻意的：必须在**回调之前、`_last_text` 之前**。
                 # 静音段上 Whisper 会把 initial_prompt 接着念下去，若让这段回显进了
