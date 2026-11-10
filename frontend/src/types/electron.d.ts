@@ -69,6 +69,7 @@ export interface ElectronDiagAPI {
 }
 
 export type ElectronAPI = ElectronHostAPI & {
+  courseWebviewEnabled?: boolean
   getAppVersion: () => Promise<string>
   getBackendPort: () => Promise<number | null>
   overlay?: ElectronOverlayAPI
