@@ -4,6 +4,8 @@ import { useCourseStore } from '../stores/useCourseStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
 import { ArrowLeft, Play, Settings, BookOpen, Mic, Monitor, School, AlertTriangle, Languages, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
 import CourseConfigHint from '../components/CourseConfigHint'
+import MaterialsPanel from '../components/MaterialsPanel'
+import { appendTerms } from '../lib/materials'
 import { COURSE_CONFIG_DEFAULTS } from '../lib/courseConfigCopy'
 
 const DOMAINS = ['计算机科学', '医学', '生物学', '物理学', '数学', '化学', '法律', '经济学', '哲学', '历史', '文学', '其他']
@@ -394,6 +396,15 @@ export default function CourseConfig() {
             style={{ ...styles.input, minHeight: 72, resize: 'vertical' }}
             rows={3}
           />
+
+          {/* ADR-004 课程资料窗口：两种课型通用，边框色随场景（线上紫/线下青） */}
+          {courseId && (
+            <MaterialsPanel
+              courseId={courseId}
+              offline={isOffline}
+              onAppendTerms={terms => setCustomTerms(prev => appendTerms(prev, terms))}
+            />
+          )}
 
           <TerminologyPreview
             domain={domain}

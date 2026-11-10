@@ -12,14 +12,16 @@ import time
 import uuid
 import platform
 from collections import deque
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
+from urllib.parse import unquote
 
 from dependencies import db
 from asr.pipeline import ASRPipeline
 from asr.whisper_engine import SIMP_MODE_AUTO_SIMPLIFIED, normalize_simp_mode
+from materials import service as materials_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -297,7 +299,80 @@ async def delete_course(course_id: str):
     if course_id in active_pipelines:
         await active_pipelines[course_id].stop()
         del active_pipelines[course_id]
+    # 课程资料文件一并清掉（DB 行随 ON DELETE CASCADE 没了，磁盘不能留垃圾）
+    materials_service.delete_course_materials(course_id)
     return {"ok": True}
+
+
+# ============ 课程资料 API（ADR-004 L1）============
+#
+# 上传走 raw body（文件名字放 X-Filename 头，URL 编码），不用 UploadFile：
+# FastAPI 的 multipart 依赖 python-multipart，多一个依赖 = CI/打包/新机各多一个
+# 翻车点，而 Electron 前端 `fetch(url, { body: file })` 发原始字节最简单。
+
+@router.post("/courses/{course_id}/materials")
+async def upload_material(course_id: str, request: Request):
+    """上传一份课程资料（PDF/PPT/DOCX 只登记；TXT/MD 进答疑上下文与术语候选）"""
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    raw_name = request.headers.get("X-Filename", "")
+    filename = unquote(raw_name).strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="缺少 X-Filename 请求头（URL 编码的文件名）")
+
+    data = await request.body()
+    try:
+        record = materials_service.save_material(course_id, filename, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    record.update({
+        "course_id": course_id,
+        "created_at": materials_service.now_ms(),
+    })
+    saved = await db.add_material(record)
+    return saved
+
+
+@router.get("/courses/{course_id}/materials")
+async def list_materials(course_id: str):
+    """课程资料列表"""
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    return await db.list_materials(course_id)
+
+
+@router.delete("/courses/{course_id}/materials/{material_id}")
+async def delete_material(course_id: str, material_id: str):
+    """删除一份课程资料（元数据 + 磁盘文件）。先校验课程归属再删。"""
+    record = await db.delete_material(material_id, course_id)
+    if not record:
+        # 不存在 / 属于别的课：都按 404 处理，不泄露其他课程资料的存在性
+        raise HTTPException(status_code=404, detail="资料不存在")
+    materials_service.delete_material_file(course_id, record.get("name", ""))
+    return {"ok": True}
+
+
+@router.post("/courses/{course_id}/materials/terms")
+async def material_term_candidates(course_id: str):
+    """从已索引的纯文本资料抽术语候选（前端一键追加进自定义术语框）"""
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    records = await db.list_materials(course_id)
+    texts = [
+        materials_service.read_material_text(course_id, r["name"])
+        for r in records if r.get("indexed")
+    ]
+    candidates = materials_service.extract_term_candidates("\n".join(t for t in texts if t))
+    return {
+        "terms": candidates,
+        "fromFiles": sum(1 for r in records if r.get("indexed")),
+    }
 
 
 # ============ 字幕 API ============
@@ -833,6 +908,13 @@ async def ai_ask(req: AskRequest):
     # 上下文：最近 100 条字幕（倒序取，反转为正序）
     subtitles = await db.get_subtitles(req.courseId, limit=100)
     context = " ".join(sub.get("text", "") for sub in reversed(subtitles))
+
+    # ADR-004：已索引的纯文本资料（TXT/MD）作为前缀进入答疑上下文 ——
+    # 让 AI 讲解能引用课件，而不只回看最近几句字幕。
+    material_records = await db.list_materials(req.courseId)
+    material_context = materials_service.build_material_context(material_records, req.courseId)
+    if material_context:
+        context = f"{material_context}\n[课堂字幕]\n{context}"
 
     # 自定义术语（兼容 str/list 两种存储形态）
     custom_terms = _parse_custom_terms(course)
