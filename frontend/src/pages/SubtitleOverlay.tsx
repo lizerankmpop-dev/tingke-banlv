@@ -1,3 +1,4 @@
+import ClassroomMicrophone from '../components/ClassroomMicrophone'
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../stores/useAppStore'
 import { useCourseStore } from '../stores/useCourseStore'
@@ -278,6 +279,7 @@ export default function SubtitleOverlay() {
           </button>
         </div>
       </div>
+      {isOffline && courseId && <ClassroomMicrophone courseId={courseId} live />}
 
       {/* 🔴 导出面板：带「视频起点偏移」，否则导出的 SRT 对不上原视频 */}
       {exportPanel && (

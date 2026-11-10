@@ -4,6 +4,7 @@ import { useCourseStore } from '../stores/useCourseStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
 import { ArrowLeft, Play, Settings, BookOpen, Mic, Monitor, School, AlertTriangle, Languages, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
 import CourseConfigHint from '../components/CourseConfigHint'
+import ClassroomMicrophone from '../components/ClassroomMicrophone'
 import { COURSE_CONFIG_DEFAULTS } from '../lib/courseConfigCopy'
 
 const DOMAINS = ['计算机科学', '医学', '生物学', '物理学', '数学', '化学', '法律', '经济学', '哲学', '历史', '文学', '其他']
@@ -350,6 +351,8 @@ export default function CourseConfig() {
             )}
           </p>
         </div>
+
+        {isOffline && courseId && <ClassroomMicrophone key={courseId} courseId={courseId} />}
 
         {/* 配置项 */}
         <div style={styles.configSection}>
