@@ -7,6 +7,9 @@ import OverlayWindow from './pages/OverlayWindow'
 import ReviewPage from './pages/ReviewPage'
 import OnboardingWizard from './pages/OnboardingWizard'
 import ReviewReminder from './components/ReviewReminder'
+import CourseWebview from './components/CourseWebview'
+import './components/CourseWebview.css'
+import { useCourseStore } from './stores/useCourseStore'
 import { useAppStore } from './stores/useAppStore'
 import { useHostHeartbeat } from './hooks/useHostHeartbeat'
 
@@ -19,10 +22,24 @@ import { useHostHeartbeat } from './hooks/useHostHeartbeat'
  * 路由只用来区分「两个独立入口」，不承担应用内导航职责。
  */
 function MainApp() {
-  const { view } = useAppStore()
+  const { view, courseId } = useAppStore()
+  const course = useCourseStore(state => state.courses.find(item => item.id === courseId))
 
   // 存活心跳：主窗口崩溃时悬浮窗要能明确提示，而不是永远停在最后一句字幕
   useHostHeartbeat()
+
+  const listening = view === 'subtitle-overlay'
+  if ((view === 'course-config' || listening) &&
+      course && course.courseType !== 'offline' && window.electronAPI?.courseWebviewEnabled) {
+    return (
+      <div className={'course-workspace' + (listening ? ' course-workspace--listening' : '')}>
+        <div className="course-workspace__controls">
+          {listening ? <SubtitleOverlay embedded /> : <CourseConfig embedded />}
+        </div>
+        <CourseWebview key={course.id} />
+      </div>
+    )
+  }
 
   switch (view) {
     case 'course-list':
