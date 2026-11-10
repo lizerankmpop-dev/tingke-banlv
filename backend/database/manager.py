@@ -157,9 +157,22 @@ class DatabaseManager:
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS materials (
+                id TEXT PRIMARY KEY,
+                course_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                ext TEXT NOT NULL DEFAULT '',
+                size INTEGER NOT NULL DEFAULT 0,
+                -- 1 = 纯文本（TXT/MD）已进答疑上下文与术语候选；0 = 只登记（ADR-004 L1）
+                indexed INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS idx_subtitles_course ON subtitles(course_id);
             CREATE INDEX IF NOT EXISTS idx_vocabulary_course ON vocabulary(course_id);
             CREATE INDEX IF NOT EXISTS idx_vocabulary_word ON vocabulary(course_id, word);
+            CREATE INDEX IF NOT EXISTS idx_materials_course ON materials(course_id);
         """)
         await self.db.commit()
         # 注意：idx_vocabulary_due 不能在这里建。
@@ -322,6 +335,67 @@ class DatabaseManager:
         cursor = await self.db.execute("DELETE FROM courses WHERE id = ?", (course_id,))
         await self.db.commit()
         return cursor.rowcount > 0
+
+    # ============ 课程资料操作（ADR-004 L1）============
+
+    def _material_row_to_dict(self, row: aiosqlite.Row) -> dict:
+        """materials 行 → dict。created_at 重命名与 _row_to_dict 口径一致（createdAt）。"""
+        d = dict(row)
+        if "created_at" in d:
+            d["createdAt"] = d.pop("created_at")
+        # SQLite INTEGER 存的 0/1 → JSON 布尔，前端不用再判断
+        if "indexed" in d:
+            d["indexed"] = bool(d["indexed"])
+        return d
+
+    async def add_material(self, data: dict) -> dict:
+        """登记一份课程资料（文件本体由 materials.service 落盘，这里只管元数据）"""
+        material_id = str(uuid.uuid4())
+        await self.db.execute(
+            """INSERT INTO materials (id, course_id, name, ext, size, indexed, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                material_id,
+                data["course_id"],
+                data["name"],
+                data.get("ext", ""),
+                int(data.get("size", 0)),
+                1 if data.get("indexed") else 0,
+                int(data.get("created_at", time.time() * 1000)),
+            ),
+        )
+        await self.db.commit()
+        return await self.get_material(material_id)
+
+    async def get_material(self, material_id: str) -> dict | None:
+        cursor = await self.db.execute(
+            "SELECT * FROM materials WHERE id = ?", (material_id,)
+        )
+        row = await cursor.fetchone()
+        return self._material_row_to_dict(row) if row else None
+
+    async def list_materials(self, course_id: str) -> list[dict]:
+        cursor = await self.db.execute(
+            "SELECT * FROM materials WHERE course_id = ? ORDER BY created_at DESC",
+            (course_id,),
+        )
+        rows = await cursor.fetchall()
+        return [self._material_row_to_dict(r) for r in rows]
+
+    async def delete_material(self, material_id: str, course_id: str | None = None) -> dict | None:
+        """删元数据行，返回被删的记录（供路由层删文件）。
+
+        ``course_id`` 传入时先校验归属：**不匹配返回 None 且不动行** ——
+        否则 B 课程的删除请求会把 A 课程的资料行删掉（只留孤儿文件）。
+        """
+        record = await self.get_material(material_id)
+        if not record:
+            return None
+        if course_id is not None and record.get("course_id") != course_id:
+            return None
+        await self.db.execute("DELETE FROM materials WHERE id = ?", (material_id,))
+        await self.db.commit()
+        return record
 
     # ============ 字幕操作 ============
 
