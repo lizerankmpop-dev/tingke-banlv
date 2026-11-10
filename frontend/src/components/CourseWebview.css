@@ -1,0 +1,82 @@
+.course-workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, 38%) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+}
+
+.course-workspace__controls {
+  min-width: 0;
+  min-height: 0;
+}
+
+.course-workspace--listening {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(180px, 30%);
+}
+
+.course-workspace--listening .course-workspace__controls {
+  grid-row: 2;
+}
+
+.course-workspace--listening .course-webview {
+  grid-row: 1;
+}
+
+.course-webview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.course-webview__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+}
+
+.course-webview__address {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.course-webview__bar button {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+
+.course-webview__guest {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.course-webview__empty {
+  flex: 1;
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.course-webview__message {
+  padding: 8px 12px;
+  color: var(--warning);
+}

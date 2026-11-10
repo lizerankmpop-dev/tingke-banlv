@@ -19,7 +19,7 @@ function wordSeparator(cur: string, next?: string): string {
   return ''
 }
 
-export default function SubtitleOverlay() {
+export default function SubtitleOverlay({ embedded = false }: { embedded?: boolean }) {
   const { courseId, stopListening, setView, activeChapterId, activeChapterName } = useAppStore()
   const { courses } = useCourseStore()
   const course = courses.find(c => c.id === courseId)
@@ -206,7 +206,7 @@ export default function SubtitleOverlay() {
   }
 
   return (
-    <div ref={containerRef} style={styles.overlay}>
+    <div ref={containerRef} style={embedded ? { ...styles.overlay, width: '100%', height: '100%' } : styles.overlay}>
       {/* 顶部控制栏 */}
       <div style={styles.controlBar}>
         <div style={styles.controlLeft}>

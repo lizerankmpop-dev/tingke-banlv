@@ -34,7 +34,8 @@
  * 日志：本进程与后端输出统一落盘到 <TINGKEBANLV_HOME>/logs/electron.log
  */
 
-const { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, shell, session } = require('electron');
+const { configureCourseWebview } = require('./course-webview.cjs');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -1405,6 +1406,7 @@ function armRenderWatchdog() {
 }
 
 function createWindow(port) {
+  const courseWebviewEnabled = !app.commandLine.hasSwitch('no-sandbox');
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -1413,6 +1415,8 @@ function createWindow(port) {
     title: '听课伴侣 - 实时字幕 · 交互学词',
     show: false, // 等页面渲染完再显示，避免白屏闪烁
     webPreferences: {
+      webviewTag: courseWebviewEnabled,
+      additionalArguments: courseWebviewEnabled ? ['--tingke-course-webview'] : [],
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
@@ -1426,6 +1430,8 @@ function createWindow(port) {
     icon: APP_ICON,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
   });
+
+  if (courseWebviewEnabled) configureCourseWebview(mainWindow.webContents, session);
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();

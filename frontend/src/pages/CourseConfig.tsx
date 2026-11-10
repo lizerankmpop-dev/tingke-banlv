@@ -367,7 +367,7 @@ function ChapterPanel({
   )
 }
 
-export default function CourseConfig() {
+export default function CourseConfig({ embedded = false }: { embedded?: boolean }) {
   const { courseId, setView, startListening } = useAppStore()
   const { courses, loadCourses, patchCourseLocal } = useCourseStore()
   const course = courses.find(c => c.id === courseId)
@@ -484,7 +484,7 @@ export default function CourseConfig() {
   }
 
   return (
-    <div style={styles.window}>
+    <div style={embedded ? { ...styles.window, height: '100%' } : styles.window}>
       {/* 标题栏 */}
       <div style={styles.titleBar}>
         <button onClick={() => setView('course-list')} style={styles.backBtn}>
@@ -518,7 +518,7 @@ export default function CourseConfig() {
           )}
           <p style={styles.hintTitle}>准备开始识别</p>
           <p style={styles.hintText}>
-            点击「开始识别」后，本窗口将缩小为悬浮字幕条。<br />
+            {embedded ? '可在右侧打开课程网页，点击「开始识别」后在同一窗口查看字幕。' : '点击「开始识别」后，本窗口将缩小为悬浮字幕条。'}<br />
             {isOffline ? (
               <>
                 请确保麦克风已连接，靠近讲台效果更佳。<br />
