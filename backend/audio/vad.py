@@ -45,9 +45,14 @@ class VoiceActivityDetector:
         self,
         on_speech_segment: Callable[[np.ndarray, float, float], None],
         sample_rate: int = SAMPLE_RATE,
+        profile: str = "near",
     ):
         self.on_speech_segment = on_speech_segment
         self.sample_rate = sample_rate
+        far_field = profile == "far-field"
+        self._speech_threshold = 0.45 if far_field else SPEECH_THRESHOLD
+        self._silence_duration = SILENCE_DURATION + 0.2 if far_field else SILENCE_DURATION
+        self._speech_pad = 0.65 if far_field else 0.5
 
         self._model = None
         self._backend = "energy"
@@ -156,14 +161,14 @@ class VoiceActivityDetector:
                 speech_time = self._speech_windows * WINDOW_DURATION
 
                 if (
-                    silence_time >= SILENCE_DURATION
+                    silence_time >= self._silence_duration
                     or speech_time >= MAX_SPEECH_DURATION
                 ) and speech_time >= MIN_SPEECH_DURATION:
                     self._emit_segment()
             else:
-                # 非说话状态，保持小缓冲（最多 0.5s 上下文）
+                # 非说话状态保留档位对应的语音起始上下文
                 self._audio_buffer.append(window)
-                max_keep = int(0.5 / WINDOW_DURATION)
+                max_keep = int(self._speech_pad / WINDOW_DURATION)
                 if len(self._audio_buffer) > max_keep:
                     self._audio_buffer.pop(0)
 
@@ -224,7 +229,7 @@ class VoiceActivityDetector:
         tensor = torch.from_numpy(window)
         prob = self._model(tensor, self.sample_rate)
         prob = prob.item() if hasattr(prob, "item") else float(prob)
-        return prob > SPEECH_THRESHOLD
+        return prob > self._speech_threshold
 
     def _detect_energy(self, window: np.ndarray) -> bool:
         """基于能量的语音检测（降级方案）"""

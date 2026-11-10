@@ -14,8 +14,8 @@ import platform
 from collections import deque
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Literal, Optional
 
 from dependencies import db
 from asr.pipeline import ASRPipeline
@@ -236,6 +236,9 @@ def _course_config_for_asr(course: dict) -> dict:
         # V5-4：随课程下发给 ASR 管道。缺省给默认值，让老课程（迁移前建的）也走
         # 「auto 强制简体」—— 那正是 D1 要修的场景。
         "simpMode": normalize_simp_mode(course.get("simpMode")),
+        "micDeviceIndex": course.get("micDeviceIndex"),
+        "agc": course.get("agc", False),
+        "vadProfile": course.get("vadProfile", "far-field"),
     }
 
 
@@ -931,6 +934,24 @@ async def preview_terminology(req: PreviewTerminologyRequest):
 
 # ============ 音频设备检测 ============
 
+@router.get("/audio/devices")
+async def audio_devices():
+    """列出可用的麦克风，供课程配置页一次性读取。"""
+    from audio.capture import AudioCapture
+
+    devices = await asyncio.to_thread(AudioCapture.list_devices)
+    return {"devices": [
+        {
+            "index": device["index"],
+            "name": device["name"],
+            "isDefault": device["isDefaultInput"],
+            "channels": device["maxInputChannels"],
+        }
+        for device in devices
+        if device["maxInputChannels"] > 0 and not device["isLoopback"]
+    ]}
+
+
 @router.get("/audio/check-loopback")
 async def check_loopback():
     """检查 Loopback 设备是否可用，返回安装指引"""
@@ -1191,15 +1212,26 @@ async def asr_model_status():
     }
 
 
+class MicrophoneRequest(BaseModel):
+    micDeviceIndex: Optional[int] = Field(default=None, ge=0, strict=True)
+
+
+class AsrStartRequest(MicrophoneRequest):
+    agc: bool = False
+    vadProfile: Literal["near", "far-field"] = "far-field"
+
+
 @router.post("/asr/start")
-async def start_asr(course_id: str = Query(...)):
+async def start_asr(course_id: str = Query(...), req: Optional[AsrStartRequest] = None):
     """启动 ASR 管道（轮询模式）"""
     course = await db.get_course(course_id)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
 
-    if course_id in active_pipelines:
+    if course_id in active_pipelines or course_id in _starting_courses:
         return {"status": "already_running"}
+    if req is not None and course.get("courseType") == "offline":
+        course = {**course, **req.model_dump()}
 
     # 🔴 **音频设备是独占的**（2026-10-29 加）
     #
@@ -1260,6 +1292,15 @@ async def start_asr(course_id: str = Query(...)):
     await pipeline.start()
 
     return {"status": "started"}
+
+
+@router.post("/asr/microphone")
+async def change_microphone(req: MicrophoneRequest, course_id: str = Query(...)):
+    pipeline = active_pipelines.get(course_id)
+    if pipeline is None or pipeline.course_config.get("courseType") != "offline":
+        raise HTTPException(status_code=409, detail="请先启动线下课程识别")
+    pipeline.select_microphone(req.micDeviceIndex)
+    return {"status": "switching"}
 
 
 @router.post("/asr/stop")
@@ -1339,7 +1380,8 @@ async def poll_asr(course_id: str = Query(...)):
         except Exception as e:
             logger.debug(f"获取 ASR 运行统计失败: {e}")
 
-    return {"messages": messages, "status": "running", "stats": stats}
+    meter = pipeline.input_meter() if pipeline is not None and hasattr(pipeline, "input_meter") else {}
+    return {"messages": messages, "status": "running", "stats": stats, **meter}
 
 
 # ============ WebSocket：实时 ASR（保留作为首选）============

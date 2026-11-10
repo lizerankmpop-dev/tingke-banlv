@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from audio.capture import AudioCapture
+from audio.classroom import ClassroomAudio, input_rms
 from audio.vad import VoiceActivityDetector
 from asr.whisper_engine import WhisperEngine, WordTimestamp, DEVICE, COMPUTE_TYPE
 
@@ -120,13 +121,19 @@ class ASRPipeline:
             on_language_decided=self._on_language_decided,
         )
 
+        self._offline = course_config.get("courseType") == "offline"
+        self._classroom_audio = ClassroomAudio() if self._offline and course_config.get("agc", False) else None
+        self._input_sample = (0.0, 0.0, None)
+        self._meter_started = False
         self._vad = VoiceActivityDetector(
             on_speech_segment=self._on_speech_segment,
+            profile=course_config.get("vadProfile", "far-field") if self._offline else "near",
         )
 
         self._capture = AudioCapture(
             on_audio_chunk=self._on_audio_chunk,
-            mode="microphone" if course_config.get("courseType") == "offline" else "loopback",
+            mode="microphone" if self._offline else "loopback",
+            device_index=course_config.get("micDeviceIndex") if self._offline else None,
         )
 
     async def start(self):
@@ -308,6 +315,7 @@ class ASRPipeline:
     def _start_listening(self):
         """启动音频监听"""
         self._capture.start()
+        self._meter_started = True
         mode_text = "麦克风收音" if self.course_config.get("courseType") == "offline" else "系统音频"
         self.on_status("listening", f"正在监听{mode_text}...")
 
@@ -332,9 +340,31 @@ class ASRPipeline:
         self._capture.resume()
         self.on_status("listening", "已恢复监听")
 
+    def select_microphone(self, device_index: Optional[int]) -> None:
+        self._capture.select_microphone(device_index)
+
+    def input_meter(self) -> dict:
+        if not self._offline or not self._meter_started or self._paused:
+            return {}
+        sampled_at, level, gain = self._input_sample
+        if time.monotonic() - sampled_at > 1:
+            level, gain = 0.0, None
+        return {
+            "inputLevel": level,
+            "agcGainDb": gain,
+            "micDeviceIndex": self._capture.active_device_index,
+        }
+
     def _on_audio_chunk(self, audio: np.ndarray):
         """音频块到达 → VAD"""
         if self._running and not self._paused:
+            if self._offline:
+                level = min(1.0, input_rms(audio) * 8)
+                gain = None
+                if self._classroom_audio is not None:
+                    audio = self._classroom_audio.process(audio)
+                    gain = round(self._classroom_audio.gain_db, 1)
+                self._input_sample = (time.monotonic(), level, gain)
             self._vad.process_chunk(audio)
 
     def _on_speech_segment(self, audio: np.ndarray, start_time: float, end_time: float):
