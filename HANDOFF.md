@@ -36,14 +36,15 @@ cd frontend && npm test
 
 ---
 
-## 0.2 · 11/11 增量更新（00:25，四分支合入主线，接手 agent 主刀）
+## 0.2 · 11/11 增量更新（01:10 修订：五分支全部合入，接手 agent 主刀）
 
 > **本文 > 日志 > 历史对话。** §1 / §3 / §4.3 里写「功能已封存、门禁 524/1」是 11/09–11/10 的历史状态，
 > **接手请以本节为准**。
 
-1. **CodeArts 主线 `work/codearts-replication` 已推进到 `15cb548`**（从 `e55d518` 快进），一次合入四条线：
+1. **CodeArts 主线 `work/codearts-replication` 已推进到 `f7d0b4b`**（从 `e55d518` 快进），合入五条线：
    `c24c67b`（HANDOFF + ADR-001/002 文档）→ `68bb9c4`（ADR-004 课程资料上传）→
-   `3cb85a7`（ADR-003 线下音频增强）→ `ccb73ce`（字幕语言选择 + 章节管理）。
+   `3cb85a7`（ADR-003 线下音频增强）→ `ccb73ce`（字幕语言选择 + 章节管理）→
+   `050c1cc`（**ADR-002 内嵌网页方框，01:10 队长解除 11/10 挂起决策后补合**，merge `f7d0b4b`）。
    GitHub 同时保留集成分支 `integrate/2026-11-11` 作备份（含全部 merge commits）。
 2. **合入冲突点（已解决，未来再合要盯）**：
    - `backend/api/routes.py` 与 `CourseConfig.tsx` 的 import 区叠加（合并两边 import 即可）；
@@ -52,15 +53,15 @@ cd frontend && npm test
      `start_asr(course_id, chapterId="", req=None)`，两参数并存；前端 `_startBackendASR`
      线下课发 body + URL 带 chapterId、线上课纯 POST + URL 带 chapterId。
      已加 `backend/tests/test_integration_contract.py`（2 条）+ 前端契约测试（1 条）守住。
-3. **门禁基线（本机实测，核对 CI 用这个）**：后端 **559 passed / 1 skipped**、前端 **219 pass / 0 fail**、
+3. **门禁基线（本机实测，核对 CI 用这个）**：后端 **559 passed / 1 skipped**、前端 **223 pass / 0 fail**、
    `tsc --noEmit` 0。数字叠加口径：524（11/09 基线）+17 资料 +5 音频 +11 语言章节 +2 合入契约 = 559；
-   前端 205+5+5+3+1 = 219（以实测为准，别按估算报数）。
+   前端 205+5+5+3+1+4 webview = 223（以实测为准，别按估算报数）。
+   ⚠️ 00:25 版写的 219/0 是**合入 webview 之前**的数字，已作废。
 4. **跑测试的两个环境坑**：① 必须用 `安装空间/venv/Scripts/python.exe`（系统 python 缺 langchain_core）；
    ② pytest 加 `--basetemp=<全新临时目录>`，否则沙箱批量删除保护会让用例全绿但退出码 1；
    ③ 前端用 `npm test`（runner 带 tsx），手动 `node --test xxx.mts` 会因 TS 无扩展名导入报错。
-5. **ADR 状态**：ADR-003 / ADR-004 已随代码合入（Implemented）；ADR-001（AI 术语生成）仍派发评审中，
-   建议降级为「资料优先、LLM 兜底」；**ADR-002 `feat/embed-course-webview` 按 11/10 挂起决策未合入**，
-   分支仍在 CodeArts，若评审要求需单独拍板。
+5. **ADR 状态**：ADR-002 / 003 / 004 均已随代码合入主线（Implemented）；ADR-001（AI 术语生成）仍派发评审中，
+   建议降级为「资料优先、LLM 兜底」。11/10 的「webview 挂起」决策已被 11/11 01:10 队长指令推翻。
 6. **官方留痕待补**：本次是本地 merge + 直推主线，提交历史有 merge commits 但**平台 MR 记录为空**。
    需让张春阳在 CodeArts 上跑一次 CI（新数字 559/1、219/0）+ CodeCheck 复扫，并按需补 MR 记录。
 7. **待办**：郭宜平访谈还差 2 人（研究生工科/人文，现 4 人全本科生 < 报告 ≥5 线）；
