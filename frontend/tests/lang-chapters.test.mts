@@ -87,3 +87,19 @@ test('startListening 章节传参写入 activeChapterId/Name；无章节归空�
   assert.equal(s.activeChapterId, '')
   assert.equal(s.activeChapterName, '')
 })
+
+// ============ 集成分支契约：start 请求同时带章节与音频增强 ============
+// classroom-audio 与 lang-chapters 都改了 _startBackendASR，合入时是逻辑冲突；
+// 这条守卫防止将来再合入时把任意一边的参数冲掉。
+
+test('start 请求 URL 带 chapterId，且线下课的音频参数仍走 JSON body', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const src = await readFile(new URL('../src/stores/useSubtitleStore.ts', import.meta.url), 'utf-8')
+  assert.ok(
+    /\/api\/asr\/start\?course_id=\$\{courseId\}&chapterId=\$\{chapter\}/.test(src),
+    'start URL 应带 chapterId（章节归属）',
+  )
+  assert.ok(/body:\s*JSON\.stringify\(settings\)/.test(src), '线下课应保留音频增强 JSON body')
+  assert.ok(/useClassroomAudioStore/.test(src), '应保留线下音频设置 store 的引用')
+  assert.ok(/encodeURIComponent\(get\(\)\.chapterId/.test(src), '章节 id 必须 URL 编码')
+})
