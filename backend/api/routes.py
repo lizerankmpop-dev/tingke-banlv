@@ -8,9 +8,11 @@ import csv
 import io
 import logging
 import asyncio
+import threading
 import time
 import uuid
 import platform
+import queue as queue_module
 from collections import deque
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import Response
@@ -136,6 +138,16 @@ class CreateCourseRequest(BaseModel):
     # 取值不做严格校验：非法值在路由入口用 normalize_simp_mode() 收敛成默认，
     # 与消费侧（引擎）同一套策略 —— 为一个开关让建课失败不划算。
     simpMode: str = SIMP_MODE_AUTO_SIMPLIFIED
+    # 字幕显示语言（2026-11-10）：'both' 双语对照（默认）| 'orig' 仅原文 | 'zh' 仅中文。
+    # 非法值在路由入口收敛成默认，与 simpMode 同一策略。
+    subtitleLang: str = "both"
+
+
+def normalize_subtitle_lang(value) -> str:
+    """收敛字幕显示语言取值。缺省/None/非法 → 'both'（不让一个开关搞挂建课）。"""
+    if value in ("both", "orig", "zh"):
+        return value
+    return "both"
 
 
 class UpdateCourseRequest(BaseModel):
@@ -146,6 +158,7 @@ class UpdateCourseRequest(BaseModel):
     courseType: Optional[str] = None
     language: Optional[str] = None
     simpMode: Optional[str] = None
+    subtitleLang: Optional[str] = None
 
 
 class UpdateVocabularyRequest(BaseModel):
@@ -267,6 +280,7 @@ async def create_course(req: CreateCourseRequest):
     data = req.model_dump()
     # 在**唯一入口**收敛开关取值（策略与引擎侧一致：非法值回落默认，不报错）
     data["simpMode"] = normalize_simp_mode(data.get("simpMode"))
+    data["subtitleLang"] = normalize_subtitle_lang(data.get("subtitleLang"))
     return await db.create_course(data)
 
 
@@ -276,6 +290,8 @@ async def update_course(course_id: str, req: UpdateCourseRequest):
     data = req.model_dump(exclude_none=True)
     if "simpMode" in data:
         data["simpMode"] = normalize_simp_mode(data["simpMode"])
+    if "subtitleLang" in data:
+        data["subtitleLang"] = normalize_subtitle_lang(data["subtitleLang"])
     result = await db.update_course(course_id, data)
     if not result:
         raise HTTPException(status_code=404, detail="课程不存在")
@@ -378,12 +394,153 @@ async def material_term_candidates(course_id: str):
     }
 
 
+# ============ 章节 API（多集长课程）============
+
+class CreateChapterRequest(BaseModel):
+    name: str
+
+
+@router.get("/courses/{course_id}/chapters")
+async def list_chapters(course_id: str):
+    """章节列表（按创建顺序）"""
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    return await db.list_chapters(course_id)
+
+
+@router.post("/courses/{course_id}/chapters")
+async def create_chapter(course_id: str, req: CreateChapterRequest):
+    """添加章节（追加排序）"""
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="章节名不能为空")
+    return await db.add_chapter(course_id, name[:60])
+
+
+@router.delete("/courses/{course_id}/chapters/{chapter_id}")
+async def delete_chapter(course_id: str, chapter_id: str):
+    """删除章节；其字幕保留但解除章节归属。
+
+    🔴 course_id 必须传进 db.delete_chapter（2026-11-10 修）：
+    原来先无条件删、再比对归属返回 404 —— B 课的请求虽然报了 404，
+    A 课的章节已经被真删了（与资料删除同款缺陷，单测当场抓住）。
+    """
+    record = await db.delete_chapter(chapter_id, course_id=course_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return {"ok": True}
+
+
+# ============ 字幕译文（软依赖，异步回填）============
+#
+# 「双语对照」的实际译文链路（2026-11-10）：字幕先出原文（实时性第一），
+# 译文由后台单线程 worker 调本地 LLM 逐句翻译，完成后 UPDATE 行 + 推
+# `subtitle_translation` 消息给前端合并显示。LLM 不可用（Ollama 没开）就
+# 静默跳过 —— 「仅原文」显示完全不受影响，这正是软依赖该有的样子。
+
+_TRANSLATE_SYSTEM_PROMPT = (
+    "你是课堂字幕翻译。把用户给的句子翻译成中文：只输出译文本身，"
+    "不要解释、不要引号、不要原文。若句子已是中文，原样返回。"
+)
+
+_translation_queue: "queue_module.Queue[tuple]" = queue_module.Queue()
+_translation_worker_state = {"started": False}
+_translation_worker_lock = threading.Lock()
+
+
+def _translate_text(text: str) -> str | None:
+    """单句翻译（软依赖）：LLM 不可用或失败返回 None，绝不抛。"""
+    try:
+        from llm.client import chat, is_available
+        if not is_available():
+            return None
+        answer = chat(
+            [
+                {"role": "system", "content": _TRANSLATE_SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.1,
+            num_predict=256,
+        )
+    except Exception as exc:  # noqa: BLE001 —— LLM 层任何异常都不能影响字幕
+        logger.debug("字幕翻译调用失败（跳过）：%s", exc)
+        return None
+    if not answer:
+        return None
+    return answer.strip().strip('"“”').strip()
+
+
+def _process_translation_item(course_id: str, subtitle_id: str, text: str,
+                               enqueue, loop, client_id: str = "") -> None:
+    """处理一条翻译任务（worker 线程内执行，也被单测直接调用）。
+
+    subtitle_id = DB 行 uuid（回填用）；client_id = 管道的 "sub_N"
+    （前端实时字幕行的 key，推消息用它才能被前端合并上）。
+    """
+    translated = _translate_text(text)
+    if not translated:
+        return
+    try:
+        fut = asyncio.run_coroutine_threadsafe(
+            db.update_subtitle_translation(subtitle_id, translated), loop
+        )
+        fut.result(timeout=30)
+        # 译文入库后推给前端实时合并（历史加载路径直接读库，不需要这条消息）
+        enqueue("subtitle_translation", {
+            "id": client_id or subtitle_id,
+            "translation": translated,
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("字幕译文回填失败（不影响识别）：%s", exc)
+
+
+def _translation_worker() -> None:
+    while True:
+        course_id, subtitle_id, text, enqueue, loop, client_id = (
+            _translation_queue.get()
+        )
+        try:
+            _process_translation_item(
+                course_id, subtitle_id, text, enqueue, loop, client_id
+            )
+        except Exception as exc:  # noqa: BLE001 —— worker 永不退出
+            logger.warning("翻译 worker 任务异常：%s", exc)
+        finally:
+            _translation_queue.task_done()
+
+
+def _ensure_translation_worker() -> None:
+    with _translation_worker_lock:
+        if not _translation_worker_state["started"]:
+            threading.Thread(
+                target=_translation_worker, daemon=True, name="subtitle-translate"
+            ).start()
+            _translation_worker_state["started"] = True
+
+
+def _schedule_translation(course_id: str, subtitle_id: str, text: str,
+                          enqueue, loop, client_id: str = "") -> None:
+    """排队翻译。text 太短/太长都不翻（性价比与延迟都不可接受）。"""
+    if not text or len(text.strip()) < 2 or len(text) > 2000:
+        return
+    _ensure_translation_worker()
+    _translation_queue.put((course_id, subtitle_id, text, enqueue, loop, client_id))
+
+
 # ============ 字幕 API ============
 
 @router.get("/courses/{course_id}/subtitles")
-async def get_subtitles(course_id: str, limit: int = Query(default=100, le=500)):
-    """获取课程字幕记录"""
-    return await db.get_subtitles(course_id, limit)
+async def get_subtitles(
+    course_id: str,
+    limit: int = Query(default=100, le=500),
+    chapterId: str | None = Query(default=None),
+):
+    """获取课程字幕记录。chapterId 传入时按章节过滤（传空串 = 只看未分章字幕）。"""
+    return await db.get_subtitles(course_id, limit, chapter_id=chapterId)
 
 
 def _ms_to_srt_time(ms) -> str:
@@ -1169,7 +1326,7 @@ def _log_subtitle_persist_error(fut) -> None:
         logger.warning(f"字幕落库失败（不影响识别与显示）: {type(exc).__name__}: {exc}")
 
 
-async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
+async def _build_pipeline(course_id: str, course: dict, loop, chapter_id: str = ""):
     """
     构造 ASR 管道
 
@@ -1198,6 +1355,14 @@ async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
     #    ⇒ 每次「开始识别」生成一个 session_id，随字幕一起入库。
     session_id = f"{int(time.time() * 1000):x}-{uuid.uuid4().hex[:6]}"
 
+    # 字幕显示语言（both/orig/zh）与识别语种决定要不要排翻译：
+    # - 'orig'（仅原文）：永远不翻
+    # - 中文课（language=zh）：译文=原文，翻了个寂寞，跳过
+    wants_translation = (
+        normalize_subtitle_lang(course.get("subtitleLang")) != "orig"
+        and course.get("language") != "zh"
+    )
+
     def _on_subtitle(data: dict) -> None:
         enqueue("subtitle", data)
         try:
@@ -1213,9 +1378,28 @@ async def _build_pipeline(course_id: str, course: dict, loop) -> ASRPipeline:
                 "is_final": bool(data.get("is_final", data.get("isFinal", True))),
                 "video_id": data.get("video_id", ""),
                 "session_id": session_id,
+                "chapter_id": chapter_id,
             }
             fut = asyncio.run_coroutine_threadsafe(db.add_subtitle(row), loop)
             fut.add_done_callback(_log_subtitle_persist_error)
+
+            def _maybe_schedule_translation(persist_fut) -> None:
+                """入库成功后按需排队翻译（识别线程回调里，绝不阻塞）。"""
+                if not wants_translation:
+                    return
+                try:
+                    saved = persist_fut.result(timeout=10)
+                    if saved and saved.get("is_final", True):
+                        # saved["id"] = DB uuid（译文回填），saved["clientId"] = sub_N（前端合并）
+                        _schedule_translation(
+                            course_id, saved["id"], saved.get("text", ""),
+                            enqueue, loop,
+                            client_id=saved.get("clientId", ""),
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("字幕翻译排队失败（忽略）：%s", exc)
+
+            fut.add_done_callback(_maybe_schedule_translation)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"字幕落库调度失败（不影响识别）: {type(exc).__name__}: {exc}")
 
@@ -1304,11 +1488,26 @@ class AsrStartRequest(MicrophoneRequest):
 
 
 @router.post("/asr/start")
-async def start_asr(course_id: str = Query(...), req: Optional[AsrStartRequest] = None):
-    """启动 ASR 管道（轮询模式）"""
+async def start_asr(
+    course_id: str = Query(...),
+    chapterId: str = Query(default=""),
+    req: Optional[AsrStartRequest] = None,
+):
+    """启动 ASR 管道（轮询模式）
+
+    chapterId：本次识别归属的章节（可选）。空串 = 不挂章节。
+    字幕入库时会把 chapter_id 一并写入，前端按章节回放/筛选。
+    req：线下课堂音频增强参数（麦克风设备 / AGC / VAD 档），仅线下课生效。
+    """
     course = await db.get_course(course_id)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
+
+    # 章节必须是这门课自己的 —— 防止前端传错 ID 把字幕挂到别的课的章节上
+    if chapterId:
+        chapter = await db.get_chapter(chapterId)
+        if not chapter or chapter.get("course_id") != course_id:
+            raise HTTPException(status_code=404, detail="章节不存在")
 
     if course_id in active_pipelines or course_id in _starting_courses:
         return {"status": "already_running"}
@@ -1361,7 +1560,7 @@ async def start_asr(course_id: str = Query(...), req: Optional[AsrStartRequest] 
 
     loop = asyncio.get_running_loop()
     try:
-        pipeline = await _build_pipeline(course_id, course, loop)
+        pipeline = await _build_pipeline(course_id, course, loop, chapter_id=chapterId)
     except Exception as e:
         asr_message_queues.pop(course_id, None)
         _starting_courses.discard(course_id)

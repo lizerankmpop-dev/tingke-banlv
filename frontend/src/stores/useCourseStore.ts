@@ -10,6 +10,8 @@ interface CourseState {
   loadCourses: () => Promise<void>
   createCourse: (data: Omit<Course, 'id' | 'createdAt' | 'updatedAt' | 'videoCount' | 'wordCount'>) => Promise<Course>
   updateCourse: (id: string, data: Partial<Course>) => Promise<void>
+  /** 只改本地（不发请求）—— PUT 还在路上、识别页马上就要读新值时用 */
+  patchCourseLocal: (id: string, patch: Partial<Course>) => void
   deleteCourse: (id: string) => Promise<void>
   setActiveCourse: (id: string | null) => void
   getActiveCourse: () => Course | undefined
@@ -51,6 +53,12 @@ export const useCourseStore = create<CourseState>((set, get) => ({
     })
     set((s) => ({
       courses: s.courses.map((c) => (c.id === id ? { ...c, ...data, updatedAt: Date.now() } : c)),
+    }))
+  },
+
+  patchCourseLocal: (id, patch) => {
+    set((s) => ({
+      courses: s.courses.map((c) => (c.id === id ? { ...c, ...patch } : c)),
     }))
   },
 

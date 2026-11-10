@@ -16,6 +16,17 @@ function numOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
+/**
+ * 按课程字幕语言设置算「这一行该显示什么文本」。
+ * - both：原文（译文由主窗口另行渲染，悬浮窗只推原文行 + 译文行两条）
+ * - zh：优先译文，没有译文时回退原文（总不能整个空行）
+ * - orig：原文
+ */
+function displayTextForLine(line: SubtitleLine, subtitleLang: string): string {
+  if (subtitleLang === 'zh' && line.translation) return line.translation
+  return line.text
+}
+
 interface SubtitleState {
   subtitleLines: SubtitleLine[]
   currentWords: { word: string; start: number; end: number; confidence: number }[]
@@ -41,13 +52,17 @@ interface SubtitleState {
    * 控制面板自己不轮询，否则会和白名单里的「单轮询者」原则冲突。
    */
   termGuard: TermGuardStats | null
+  /** 本次识别归属的章节 id（'' = 不分章节），start 时随请求传给后端 */
+  chapterId: string
 
-  connectASR: (courseId: string) => void
+  connectASR: (courseId: string, chapterId?: string) => void
   disconnectASR: () => void
   retryConnect: () => void
   _startBackendASR: (courseId: string) => void
   _tryReconnect: (courseId: string) => void
   addSubtitleLine: (line: SubtitleLine) => void
+  /** LLM 译文异步到达时，按字幕行 id 合并进已有行（id 匹配不上就忽略） */
+  applyTranslation: (id: string, translation: string) => void
   updateInterimResult: (text: string, words: SubtitleLine['words']) => void
   setASRStatus: (status: ASRStatus, message?: string) => void
   selectWord: (word: string) => Promise<void>
@@ -67,8 +82,19 @@ interface SubtitleState {
  */
 function pushOverlay(get: any) {
   const s = get()
+  // 悬浮窗按课程的字幕语言设置显示：both 时原文行 + 译文行各推一条，
+  // zh 时直接推译文（无译文回退原文），orig 只推原文。
+  const course = useCourseStore.getState().getActiveCourse()
+  const lang = course?.subtitleLang || 'both'
+  const lines: string[] = []
+  for (const l of s.subtitleLines.slice(-4) as SubtitleLine[]) {
+    lines.push(displayTextForLine(l, lang))
+    if (lang !== 'orig' && l.translation && l.translation !== l.text) {
+      lines.push(l.translation)
+    }
+  }
   overlayBridge.pushSubtitle({
-    lines: s.subtitleLines.slice(-4).map((l: SubtitleLine) => l.text),
+    lines,
     currentText: s.currentText,
     status: s.asrStatus,
     message: s.asrMessage,
@@ -80,6 +106,9 @@ function handleMessage(msg: any, get: any, set: any) {
   switch (msg.type) {
     case 'subtitle':
       get().addSubtitleLine(msg.data)
+      break
+    case 'subtitle_translation':
+      get().applyTranslation(msg.data.id, msg.data.translation)
       break
     case 'interim':
       get().updateInterimResult(msg.data.text, msg.data.words)
@@ -112,8 +141,11 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   notRunningCount: 0,
   microphoneMeter: null,
   termGuard: null,
+  // 本次识别归属的章节（'' = 不分章节）。重连时 _startBackendASR 从这里读，
+  // 不用把 chapterId 一路穿透进每层重连回调。
+  chapterId: '',
 
-  connectASR: (courseId: string) => {
+  connectASR: (courseId: string, chapterId?: string) => {
     // 先断开旧连接（会设置 intentionalClose = true）
     get().disconnectASR()
 
@@ -128,6 +160,8 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       microphoneMeter: null,
       // 换课后旧的降级状态不该继续显示（新管道的提示词长度可能完全不同）
       termGuard: null,
+      // 章节归属：显式传入优先；未传时保留旧值（重连场景不该丢章节）
+      ...(chapterId !== undefined ? { chapterId } : {}),
     })
     // 让悬浮窗同步清空上一节课的残留字幕
     pushOverlay(get)
@@ -218,10 +252,13 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
         if (get().intentionalClose) return
         const course = useCourseStore.getState().courses.find(item => item.id === courseId)
         const settings = useClassroomAudioStore.getState().settings
+        // 章节归属随 start 一起告诉后端（字幕入库时挂到该章节；空串 = 不分章节）。
+        // 线下课的音频增强参数走 JSON body，两种课型的 chapterId 都走 query。
+        const chapter = encodeURIComponent(get().chapterId || '')
         const options: RequestInit = course?.courseType === 'offline'
           ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) }
           : { method: 'POST' }
-        fetch(`/api/asr/start?course_id=${courseId}`, options)
+        fetch(`/api/asr/start?course_id=${courseId}&chapterId=${chapter}`, options)
           .then(async (res) => {
             // 🔴 **必须检查状态码**（2026-10-29 修）
             //
@@ -325,6 +362,20 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       currentWords: [],
     }))
     pushOverlay(get)
+  },
+
+  applyTranslation: (id, translation) => {
+    if (!id || !translation) return
+    let hit = false
+    set((s) => ({
+      subtitleLines: s.subtitleLines.map((l) => {
+        if (l.id !== id || l.translation === translation) return l
+        hit = true
+        return { ...l, translation }
+      }),
+    }))
+    // 匹配不上（比如行已被清掉）就静默丢弃；命中才刷新悬浮窗
+    if (hit) pushOverlay(get)
   },
 
   updateInterimResult: (text, words) => {

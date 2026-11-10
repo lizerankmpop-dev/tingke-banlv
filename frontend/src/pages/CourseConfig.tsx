@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/useAppStore'
 import { useCourseStore } from '../stores/useCourseStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
-import { ArrowLeft, Play, Settings, BookOpen, Mic, Monitor, School, AlertTriangle, Languages, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeft, Play, Settings, BookOpen, Mic, Monitor, School, AlertTriangle, Languages, Sparkles, ChevronDown, ChevronUp, ListVideo, Plus, Trash2 } from 'lucide-react'
 import CourseConfigHint from '../components/CourseConfigHint'
 import MaterialsPanel from '../components/MaterialsPanel'
 import { appendTerms } from '../lib/materials'
@@ -19,6 +19,14 @@ const LANGUAGES = [
   { value: 'fr', label: '法语' },
   { value: 'de', label: '德语' },
   { value: 'es', label: '西班牙语' },
+]
+
+// 字幕显示语言（feat/lang-chapters）。取值与后端 routes.py 的
+// normalize_subtitle_lang() 一致：both / orig / zh，非法值后端回落 both。
+const SUBTITLE_LANGS = [
+  { value: 'both', label: '双语对照（原文 + 中文译文）' },
+  { value: 'orig', label: '仅原文' },
+  { value: 'zh', label: '仅中文译文' },
 ]
 
 // V5-4 简繁输出开关。取值必须与后端 asr/whisper_engine.py 的
@@ -215,9 +223,153 @@ const termStyles: Record<string, React.CSSProperties> = {
   },
 }
 
+/**
+ * 章节管理面板（多集长课程）
+ *
+ * 「课程 → 章节 → 字幕」两级结构：每次「开始识别」选定一个章节，
+ * 该次会话产出的字幕全部挂到它名下 —— 面向的是录播系列课 / 分集实验课，
+ * 不分章节的老用法完全不受影响（默认「不分章节」）。
+ *
+ * 删除章节不会删字幕：字幕保留、仅解除归属（后端 delete_chapter 语义）。
+ */
+function ChapterPanel({
+  courseId, chapters, selectedId, onSelect, reload,
+  offline,
+}: {
+  courseId: string
+  chapters: { id: string; name: string; sortOrder: number }[]
+  selectedId: string
+  onSelect: (id: string) => void
+  reload: () => void
+  offline: boolean
+}) {
+  const [newName, setNewName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const accent = offline ? '#00cec9' : 'var(--accent-light)'
+
+  const addChapter = async () => {
+    const name = newName.trim()
+    if (!name || busy) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/courses/${courseId}/chapters`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      if (res.ok) {
+        setNewName('')
+        reload()
+      }
+    } catch { /* 列表不变，用户重试即可 */ }
+    setBusy(false)
+  }
+
+  const removeChapter = async (id: string, name: string) => {
+    if (!window.confirm(`删除章节「${name}」？\n该章节下的字幕会保留（转为「未分章节」），不会被删除。`)) return
+    try {
+      const res = await fetch(`/api/courses/${courseId}/chapters/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        // 删的是当前选中章节 → 归位到「不分章节」
+        if (selectedId === id) onSelect('')
+        reload()
+      }
+    } catch { /* 同上 */ }
+  }
+
+  return (
+    <div style={{
+      marginTop: 16,
+      padding: '12px 14px',
+      borderRadius: 8,
+      background: 'var(--bg-card)',
+      border: `1px solid ${offline ? 'rgba(0,206,201,0.25)' : 'var(--border)'}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <ListVideo size={13} color={accent} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+          章节（多集长课程）
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          {chapters.length > 0 ? `${chapters.length} 个章节` : '未创建章节'}
+        </span>
+      </div>
+
+      {/* 本次识别归属 —— 开始识别前选好，字幕会挂到该章节名下 */}
+      <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+        本次识别归属
+      </label>
+      <select
+        value={selectedId}
+        onChange={(e) => onSelect(e.target.value)}
+        style={{ ...styles.input, marginBottom: 10 }}
+      >
+        <option value="">不分章节</option>
+        {chapters.map((c) => (
+          <option key={c.id} value={c.id}>第 {c.sortOrder} 章 · {c.name}</option>
+        ))}
+      </select>
+
+      {/* 章节列表 + 删除 */}
+      {chapters.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+          {chapters.map((c) => (
+            <div key={c.id} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '5px 8px', borderRadius: 6,
+              background: selectedId === c.id ? 'var(--bg-tertiary)' : 'transparent',
+              border: selectedId === c.id ? `1px solid ${accent}` : '1px solid transparent',
+            }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 20 }}>
+                {c.sortOrder}.
+              </span>
+              <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)' }}>{c.name}</span>
+              <button
+                onClick={() => removeChapter(c.id, c.name)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}
+                title="删除章节（字幕保留）"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 新增章节 */}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') addChapter() }}
+          placeholder="新章节名，如：第 3 讲 卷积神经网络"
+          maxLength={60}
+          style={{
+            flex: 1, padding: '7px 10px', borderRadius: 6,
+            border: '1px solid var(--border)', background: 'var(--bg-primary)',
+            color: 'var(--text-primary)', fontSize: 12, minWidth: 0,
+          }}
+        />
+        <button
+          onClick={addChapter}
+          disabled={!newName.trim() || busy}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '0 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+            border: 'none', background: accent, color: '#0e1116',
+            opacity: !newName.trim() || busy ? 0.5 : 1,
+          }}
+        >
+          <Plus size={13} /> 添加
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function CourseConfig() {
   const { courseId, setView, startListening } = useAppStore()
-  const { courses, loadCourses } = useCourseStore()
+  const { courses, loadCourses, patchCourseLocal } = useCourseStore()
   const course = courses.find(c => c.id === courseId)
   const isOffline = course?.courseType === 'offline'
 
@@ -228,6 +380,8 @@ export default function CourseConfig() {
   const [description, setDescription] = useState(course?.description || '')
   const [language, setLanguage] = useState(course?.language || COURSE_CONFIG_DEFAULTS.language)
   const [simpMode, setSimpMode] = useState(course?.simpMode || COURSE_CONFIG_DEFAULTS.simpMode)
+  // 字幕显示语言（both/orig/zh）。老课程没有该字段 → 回落 both（历史行为）
+  const [subtitleLang, setSubtitleLang] = useState(course?.subtitleLang || 'both')
   const [customTerms, setCustomTerms] = useState('')
   const [loopbackStatus, setLoopbackStatus] = useState<LoopbackStatus>('checking')
   // 🔴 **次要实例提示**（2026-10-30）—— 同一台机器跑两个后端实例时，
@@ -248,9 +402,22 @@ export default function CourseConfig() {
       // 这时页面显示的值同样是「默认值」，写死字面量就和提示条里说的推荐值成了两份事实。
       setLanguage(course.language || COURSE_CONFIG_DEFAULTS.language)
       setSimpMode(course.simpMode || COURSE_CONFIG_DEFAULTS.simpMode)
+      setSubtitleLang(course.subtitleLang || 'both')
       setCustomTerms((course.customTerms || []).join(', '))
     }
   }, [course])
+
+  // ============ 章节（多集长课程）============
+  const [chapters, setChapters] = useState<{ id: string; name: string; sortOrder: number }[]>([])
+  const [selectedChapterId, setSelectedChapterId] = useState('')
+  const reloadChapters = () => {
+    if (!courseId) return
+    fetch(`/api/courses/${courseId}/chapters`)
+      .then(r => (r.ok ? r.json() : []))
+      .then(list => { setChapters(Array.isArray(list) ? list : []) })
+      .catch(() => setChapters([]))
+  }
+  useEffect(() => { reloadChapters() }, [courseId])
 
   // 🔴 检测本机是否已有另一个后端实例（设备独占 ⇒ 后启动的那个会没字幕）
   useEffect(() => {
@@ -298,13 +465,22 @@ export default function CourseConfig() {
   const handleStart = () => {
     if (!canStart) return
     if (courseId) {
+      // 🔴 乐观更新本地 store：PUT 是 fire-and-forget，但识别页**立刻**就要
+      //    读 course.subtitleLang 决定字幕渲染模式 —— 不先改本地，
+      //    「仅中文」点开始后头几屏还是原文（PUT 往返完成前）。
+      patchCourseLocal(courseId, { subtitleLang })
       fetch(`/api/courses/${courseId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain, description, language, simpMode, customTerms: customTerms.split(/[,，]/).map(t => t.trim()).filter(Boolean) }),
+        body: JSON.stringify({
+          domain, description, language, simpMode, subtitleLang,
+          customTerms: customTerms.split(/[,，]/).map(t => t.trim()).filter(Boolean),
+        }),
       }).catch(() => {})
     }
-    startListening()
+    // 章节归属随本次识别走：选了章节，这批字幕就挂它名下
+    const chapter = chapters.find(c => c.id === selectedChapterId)
+    startListening(chapter ? { id: chapter.id, name: chapter.name } : undefined)
   }
 
   return (
@@ -373,6 +549,17 @@ export default function CourseConfig() {
           </select>
           <p style={styles.labelHint}>自动检测适合英文课程；多语混读或识别不准时请手动指定</p>
 
+          {/* 字幕显示语言：译文由本地 AI（Ollama）异步生成，不可用时自动回退原文 */}
+          <label style={styles.label}>
+            <Languages size={14} /> 字幕显示
+          </label>
+          <select value={subtitleLang} onChange={e => setSubtitleLang(e.target.value)} style={styles.input}>
+            {SUBTITLE_LANGS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+          </select>
+          <p style={styles.labelHint}>
+            译文由本地 AI 异步生成（先出原文、稍后补译文）；AI 未启动时自动只显示原文，不影响识别
+          </p>
+
           {/* V5-4：只在「自动检测」下露出 —— 指定了语种时这个开关不起作用，
               一直显示一个点了没反应的控件比不显示更容易误导用户。 */}
           {language === 'auto' && (
@@ -406,6 +593,18 @@ export default function CourseConfig() {
               courseId={courseId}
               offline={isOffline}
               onAppendTerms={terms => setCustomTerms(prev => appendTerms(prev, terms))}
+            />
+          )}
+
+          {/* 章节管理（多集长课程）：本次识别归属 + 增删章节 */}
+          {courseId && (
+            <ChapterPanel
+              courseId={courseId}
+              chapters={chapters}
+              selectedId={selectedChapterId}
+              onSelect={setSelectedChapterId}
+              reload={reloadChapters}
+              offline={isOffline}
             />
           )}
 

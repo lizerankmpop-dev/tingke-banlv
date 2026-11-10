@@ -29,6 +29,8 @@ export default function CourseList() {
     // V5-4：建课表单不暴露这个开关（建完课在课程配置页里改）。这里显式给默认值，
     // 不用「省略等后端补」——省了会让类型上的必填项永远靠隐式约定，改一处就断。
     simpMode: 'auto-simplified',
+    // 字幕显示语言同上：建课默认双语对照（both），配置页可改
+    subtitleLang: 'both',
   })
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
 
@@ -44,9 +46,10 @@ export default function CourseList() {
       courseType: form.courseType,
       language: form.language,
       simpMode: form.simpMode,
+      subtitleLang: form.subtitleLang,
     })
     setShowCreate(false)
-    setForm({ name: '', domain: '计算机科学', description: '', customTerms: '', courseType: 'online', language: 'auto', simpMode: 'auto-simplified' })
+    setForm({ name: '', domain: '计算机科学', description: '', customTerms: '', courseType: 'online', language: 'auto', simpMode: 'auto-simplified', subtitleLang: 'both' })
   }
 
   const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
