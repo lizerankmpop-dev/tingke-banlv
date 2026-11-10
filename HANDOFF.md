@@ -3,7 +3,7 @@
 > **读者**：接手本项目的 AI agent（另一个账号）。
 > **目的**：让接手方在**不读历史对话**的情况下，30 分钟内掌握全部状态、继续推进而不踩旧坑。
 > **优先级**：本文 > 逐日日志 > 历史对话。若三者冲突，以本文 + 实际 `git status` 为准。
-> **最后更新**：2026-11-10 14:55（11/10 增量更新见 §0.1，接手 agent 实测核验；11/09 17:15 初版由李泽然 / 原 agent 整理）
+> **最后更新**：2026-11-11 00:25（11/11 四分支合入见 §0.2；11/10 增量见 §0.1；11/09 17:15 初版由李泽然 / 原 agent 整理）
 > **同内容副本**：`项目源代码/HANDOFF.md`（随仓库走，供通过 git/CodeArts 接手的 agent 阅读；两份内容一致，更新时请同步）。
 
 ---
@@ -15,7 +15,7 @@
 cd "/c/Users/Administrator/Desktop/听课伴侣/项目源代码"
 git status --short && git log --oneline -6 && git branch -a
 
-# 2) 读本文 §3「未提交改动」 —— 有 4 个文件的工作成果还没 commit，先别覆盖/丢弃
+# 2) 读本文 §0.2「最新状态」—— 11/11 四分支已合入主线；§3.2 的历史「未提交改动」已闭环，勿再照做
 # 3) 跑门禁确认环境没坏（约 35s + 1s）
 "/c/Users/Administrator/Desktop/听课伴侣/安装空间/venv/Scripts/python.exe" -m pytest backend/tests -q
 cd frontend && npm test
@@ -36,6 +36,39 @@ cd frontend && npm test
 
 ---
 
+## 0.2 · 11/11 增量更新（00:25，四分支合入主线，接手 agent 主刀）
+
+> **本文 > 日志 > 历史对话。** §1 / §3 / §4.3 里写「功能已封存、门禁 524/1」是 11/09–11/10 的历史状态，
+> **接手请以本节为准**。
+
+1. **CodeArts 主线 `work/codearts-replication` 已推进到 `15cb548`**（从 `e55d518` 快进），一次合入四条线：
+   `c24c67b`（HANDOFF + ADR-001/002 文档）→ `68bb9c4`（ADR-004 课程资料上传）→
+   `3cb85a7`（ADR-003 线下音频增强）→ `ccb73ce`（字幕语言选择 + 章节管理）。
+   GitHub 同时保留集成分支 `integrate/2026-11-11` 作备份（含全部 merge commits）。
+2. **合入冲突点（已解决，未来再合要盯）**：
+   - `backend/api/routes.py` 与 `CourseConfig.tsx` 的 import 区叠加（合并两边 import 即可）；
+   - 🔴 **`start_asr` 是逻辑冲突**：lang-chapters 加 `chapterId` query、classroom-audio 加
+     `AsrStartRequest` JSON body（`micDeviceIndex`/`agc`/`vadProfile`）。合并后签名
+     `start_asr(course_id, chapterId="", req=None)`，两参数并存；前端 `_startBackendASR`
+     线下课发 body + URL 带 chapterId、线上课纯 POST + URL 带 chapterId。
+     已加 `backend/tests/test_integration_contract.py`（2 条）+ 前端契约测试（1 条）守住。
+3. **门禁基线（本机实测，核对 CI 用这个）**：后端 **559 passed / 1 skipped**、前端 **219 pass / 0 fail**、
+   `tsc --noEmit` 0。数字叠加口径：524（11/09 基线）+17 资料 +5 音频 +11 语言章节 +2 合入契约 = 559；
+   前端 205+5+5+3+1 = 219（以实测为准，别按估算报数）。
+4. **跑测试的两个环境坑**：① 必须用 `安装空间/venv/Scripts/python.exe`（系统 python 缺 langchain_core）；
+   ② pytest 加 `--basetemp=<全新临时目录>`，否则沙箱批量删除保护会让用例全绿但退出码 1；
+   ③ 前端用 `npm test`（runner 带 tsx），手动 `node --test xxx.mts` 会因 TS 无扩展名导入报错。
+5. **ADR 状态**：ADR-003 / ADR-004 已随代码合入（Implemented）；ADR-001（AI 术语生成）仍派发评审中，
+   建议降级为「资料优先、LLM 兜底」；**ADR-002 `feat/embed-course-webview` 按 11/10 挂起决策未合入**，
+   分支仍在 CodeArts，若评审要求需单独拍板。
+6. **官方留痕待补**：本次是本地 merge + 直推主线，提交历史有 merge commits 但**平台 MR 记录为空**。
+   需让张春阳在 CodeArts 上跑一次 CI（新数字 559/1、219/0）+ CodeCheck 复扫，并按需补 MR 记录。
+7. **待办**：郭宜平访谈还差 2 人（研究生工科/人文，现 4 人全本科生 < 报告 ≥5 线）；
+   李梓萌第二张样张是**线下课页**（勘误后返工清单改为 3 项 + 补交线上课页）；
+   10dB 加噪 CER A/B 对比与麦克风测试弹窗仍缺（ADR-003 验收未闭环）。
+
+---
+
 ## 1. 项目是什么 / 为什么在做
 
 **产品**：「听课伴侣」——国外大学公开课（无字幕、专业名词多）实时识别音频输出双语字幕、点击生词查释义、SM2 间隔重复进生词本的桌面软件。
@@ -48,6 +81,9 @@ cd frontend && npm test
 - 演示视频 **≤3 分钟**（赛题原文，别写成 5 分钟）。
 
 **产品状态**：**功能已完工并封存**，不是"还在写代码"。v3.7.1 安装包已交付，v3.7.2 tag 为 V7 实验闭环里程碑。参赛阶段的工作主要是**码道留痕 + 材料（PPT/视频/答辩稿/proof 汇编）**，不是开发新功能。唯一可选新代码：朱鸿康的华为云语音转写接入（增强对比项，延期不影响主线演示）。
+> ⚠️ **11/11 更新**：上段是 11/09 初版状态。参赛期实际又新增并合入了四项能力
+> （课程资料上传 / 线下音频增强 / 字幕语言选择 / 章节管理），主线已见 §0.2。
+> 即「主线功能已收口」，但**不再是纯材料阶段**——新增能力的演示镜头、CodeArts CI/CodeCheck 留痕需一并补齐。
 
 ---
 
@@ -96,7 +132,7 @@ tag：v3.5.0 v3.6.0 v3.7.0 v3.7.1 v3.7.2（v3.7.2 落在 2bde3f3）
 
 `fix/codecheck-first-scan` 三笔提交**已推 GitHub**；CodeArts 侧由张春阳合入（他的协作分支 `work/codearts-replication`）。
 
-### 3.2 ⚠️ 未提交改动（4 个文件 —— 接手后先处理）
+### 3.2 ✅ 历史「未提交改动」记录（已闭环，勿再照做）
 
 | 文件 | 状态 | 内容 |
 |---|---|---|
@@ -179,13 +215,16 @@ TINGKEBANLV_DEBUG_PORT=9222 TINGKEBANLV_PORT=8765 VITE_DEV_SERVER_URL=http://loc
 
 ### 4.3 门禁基线（改动后必须复核）
 
-| 项 | 基线 | 当前 |
+> **11/11 合入后以 §0.2 第 3 条为准：后端 559 / 1 skipped、前端 219 / 0、tsc 0。**
+> 下表是 11/09–11/10 的历史基线，保留供追溯，别用它核对现在的 CI。
+
+| 项 | 历史基线 | 11/10 历史值 |
 |---|---|---|
 | 后端 pytest | `512 passed / 1 skipped`（HEAD） | `524 passed / 1 skipped`（含 12 条新单测） |
 | 前端 | `205 pass / 0 fail` | `0 fail` |
-| 双副本对拍 | 260/260 diff=0 | 保持 |
+| 双副本对拍 | 260/260 diff=0 | 保持（每次改 HANDOFF 后重新对拍） |
 | 前端 205 + 后端 512 挂 CI | 11/07 22:51 首绿（张春阳） | 保持 |
-| CodeCheck | 首扫 47 项严重 → 42 修 + 5 误报待平台标记 | 待张春阳复扫 |
+| CodeCheck | 首扫 47 项严重 → 42 修 + 5 误报待平台标记 | 待张春阳复扫（合入后需再扫一次） |
 
 ⚠️ **评估脚本必须加 `--realtime`**：离线一次性喂 630s ⇒ Whisper 只认最后 30s ⇒ WER 飙到 0.67（正常基线 0.1130）。
 `--realtime-speed`（默认 1.0）可压缩墙钟，2x/3x/4x 已验证 WER 不变；4x 偶发背压丢片，用 2x 重跑。
