@@ -114,6 +114,7 @@ class DatabaseManager:
                 -- 这里**不做取值约束**：历史行与新写入口径不同是常态，取值统一由
                 -- asr.whisper_engine.normalize_simp_mode() 在消费侧收敛，非法值回落默认。
                 simp_mode TEXT DEFAULT 'auto-simplified',
+                subtitle_lang TEXT DEFAULT 'both',
                 auto_extract_terms INTEGER DEFAULT 1,
                 ollama_model TEXT DEFAULT 'qwen2.5:7b',
                 created_at INTEGER NOT NULL,
@@ -131,6 +132,17 @@ class DatabaseManager:
                 is_final INTEGER DEFAULT 1,
                 created_at INTEGER NOT NULL,
                 session_id TEXT DEFAULT '',
+                translation TEXT DEFAULT '',
+                chapter_id TEXT DEFAULT '',
+                FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS chapters (
+                id TEXT PRIMARY KEY,
+                course_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
             );
 
@@ -173,6 +185,8 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_vocabulary_course ON vocabulary(course_id);
             CREATE INDEX IF NOT EXISTS idx_vocabulary_word ON vocabulary(course_id, word);
             CREATE INDEX IF NOT EXISTS idx_materials_course ON materials(course_id);
+            CREATE INDEX IF NOT EXISTS idx_chapters_course ON chapters(course_id);
+            CREATE INDEX IF NOT EXISTS idx_subtitles_chapter ON subtitles(chapter_id);
         """)
         await self.db.commit()
         # 注意：idx_vocabulary_due 不能在这里建。
@@ -217,6 +231,30 @@ class DatabaseManager:
             )
             await self.db.commit()
             logger.info("数据库迁移：courses 表已添加 simp_mode 列")
+
+        # 字幕显示语言（2026-11-10）：'both' 双语对照（默认）| 'orig' 仅原文 | 'zh' 仅中文。
+        # 同一批迁移顺带补 subtitles 的译文/章节两列。
+        cursor = await self.db.execute("PRAGMA table_info(courses)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "subtitle_lang" not in columns:
+            await self.db.execute(
+                "ALTER TABLE courses ADD COLUMN subtitle_lang TEXT DEFAULT 'both'"
+            )
+            await self.db.commit()
+            logger.info("数据库迁移：courses 表已添加 subtitle_lang 列")
+
+        cursor = await self.db.execute("PRAGMA table_info(subtitles)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        for name, ddl in [
+            ("translation", "TEXT DEFAULT ''"),   # LLM 异步补的译文（软依赖，可为空）
+            ("chapter_id", "TEXT DEFAULT ''"),    # 章节（多集长课程），随会话写入
+        ]:
+            if name not in columns:
+                await self.db.execute(
+                    f"ALTER TABLE subtitles ADD COLUMN {name} {ddl}"
+                )
+                await self.db.commit()
+                logger.info("数据库迁移：subtitles 表已添加 %s 列", name)
 
         # 生词复习闭环字段
         cursor = await self.db.execute("PRAGMA table_info(vocabulary)")
@@ -283,8 +321,8 @@ class DatabaseManager:
         course_id = str(uuid.uuid4())
         now = int(time.time() * 1000)
         await self.db.execute(
-            """INSERT INTO courses (id, name, domain, description, custom_terms, course_type, language, simp_mode, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO courses (id, name, domain, description, custom_terms, course_type, language, simp_mode, subtitle_lang, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 course_id,
                 data["name"],
@@ -294,6 +332,7 @@ class DatabaseManager:
                 data.get("courseType", "online"),
                 data.get("language", "auto"),
                 data.get("simpMode", SIMP_MODE_DEFAULT),
+                data.get("subtitleLang", "both"),
                 now,
                 now,
             ),
@@ -308,13 +347,16 @@ class DatabaseManager:
 
         updates = []
         params = []
-        for field in ["name", "domain", "description", "course_type", "language", "simp_mode"]:
+        for field in ["name", "domain", "description", "course_type", "language", "simp_mode", "subtitle_lang"]:
             if field in data:
                 updates.append(f"{field} = ?")
                 params.append(data[field])
         if "simpMode" in data:
             updates.append("simp_mode = ?")
             params.append(data["simpMode"])
+        if "subtitleLang" in data:
+            updates.append("subtitle_lang = ?")
+            params.append(data["subtitleLang"])
         if "customTerms" in data:
             updates.append("custom_terms = ?")
             params.append(json.dumps(data["customTerms"], ensure_ascii=False))
@@ -399,12 +441,97 @@ class DatabaseManager:
 
     # ============ 字幕操作 ============
 
+    async def update_subtitle_translation(self, subtitle_id: str, translation: str) -> bool:
+        """异步译文回填（LLM 软依赖）。返回 False = 字幕不存在（如已被清库）。"""
+        cursor = await self.db.execute(
+            "UPDATE subtitles SET translation = ? WHERE id = ?",
+            (translation, subtitle_id),
+        )
+        await self.db.commit()
+        return cursor.rowcount > 0
+
+    # ============ 章节操作（多集长课程）============
+
+    async def add_chapter(self, course_id: str, name: str) -> dict:
+        """追加章节，sort_order 取当前最大值 +1（追加语义，不做插队排序）"""
+        cursor = await self.db.execute(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM chapters WHERE course_id = ?",
+            (course_id,),
+        )
+        row = await cursor.fetchone()
+        next_order = (row[0] if row else 0) + 1
+        chapter_id = str(uuid.uuid4())
+        now = int(time.time() * 1000)
+        await self.db.execute(
+            """INSERT INTO chapters (id, course_id, name, sort_order, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (chapter_id, course_id, name, next_order, now),
+        )
+        await self.db.commit()
+        return {
+            "id": chapter_id,
+            "courseId": course_id,
+            "name": name,
+            "sortOrder": next_order,
+            "createdAt": now,
+        }
+
+    async def list_chapters(self, course_id: str) -> list[dict]:
+        rows = await self.db.execute_fetchall(
+            "SELECT * FROM chapters WHERE course_id = ? ORDER BY sort_order ASC",
+            (course_id,),
+        )
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["courseId"] = d.pop("course_id")
+            d["sortOrder"] = d.pop("sort_order")
+            d["createdAt"] = d.pop("created_at")
+            result.append(d)
+        return result
+
+    async def get_chapter(self, chapter_id: str) -> dict | None:
+        """单查章节（start_asr 校验归属用）。"""
+        rows = await self.db.execute_fetchall(
+            "SELECT * FROM chapters WHERE id = ?", (chapter_id,)
+        )
+        if not rows:
+            return None
+        d = dict(rows[0])
+        d["courseId"] = d.pop("course_id")
+        d["sortOrder"] = d.pop("sort_order")
+        d["createdAt"] = d.pop("created_at")
+        return d
+
+    async def delete_chapter(self, chapter_id: str, course_id: str = "") -> dict | None:
+        """删章节。其字幕的 chapter_id 置空（字幕保留 —— 课还是上过的，只解除归属）。
+
+        🔴 course_id 非空时**先验归属再删**（2026-11-10 修）：
+        路由把路径里的 course_id 传进来，归属不符直接返回 None（404），
+        防止「B 课的删除请求把 A 课的章节真删掉」—— 与资料删除同款缺陷。
+        """
+        sql = "SELECT * FROM chapters WHERE id = ?"
+        params: list = [chapter_id]
+        if course_id:
+            sql += " AND course_id = ?"
+            params.append(course_id)
+        cursor = await self.db.execute(sql, params)
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        await self.db.execute("DELETE FROM chapters WHERE id = ?", (chapter_id,))
+        await self.db.execute(
+            "UPDATE subtitles SET chapter_id = '' WHERE chapter_id = ?", (chapter_id,)
+        )
+        await self.db.commit()
+        return dict(row)
+
     async def add_subtitle(self, data: dict) -> dict:
         subtitle_id = str(uuid.uuid4())
         now = int(time.time() * 1000)
         await self.db.execute(
-            """INSERT INTO subtitles (id, course_id, video_id, text, words_json, start_ms, end_ms, is_final, created_at, session_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO subtitles (id, course_id, video_id, text, words_json, start_ms, end_ms, is_final, created_at, session_id, chapter_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 subtitle_id,
                 data["course_id"],
@@ -416,16 +543,32 @@ class DatabaseManager:
                 1 if data.get("is_final", True) else 0,
                 now,
                 data.get("session_id", ""),
+                data.get("chapter_id", ""),
             ),
         )
         await self.db.commit()
-        return {"id": subtitle_id, **data}
+        # 🔴 返回值里的 `id` 必须是 **DB 行的 uuid**（译文回填 UPDATE 按它定位），
+        #    而管道 data 自带 `"id": "sub_N"`（前端实时字幕行的 key）。
+        #    写成 `{"id": subtitle_id, **data}` 会被 data 的 id **覆盖**，
+        #    译文就永远 UPDATE 不到行上 —— 所以 id 要放在展开之后，
+        #    前端用的序号另存 `clientId`。
+        return {**data, "id": subtitle_id, "clientId": data.get("id", "")}
 
-    async def get_subtitles(self, course_id: str, limit: int = 100) -> list[dict]:
-        rows = await self.db.execute_fetchall(
-            "SELECT * FROM subtitles WHERE course_id = ? ORDER BY start_ms DESC LIMIT ?",
-            (course_id, limit),
-        )
+    async def get_subtitles(
+        self, course_id: str, limit: int = 100, chapter_id: str | None = None
+    ) -> list[dict]:
+        """按课程取字幕。chapter_id 非 None 时按章节过滤（'' = 只看未分章的）。"""
+        if chapter_id is not None:
+            rows = await self.db.execute_fetchall(
+                "SELECT * FROM subtitles WHERE course_id = ? AND chapter_id = ? "
+                "ORDER BY start_ms DESC LIMIT ?",
+                (course_id, chapter_id, limit),
+            )
+        else:
+            rows = await self.db.execute_fetchall(
+                "SELECT * FROM subtitles WHERE course_id = ? ORDER BY start_ms DESC LIMIT ?",
+                (course_id, limit),
+            )
         return [self._row_to_dict(r) for r in rows]
 
     # ============ 词汇操作 ============
@@ -753,6 +896,11 @@ class DatabaseManager:
             d["simpMode"] = d.pop("simp_mode") or SIMP_MODE_DEFAULT
         if "custom_terms" in d:
             d["customTerms"] = d.pop("custom_terms")
+        if "subtitle_lang" in d:
+            # 老库刚迁移出来可能是 NULL；给默认值，免得前端 select 落在非法值上
+            d["subtitleLang"] = d.pop("subtitle_lang") or "both"
+        if "chapter_id" in d:
+            d["chapterId"] = d.pop("chapter_id") or ""
         if "created_at" in d:
             d["createdAt"] = d.pop("created_at")
         if "updated_at" in d:

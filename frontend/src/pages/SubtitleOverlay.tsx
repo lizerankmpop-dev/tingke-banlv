@@ -4,7 +4,7 @@ import { useCourseStore } from '../stores/useCourseStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
 import { useOverlayStore } from '../stores/useOverlayStore'
 import OverlayControlPanel from '../components/OverlayControlPanel'
-import { X, MinusCircle, BookOpen, Mic, MicOff, Settings, Loader2, AlertCircle, School, Monitor, Sparkles, FileText, ListChecks, GraduationCap, MessageCircle, Send, PictureInPicture2, Download } from 'lucide-react'
+import { X, MinusCircle, BookOpen, Mic, MicOff, Settings, Loader2, AlertCircle, School, Monitor, Sparkles, FileText, ListChecks, GraduationCap, MessageCircle, Send, PictureInPicture2, Download, ListVideo } from 'lucide-react'
 
 /**
  * 词间分隔：Whisper 中文输出的 token 是逐字切分的，若每个 token 后都补一个
@@ -19,10 +19,12 @@ function wordSeparator(cur: string, next?: string): string {
 }
 
 export default function SubtitleOverlay() {
-  const { courseId, stopListening, setView } = useAppStore()
+  const { courseId, stopListening, setView, activeChapterId, activeChapterName } = useAppStore()
   const { courses } = useCourseStore()
   const course = courses.find(c => c.id === courseId)
   const isOffline = course?.courseType === 'offline'
+  // 字幕显示语言：both（双语）/ orig（仅原文）/ zh（仅中文，无译文时回退原文）
+  const subtitleLang = course?.subtitleLang || 'both'
 
   const {
     subtitleLines, currentText, currentWords,
@@ -113,10 +115,10 @@ export default function SubtitleOverlay() {
     setQaLoading(false)
   }
 
-  // 自动连接 ASR
+  // 自动连接 ASR（章节归属：字幕入库时挂到所选章节名下，'' = 不分章节）
   useEffect(() => {
     if (courseId) {
-      connectASR(courseId)
+      connectASR(courseId, activeChapterId)
     }
     return () => { disconnectASR() }
   }, [courseId])
@@ -217,6 +219,17 @@ export default function SubtitleOverlay() {
             {isOffline ? <School size={10} /> : <Monitor size={10} />}
             {isOffline ? ' 线下' : ' 网课'}
           </span>
+          {/* 章节标签（多集长课程：本次识别归属的章节） */}
+          {activeChapterName && (
+            <span style={{
+              ...styles.modeTag,
+              background: isOffline ? 'rgba(0,206,201,0.10)' : 'var(--bg-card)',
+              color: isOffline ? '#00cec9' : 'var(--text-secondary)',
+            }}>
+              <ListVideo size={10} />
+              {' '}{activeChapterName}
+            </span>
+          )}
           <span style={{
             ...styles.statusDot,
             background: isListening ? 'var(--success)' : hasError ? 'var(--danger)' : 'var(--text-muted)',
@@ -398,17 +411,30 @@ export default function SubtitleOverlay() {
           </div>
         )}
 
-        {/* 历史字幕（半透明） */}
+        {/* 历史字幕（半透明）。译文是 LLM 异步回填的：到达前只显示原文，
+            到达后 both 模式原文+译文两行、zh 模式直接替换为译文。 */}
         {recentLines.map((line) => (
           <div key={line.id} style={styles.historicalLine}>
-            {line.words?.length > 0 ? (
-              line.words.map((w, i) => (
-                <span key={i} onClick={() => handleWordClick(w.word)} style={styles.wordLink}>
-                  {w.word}{wordSeparator(w.word, line.words[i + 1]?.word)}
-                </span>
-              ))
-            ) : (
-              <span>{line.text}</span>
+            {subtitleLang !== 'zh' && (
+              line.words?.length > 0 ? (
+                line.words.map((w, i) => (
+                  <span key={i} onClick={() => handleWordClick(w.word)} style={styles.wordLink}>
+                    {w.word}{wordSeparator(w.word, line.words[i + 1]?.word)}
+                  </span>
+                ))
+              ) : (
+                <span>{line.text}</span>
+              )
+            )}
+            {subtitleLang !== 'orig' && line.translation && line.translation !== line.text && (
+              <span style={{
+                display: 'block',
+                fontSize: 12,
+                color: subtitleLang === 'zh' ? 'rgba(255,255,255,0.5)' : 'rgba(160,220,255,0.55)',
+                marginTop: 1,
+              }}>
+                {line.translation}
+              </span>
             )}
           </div>
         ))}

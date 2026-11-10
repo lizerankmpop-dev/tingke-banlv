@@ -9,6 +9,7 @@ export interface Course {
   courseType: 'online' | 'offline'  // 课程类型：线上网课 / 线下课堂
   language: string      // 识别语言：auto / en / zh / ja / ...
   simpMode: string      // V5-4 简繁输出：auto-simplified（简体优先）/ raw（保留原始字形）
+  subtitleLang: string  // 字幕显示语言：both（双语对照）/ orig（仅原文）/ zh（仅中文）
   createdAt: number
   updatedAt: number
   videoCount: number
@@ -37,6 +38,7 @@ export interface SubtitleWord {
 export interface SubtitleLine {
   id: string
   text: string
+  translation?: string   // LLM 异步回填的中文译文（软依赖，可能一直没有）
   words: SubtitleWord[]
   start: number
   end: number
@@ -124,6 +126,7 @@ export interface VideoSource {
 
 export type WSMessage =
   | { type: 'subtitle'; data: SubtitleLine }
+  | { type: 'subtitle_translation'; data: { id: string; translation: string } }
   | { type: 'term_extracted'; data: VocabularyEntry }
   | { type: 'asr_status'; data: { status: 'listening' | 'processing' | 'loading' | 'idle' | 'error'; message?: string } }
   | { type: 'error'; data: { message: string } }
