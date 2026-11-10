@@ -219,6 +219,9 @@ class AudioCapture:
         self.sample_rate = sample_rate          # 输出采样率，固定 16000
         self.chunk_size = chunk_size
         self._device_index = device_index
+        self._device_changed = threading.Event()
+        self._device_lock = threading.Lock()
+        self.active_device_index: Optional[int] = None
 
         self._audio_queue: queue.Queue = queue.Queue()
         self._running = False
@@ -251,6 +254,7 @@ class AudioCapture:
         if self._running:
             return
 
+        self._device_changed.clear()
         self._running = True
         self._paused = False
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -260,8 +264,12 @@ class AudioCapture:
     def stop(self):
         """停止捕获"""
         self._running = False
+        self._device_changed.set()
         if self._thread:
             self._thread.join(timeout=2)
+        if self.mode == "microphone" and self._thread and self._thread.is_alive():
+            # The worker owns the stream and will close it when the driver returns.
+            return
         if self._stream:
             try:
                 self._stream.stop_stream()
@@ -280,6 +288,13 @@ class AudioCapture:
 
     def resume(self):
         self._paused = False
+
+    def select_microphone(self, device_index: Optional[int]) -> None:
+        """让采集线程关闭旧流并打开新设备。"""
+        with self._device_lock:
+            if device_index != self._device_index:
+                self._device_index = device_index
+                self._device_changed.set()
 
     # ---------- 设备枚举 ----------
 
@@ -336,7 +351,21 @@ class AudioCapture:
     # ---------- 捕获主循环 ----------
 
     def _capture_loop(self):
-        """音频捕获主循环"""
+        if self.mode != "microphone":
+            self._capture_device(self._device_index)
+            return
+
+        while self._running:
+            with self._device_lock:
+                requested = self._device_index
+                self._device_changed.clear()
+            self._capture_device(requested)
+            self.active_device_index = None
+            while self._running and not self._device_changed.wait(0.1):
+                pass
+
+    def _capture_device(self, requested: Optional[int]):
+        """打开设备并运行，直到停止、切换或设备中断。"""
         if pyaudio is None:
             logger.error(
                 "音频库不可用，无法采集。请安装 PyAudioWPatch:\n"
@@ -344,6 +373,7 @@ class AudioCapture:
             )
             return
 
+        frames_per_buffer = None
         try:
             # 🔴🔴 **「构造 PyAudio + 找设备 + 开流」必须整段串行**（2026-10-29 二次修）
             #
@@ -360,10 +390,11 @@ class AudioCapture:
             # ⇒ 现在**整段进锁**：构造 → 找设备 → 开流 全部串行。
             #    锁只保护「打开」这个短动作，长期持有的 stream 不在锁内 ⇒ 无性能影响。
             with _CrossProcessGuard():
+                if not self._running or self._device_changed.is_set():
+                    return
                 self._pyaudio = pyaudio.PyAudio()
-
-                if self._device_index is not None:
-                    device_index = self._device_index
+                if requested is not None:
+                    device_index = requested
                 elif self.mode == "loopback":
                     # PyAudioWPatch 自带默认回环设备，优先用它
                     device_index = self._default_loopback_index(self._pyaudio)
@@ -374,10 +405,16 @@ class AudioCapture:
 
                 if device_index is None:
                     logger.error(f"未找到可用的音频设备 (模式: {self.mode})")
-                    self._running = False
+                    if self.mode != "microphone":
+                        self._running = False
                     return
 
                 device_info = self._pyaudio.get_device_info_by_index(device_index)
+                if self.mode == "microphone" and (
+                    not device_info.get("maxInputChannels") or device_info.get("isLoopbackDevice")
+                ):
+                    logger.warning("选中的设备不是麦克风 (index=%s)", device_index)
+                    return
                 self._native_rate = int(device_info.get("defaultSampleRate") or self.sample_rate)
                 logger.info(
                     f"使用音频设备: {device_info['name']} "
@@ -409,16 +446,17 @@ class AudioCapture:
                 )
 
             self._stream.start_stream()
+            self.active_device_index = device_index
             logger.info(
                 f"音频流已打开: {self._native_rate}Hz/{in_channels}ch, "
                 f"块长={frames_per_buffer} 帧"
             )
 
-            while self._running and self._stream.is_active():
+            while self._running and not self._device_changed.is_set() and self._stream.is_active():
                 time.sleep(0.1)
 
             # 退出循环时若仍在运行，说明流被动中断了
-            if self._running:
+            if self._running and not self._device_changed.is_set():
                 logger.warning("音频流已非活跃状态，捕获退出")
 
         except Exception as e:
@@ -436,7 +474,10 @@ class AudioCapture:
             #
             #    ⇒ 现在改成**重建音频流 + 指数退避重试**。
             #    重试放在采集线程里（daemon thread），不阻塞事件循环。
-            if not self._running:
+            if not self._running or self._device_changed.is_set():
+                return
+            if frames_per_buffer is None:
+                logger.warning("无法打开音频设备: %s", e)
                 return
 
             attempt = 0
@@ -451,7 +492,8 @@ class AudioCapture:
                 # 退避期间也要能被 stop() 立刻打断
                 deadline = time.time() + delay
                 while self._running and time.time() < deadline:
-                    time.sleep(0.1)
+                    if self._device_changed.wait(0.1):
+                        return
                 if not self._running:
                     return
                 try:
@@ -479,7 +521,8 @@ class AudioCapture:
             if e is not None:
                 logger.error(f"音频捕获错误（重试 {attempt} 次后仍失败）: "
                              f"{type(e).__name__}: {e}")
-                self._running = False
+                if self.mode != "microphone":
+                    self._running = False
         finally:
             self._close_stream_quietly()
 
@@ -516,7 +559,7 @@ class AudioCapture:
             if status:
                 logger.debug(f"音频状态: {status}")
 
-            if not self._paused and in_data:
+            if not self._paused and in_data and (self.mode != "microphone" or self._running):
                 pcm = np.frombuffer(in_data, dtype=np.int16)
                 if pcm.size:
                     # 多声道 → 单声道

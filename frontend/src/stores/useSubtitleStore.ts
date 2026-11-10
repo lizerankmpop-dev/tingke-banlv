@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import type { SubtitleLine, VocabularyEntry, ASRStatus, TermGuardStats } from '../types'
 import { useCourseStore } from './useCourseStore'
 import { overlayBridge } from '../lib/overlayBridge'
+import { useClassroomAudioStore } from './useClassroomAudioStore'
+import { readMicrophoneMeter } from '../lib/classroomAudio'
+import type { MicrophoneMeter } from '../lib/classroomAudio'
 
 /**
  * 数值字段兜底：非有限数一律当作「未上报」（null），不要让它变成 0。
@@ -30,6 +33,7 @@ interface SubtitleState {
   reconnectTimer: ReturnType<typeof setTimeout> | null
   intentionalClose: boolean
   notRunningCount: number
+  microphoneMeter: MicrophoneMeter | null
   /**
    * 术语提示词防循环的运行时状态（来自 /api/asr/poll 附带的 whisper stats）
    *
@@ -106,6 +110,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   reconnectTimer: null,
   intentionalClose: false,
   notRunningCount: 0,
+  microphoneMeter: null,
   termGuard: null,
 
   connectASR: (courseId: string) => {
@@ -120,6 +125,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       intentionalClose: false,
       reconnectAttempts: 0,
       notRunningCount: 0,
+      microphoneMeter: null,
       // 换课后旧的降级状态不该继续显示（新管道的提示词长度可能完全不同）
       termGuard: null,
     })
@@ -140,6 +146,10 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
           return
         }
         const data = await res.json()
+        if (get().pollInterval !== interval || get().intentionalClose) return
+        set(state => ({
+          microphoneMeter: readMicrophoneMeter(state.microphoneMeter, data, performance.now()),
+        }))
 
         if (data.status === 'not_running') {
           const count = get().notRunningCount + 1
@@ -205,7 +215,13 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
     fetch(`/api/asr/stop?course_id=${courseId}`, { method: 'POST' })
       .catch(() => {})
       .finally(() => {
-        fetch(`/api/asr/start?course_id=${courseId}`, { method: 'POST' })
+        if (get().intentionalClose) return
+        const course = useCourseStore.getState().courses.find(item => item.id === courseId)
+        const settings = useClassroomAudioStore.getState().settings
+        const options: RequestInit = course?.courseType === 'offline'
+          ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) }
+          : { method: 'POST' }
+        fetch(`/api/asr/start?course_id=${courseId}`, options)
           .then(async (res) => {
             // 🔴 **必须检查状态码**（2026-10-29 修）
             //
@@ -285,6 +301,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       asrMessage: '',
       reconnectAttempts: 0,
       notRunningCount: 0,
+      microphoneMeter: null,
       termGuard: null,
     })
     pushOverlay(get)

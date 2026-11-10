@@ -729,7 +729,7 @@ def build_engine(
     return engine
 
 
-def build_vad(recorder: Recorder, engine):
+def build_vad(recorder: Recorder, engine, profile: str = "near"):
     """
     组装 VAD，并把片段送去识别。
 
@@ -745,7 +745,7 @@ def build_vad(recorder: Recorder, engine):
         recorder.on_segment(audio, start_time, end_time)
         engine.add_audio(audio)
 
-    return VoiceActivityDetector(on_speech_segment=on_segment)
+    return VoiceActivityDetector(on_speech_segment=on_segment, profile=profile)
 
 
 def drain(engine, timeout: float = 600.0, quiet: float = 1.0) -> bool:
@@ -811,7 +811,16 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
     recorder = Recorder()
     # 关键：把字幕回调切到本文件的 Recorder，否则字幕会记到上一个/顶层实例上
     router.bind(recorder)
-    vad = build_vad(recorder, engine)
+    classroom = getattr(args, "classroom", None)
+    processor = None
+    if classroom:
+        from classroom_noise import mix_classroom_noise
+        from audio.classroom import ClassroomAudio
+
+        audio = mix_classroom_noise(audio, SAMPLE_RATE)
+        if classroom == "enhanced":
+            processor = ClassroomAudio()
+    vad = build_vad(recorder, engine, "far-field" if processor is not None else "near")
 
     stats_before = engine.get_stats()
     recorder.mark_feed_start()
@@ -821,7 +830,8 @@ def eval_file(path: Path, args, engine, router: "SubtitleRouter") -> dict:
     starvation = 0.0
     rt_speed = max(0.1, float(args.realtime_speed))
     for i in range(0, len(audio), CHUNK_SIZE):
-        vad.process_chunk(audio[i : i + CHUNK_SIZE])
+        chunk = audio[i : i + CHUNK_SIZE]
+        vad.process_chunk(processor.process(chunk) if processor is not None else chunk)
         if args.realtime:
             audio_elapsed = min(i + CHUNK_SIZE, len(audio)) / SAMPLE_RATE
             # rt_speed>1 时压缩墙钟但保持分块/块间步结构 ⇒ 流式分段不变、WER 等价
@@ -1485,7 +1495,13 @@ def main() -> int:
     parser.add_argument("--drain-timeout", type=float, default=600.0)
     parser.add_argument("--detail-limit", type=int, default=200)
     parser.add_argument("--limit", type=int, default=0, help="只跑前 N 个文件（调试用）")
+    parser.add_argument(
+        "--classroom", choices=("baseline", "enhanced"),
+        help="混入固定 10 dB 教室合成噪声，对照原始链路与增强/远场链路",
+    )
     args = parser.parse_args()
+    if args.classroom and (not args.realtime or args.realtime_speed != 1.0):
+        parser.error("--classroom 需要 --realtime，且实时速率必须为 1.0")
 
     root = Path(__file__).resolve().parent.parent
     if args.audio:
@@ -1639,6 +1655,8 @@ def main() -> int:
             "terms": args.terms,
             "domain": args.domain,
             "realtime": args.realtime,
+            **({"classroom": args.classroom, "snrDb": 10, "noiseSeed": 20261110}
+               if args.classroom else {}),
             "maxWer": args.max_wer,
             "maxCer": args.max_cer,
             "sourceKindOverride": args.source_kind,
