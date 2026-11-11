@@ -151,6 +151,55 @@ def _suffixes(s: str, min_chars: int) -> list[str]:
     return [s[i:] for i in range(len(s) - min_chars + 1)]
 
 
+def _prefixes(s: str, min_chars: int) -> list[str]:
+    """`s` 的**保守**前缀变体（长的在前）。
+
+    🔴 2026-11-11 新增：模型**也可能把引导语的尾部截断**再吐出来。
+    实测（中文真实课堂音频，生产引擎端到端）里出现过
+    `请使用简体中文转`（比原文少一个「写」字）。
+    这种形态是**前缀**，而黑名单的派生方式（整句 / 子句 / 剥敬语前缀 / 后缀）
+    一个都生成不出来 ⇒ 漏救 ⇒ 虚假字幕直接留在屏幕上。
+
+    ⚠️ **这些前缀绝不能进黑名单**（`build_blacklist`）：
+    短前缀在正常课文里完全可能出现 ——「请使用简体的字形」这种句子一旦被
+    当成回显删掉，就变成「的字形」，逐字稿悄悄偏了而且不报错。
+    所以它们只用于**整段判定**（见 `_is_truncated_pure_echo`），
+    绝不参与局部剔除。
+
+    阈值取 **max(min_chars, 原文长度 × 60%)**：
+      · 至少 `min_chars` 字；
+      · 至少占原文 60%（短到这个比例，前缀已经足够「像」引导语本身）；
+      · 剩下 40% 的尾部允许被模型截断。
+    默认引导语两个子句都是 9 字 ⇒ 阈值 = max(5, 5.4) = 6 字。
+    """
+    threshold = max(min_chars, int(len(s) * 0.6))
+    return [s[:i] for i in range(len(s), threshold - 1, -1)]
+
+
+def _is_truncated_pure_echo(norm: str, hint: str, min_chars: int) -> bool:
+    """整段文本就是引导语的**截断前缀** ⇒ 判为纯回显。
+
+    只在「去掉标点空白后，整段文本**完全等于**某个引导语子句的截断前缀」
+    时才成立 —— 所以：
+      · 不会误伤含有引导语片段的正常句子（那走的是黑名单剔除，不是整段丢弃）；
+      · 不会把「回显 + 一个残字」误判成纯回显（残字会让整段不再等于前缀）。
+
+    为什么需要它（实测）：模型在无话可说的短片段上会把引导语念出来，
+    而它念的版本可能是**截断**的（`请使用简体中文转`，少一个「写」字）。
+    黑名单匹配不上 ⇒ `isPureEcho=False` ⇒ 这条虚假字幕**留在屏幕上**。
+    """
+    if not norm or not hint:
+        return False
+    for clause in _split_clauses(hint):
+        norm_clause = "".join(ch for ch in clause if not _is_separator(ch))
+        if not norm_clause:
+            continue
+        for pref in _prefixes(norm_clause, min_chars):
+            if norm == pref:
+                return True
+    return False
+
+
 def _split_clauses(hint: str) -> list[str]:
     out: list[str] = []
     cur: list[str] = []
@@ -258,18 +307,36 @@ def _tidy(text: str) -> str:
     return result[start:end]
 
 
-def clean_text(text: str, blacklist: list[str], tidy: bool = True) -> EchoResult:
-    """对单条字幕执行两条规则。"""
-    if not text or not blacklist:
+def clean_text(
+    text: str,
+    blacklist: list[str],
+    tidy: bool = True,
+    hint: str = "",
+    min_chars: int = MIN_ECHO_CHARS,
+) -> EchoResult:
+    """对单条字幕执行两条规则。
+
+    `hint` 传入实际生效的引导语文案后，会额外启用「整段是引导语的**截断前缀**」
+    这一判定（见 `_is_truncated_pure_echo`）。
+    刻意做成**可选参数**：局部剔除（黑名单）的行为完全不变，
+    只有「整段丢弃」这条多一种判据 —— 所以不会扩大误伤面。
+    """
+    if not text:
         return EchoResult(text=text, isPureEcho=False, hits=0)
 
-    spans, covered_ratio = _analyze(text, blacklist)
-    if not spans:
-        return EchoResult(text=text, isPureEcho=False, hits=0)
+    spans, covered_ratio = _analyze(text, blacklist) if blacklist else ([], 0.0)
 
     # 覆盖率 100% 才算纯回显：留一点余量会把「回显 + 一个残字」误判成纯回显，
     # 于是那个残字被静默丢掉 —— 宁可留下噪声，也不丢识别结果。
-    is_pure = covered_ratio >= 1.0
+    is_pure = bool(spans) and covered_ratio >= 1.0
+
+    if not spans:
+        # 黑名单匹配不上，但整段可能就是引导语的截断前缀
+        # （实测模型吐出 `请使用简体中文转`，少一个「写」字）。
+        norm, _ = normalize_with_map(text)
+        if _is_truncated_pure_echo(norm, hint, min_chars):
+            return EchoResult(text="", isPureEcho=True, hits=1)
+        return EchoResult(text=text, isPureEcho=False, hits=0)
 
     # 从后往前删，避免下标失效
     chars = text
@@ -288,6 +355,7 @@ class EchoCleaner:
     def __init__(self, hint: str, min_chars: int = MIN_ECHO_CHARS, tidy: bool = True):
         self.hint = hint or ""
         self.blacklist = build_blacklist(self.hint, min_chars=min_chars)
+        self.min_chars = min_chars
         self.tidy = tidy
         self.stats = EchoStats()
         # 派生不出任何字面量时必须留痕：否则「清洗看起来在跑、实际什么都没匹配」
@@ -306,7 +374,8 @@ class EchoCleaner:
 
     def clean(self, text: str) -> EchoResult:
         self.stats.segmentsSeen += 1
-        result = clean_text(text, self.blacklist, tidy=self.tidy)
+        result = clean_text(text, self.blacklist, tidy=self.tidy,
+                            hint=self.hint, min_chars=self.min_chars)
         # 埋点口径：被丢弃的整段只计入 segmentsDropped，**不再**计入剔除子串数。
         # 否则「一条纯回显」会同时出现在「丢弃 1 段」和「剔除 1 处」两个指标里，
         # 事后统计频次时两边都虚高、且没法对账。

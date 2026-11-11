@@ -188,6 +188,76 @@ def test_blacklist_includes_clause_suffix_variant():
             assert clause[i:] in BLACKLIST, f"分句后缀 {clause[i:]!r} 未派生"
 
 
+# ============ 尾部截断变体（2026-11-11 新增） ============
+#
+# 起因：修 VAD 延迟时做生产引擎端到端扫描，在真实中文课堂音频上抓到
+#   段 14: 「请使用简体中文转。」   ← 比原文少一个「写」字
+# 这类是**前缀**形态，原来的派生方式（整句 / 子句 / 剥敬语前缀 / 后缀）
+# 一个都生成不出来 ⇒ 漏救 ⇒ 虚假字幕直接留在屏幕上。
+#
+# ⚠️ 修法上刻意**不把前缀塞进黑名单**：
+# 短前缀在正常课文里完全可能出现（「请使用简体的字形」），
+# 进了黑名单就会被局部剔除 ⇒ 逐字稿悄悄偏了而且不报错。
+# 所以只用于「整段判定」：整段文本恰好等于某个截断前缀时才整段丢弃。
+
+
+def test_truncated_echo_is_dropped_not_left_on_screen():
+    """🔴 截断形态的纯回显必须被整段丢弃，不能留在字幕上。"""
+    got = clean_text("请使用简体中文转。", BLACKLIST, hint=SIMP_HINT)
+    assert got.isPureEcho is True, "截断回显未被识别为纯回显"
+    assert got.text == "", f"截断回显未被清掉：{got.text!r}"
+
+
+def test_truncated_echo_with_trailing_garbage_is_kept_not_dropped():
+    """🟡 已知残留：`请使用简体中文转内后`（截断前缀 + 模型赘字）**不整段丢弃**。
+
+    为什么不丢：模块既有原则是「宁可留噪声，也不丢识别结果」
+    （见 `test_almost_pure_echo_is_not_dropped` —— 回显后面那一个残字
+    可能是老师真说出来的字，丢不得）。而「转内后」里的「内后」
+    与「好」在文本上无法区分，所以**不能**为它放宽整段丢弃的判据。
+
+    ⇒ 这类残留留在字幕上，是**有意接受**的取舍，不是漏网。
+    彻底解决需要判断「赘字是否为模型幻觉」，那属于赛后改进项
+    （见《延迟归因与优化_2026-11-11.md》§六）。
+
+    这条测试的作用是把这个取舍**钉住**，防止后人误以为它是漏网而放宽判据。
+    """
+    got = clean_text("请使用简体中文转内后。", BLACKLIST, hint=SIMP_HINT)
+    assert got.isPureEcho is False, "带赘字的不该整段丢弃（残字可能是真语音）"
+    assert got.text == "请使用简体中文转内后。", f"不应被局部剔除：{got.text!r}"
+
+
+def test_truncated_prefix_does_not_swallow_ordinary_sentences():
+    """反向断言：截断前缀判定**不能**扩大成「含引导语片段就删」。
+
+    「请使用简体的字形」这种句子一旦被误删，逐字稿就悄悄偏了，
+    而且不报错。这条是本次修复的安全底线 ——
+    截断前缀只用于**整段丢弃**，不参与局部剔除。
+    """
+    for s in ("大家注意句子的结构", "我们今天讲普通话的发音", "这一项我们先跳过",
+              "我们今天讲普通话的句式结构", "请使用简体的字形"):
+        got = clean_text(s, BLACKLIST, hint=SIMP_HINT)
+        assert got.text == s, f"正常句子被误删：{s!r} → {got.text!r}"
+        assert got.isPureEcho is False, f"正常句子被误判为纯回显：{s!r}"
+
+
+def test_blacklist_is_not_polluted_with_prefixes():
+    """🔴 黑名单里**不许**出现截断前缀（否则会扩大局部剔除的误伤面）。
+
+    这条是上一条的**结构性**保证：不依赖「阈值调得准不准」，
+    而是保证前缀根本不在黑名单里 —— 局部剔除的行为完全不变。
+    """
+    for lit in ("请使用简体中文转", "以下是普通话的句", "请使用简体"):
+        assert lit not in BLACKLIST, f"截断前缀 {lit!r} 不应进黑名单"
+
+
+def test_prefix_variants_still_come_from_hint_only():
+    """黑名单仍然只许来自引导语本身（派生，不是另抄一份常量）。"""
+    hint_norm = _nonsep(SIMP_HINT)
+    for lit in BLACKLIST:
+        assert lit in hint_norm, f"黑名单出现了引导语里没有的字面量：{lit!r}"
+
+
 def test_partial_echo_starting_mid_clause_keeps_real_head():
     """反向断言：剔回显**不能连真实语音一起删掉**。
 

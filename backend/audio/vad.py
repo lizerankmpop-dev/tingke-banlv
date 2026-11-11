@@ -22,12 +22,22 @@ WINDOW_DURATION = VAD_WINDOW / SAMPLE_RATE  # 0.032s
 SPEECH_THRESHOLD = 0.5       # 语音概率阈值
 SILENCE_DURATION = float(os.environ.get("TINGKEBANLV_VAD_SILENCE", "0.8"))
                              # 静音多久后断句（秒）
-MAX_SPEECH_DURATION = float(os.environ.get("TINGKEBANLV_VAD_MAX_SPEECH", "5.0"))
+MAX_SPEECH_DURATION = float(os.environ.get("TINGKEBANLV_VAD_MAX_SPEECH", "6.0"))
                              # 最大语音片段长度（秒）。
-                             # ⚠️ 2026-11-11 由 12.0 下调到 5.0，理由见下方
+                             # ⚠️ 2026-11-11 由 12.0 下调到 6.0，理由见下方
                              # 「最长片段保护」注释：原先这个上限在连续讲话时
                              # **根本不生效**，字幕延迟实测达 15s+（≈三句话）。
-                             # 配套的实测数据见 scripts/bench_latency.py。
+                             #
+                             # 为什么是 6.0 而不是 5.0（生产引擎端到端实测，
+                             # 中文真实课堂音频 420s，见 scripts/probe_maxsweep_e2e.py）：
+                             #     上限  8s → CER差 22.18%
+                             #     上限  6s → CER差 20.17% / 20.84%（两轮独立运行）
+                             #     上限  5s → CER差 39.06%  ⚠️ 断崖
+                             # 5.0s 处「漏字」从 67 暴涨到 218：片段越短，
+                             # "无话可说"的短段越多，模型会把简体引导语念出来，
+                             # `EchoCleaner` 判成纯回显后**整段丢弃** ⇒ 内容直接丢失。
+                             # 6.0s 反而优于 8.0s（切点更贴近语义边界），
+                             # 且把最坏延迟从 ~16s 压到 ~8s。
 MIN_SPEECH_DURATION = 1.2    # 最小语音片段长度（秒），低于此不提交识别
                              # （仅作用于「静音断句」路径；「达到最长上限」路径
                              #   只要片段里出现过语音就会提交，见 _process_window）
