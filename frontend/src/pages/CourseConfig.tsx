@@ -6,6 +6,7 @@ import { ArrowLeft, Play, Settings, BookOpen, Mic, Monitor, School, AlertTriangl
 import CourseConfigHint from '../components/CourseConfigHint'
 import MaterialsPanel from '../components/MaterialsPanel'
 import { appendTerms } from '../lib/materials'
+import { generateTerms, mergeTerms, TERM_GENERATE_TIMEOUT_MS } from '../lib/termApi'
 import ClassroomMicrophone from '../components/ClassroomMicrophone'
 import { COURSE_CONFIG_DEFAULTS } from '../lib/courseConfigCopy'
 
@@ -372,6 +373,8 @@ export default function CourseConfig({ embedded = false }: { embedded?: boolean 
   const { courses, loadCourses, patchCourseLocal } = useCourseStore()
   const course = courses.find(c => c.id === courseId)
   const isOffline = course?.courseType === 'offline'
+  // 课程名沿用页面现有的 course 数据（页面没有单独的 courseName state）
+  const courseName = (course?.name || '').trim()
 
   // 三个默认值统一取自 `lib/courseConfigCopy`，与提示条里写的「推荐值」同源。
   // 直接写字面量的后果：改了这里、忘了改提示条，提示条就会教用户一个不存在的
@@ -383,6 +386,8 @@ export default function CourseConfig({ embedded = false }: { embedded?: boolean 
   // 字幕显示语言（both/orig/zh）。老课程没有该字段 → 回落 both（历史行为）
   const [subtitleLang, setSubtitleLang] = useState(course?.subtitleLang || 'both')
   const [customTerms, setCustomTerms] = useState('')
+  const [generatingTerms, setGeneratingTerms] = useState(false)
+  const [termGenNotice, setTermGenNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const [loopbackStatus, setLoopbackStatus] = useState<LoopbackStatus>('checking')
   // 🔴 **次要实例提示**（2026-10-30）—— 同一台机器跑两个后端实例时，
   //    后启动的那个**识别不出字幕**（设备被抢），但用户完全不知道原因
@@ -461,6 +466,52 @@ export default function CourseConfig({ embedded = false }: { embedded?: boolean 
   //    否则用户连试都试不了，只能干看着。真正该做的是让用户去启动服务，
   //    而不是把按钮锁死（点了之后后端会给出真实原因）。
   const canStart = isOffline || loopbackStatus === 'ok' || loopbackStatus === 'unreachable'
+  const canGenerateTerms = courseName.length > 0 && !generatingTerms
+
+  /**
+   * AI 生成专业术语。
+   *
+   * 只把结果合并进输入框，不调用 PUT —— 是否保存仍由「开始识别」决定。
+   * 8.5 秒超时比后端 8 秒总预算多 0.5 秒，避免网络往返把成功误判成超时。
+   */
+  const handleGenerateTerms = async () => {
+    if (!canGenerateTerms) return
+    setGeneratingTerms(true)
+    setTermGenNotice(null)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), TERM_GENERATE_TIMEOUT_MS)
+    try {
+      const result = await generateTerms(
+        { courseName, domain, language },
+        controller.signal,
+      )
+      if (result.terms.length === 0) {
+        setTermGenNotice({
+          tone: 'error',
+          text: 'AI 没有返回可用术语，已保留原有内容，可稍后重试或手动填写。',
+        })
+        return
+      }
+      // 只合并、不覆盖；原术语框内容原样保留
+      setCustomTerms(prev => mergeTerms(prev, result.terms))
+      setTermGenNotice({
+        tone: 'ok',
+        text: `已追加 ${result.terms.length} 个候选术语，可手动删改；点「开始识别」后才会保存。`,
+      })
+    } catch (err) {
+      const timedOut = controller.signal.aborted
+      const detail = err instanceof Error ? err.message : ''
+      setTermGenNotice({
+        tone: 'error',
+        text: timedOut
+          ? 'AI 生成超时，已保留原有术语，可稍后重试或手动填写；不影响开始识别。'
+          : `AI 生成失败：${detail || '服务暂不可用'}。已保留原有术语，可手动填写；不影响开始识别。`,
+      })
+    } finally {
+      clearTimeout(timer)
+      setGeneratingTerms(false)
+    }
+  }
 
   const handleStart = () => {
     if (!canStart) return
@@ -576,9 +627,26 @@ export default function CourseConfig({ embedded = false }: { embedded?: boolean 
             </>
           )}
 
-          <label style={styles.label}>
-            <Settings size={14} /> 自定义术语（支持中英文，优先识别）
-          </label>
+          <div style={styles.termLabelRow}>
+            <label style={{ ...styles.label, margin: 0, flex: 1 }}>
+              <Settings size={14} /> 自定义术语（支持中英文，优先识别）
+            </label>
+            <button
+              type="button"
+              onClick={() => void handleGenerateTerms()}
+              disabled={!canGenerateTerms}
+              aria-busy={generatingTerms}
+              title={!courseName ? '请先填写课程名' : '根据课程名生成 15 个候选术语'}
+              style={{
+                ...styles.aiTermBtn,
+                opacity: canGenerateTerms ? 1 : 0.5,
+                cursor: canGenerateTerms ? 'pointer' : 'not-allowed',
+              }}
+            >
+              <Sparkles size={12} />
+              {generatingTerms ? '生成中…' : 'AI 生成'}
+            </button>
+          </div>
           <textarea
             value={customTerms}
             onChange={e => setCustomTerms(e.target.value)}
@@ -586,6 +654,17 @@ export default function CourseConfig({ embedded = false }: { embedded?: boolean 
             style={{ ...styles.input, minHeight: 72, resize: 'vertical' }}
             rows={3}
           />
+          {termGenNotice && (
+            <p
+              role={termGenNotice.tone === 'error' ? 'alert' : 'status'}
+              style={{
+                ...styles.termGenHint,
+                color: termGenNotice.tone === 'error' ? 'var(--danger)' : 'var(--text-secondary)',
+              }}
+            >
+              {termGenNotice.text}
+            </p>
+          )}
 
           {/* ADR-004 课程资料窗口：两种课型通用，边框色随场景（线上紫/线下青） */}
           {courseId && (
@@ -770,6 +849,20 @@ const styles: Record<string, React.CSSProperties> = {
   },
   input: { width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-sm)', fontSize: 14 },
   labelHint: { fontSize: 11, color: 'var(--text-muted)', marginTop: 4, marginBottom: 0 },
+  termLabelRow: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    marginBottom: 8, marginTop: 16,
+  },
+  aiTermBtn: {
+    display: 'inline-flex', alignItems: 'center', gap: 4,
+    padding: '5px 10px', borderRadius: 6,
+    border: '1px solid var(--accent)',
+    background: 'var(--accent-glow)',
+    color: 'var(--accent-light)',
+    fontSize: 12, fontWeight: 500,
+    whiteSpace: 'nowrap',
+  },
+  termGenHint: { fontSize: 11, lineHeight: 1.5, marginTop: 4, marginBottom: 0 },
   startBtn: {
     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
     width: '100%', padding: '14px',
