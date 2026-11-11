@@ -1748,3 +1748,48 @@ async def _handle_term(term_data: dict, course_id: str):
         logger.info(f"术语已入库: {term_data['word']}")
     except Exception as e:
         logger.error(f"术语入库失败: {e}")
+
+# ============ AI 生成专业词汇 API ============
+#
+# ADR《AI 生成专业词汇》任务 1：只生成候选词，结果交给前端确认后写入
+# 现有 customTerms，后端**不落库**。因此这里没有 course_id，也不读写数据库；
+# 即使 AI 通道全挂，也只影响本接口，不会触碰 ASR 主链路。
+
+class GenerateTermsRequest(BaseModel):
+    """AI 生成专业词汇请求（字段与前端课程配置页一致）"""
+
+    courseName: str
+    domain: Optional[str] = ""
+    language: Optional[str] = ""
+
+
+@router.post("/terms/generate")
+async def generate_terms(req: GenerateTermsRequest):
+    """
+    根据课程名生成 15 个专业术语。
+
+    主通道为华为云 LLM，失败自动降级本地 Ollama；总超时 8 秒。
+    双通道都不可用时返回 503，并明确说明主流程不受影响。
+    """
+    course_name = (req.courseName or "").strip()
+    if not course_name:
+        raise HTTPException(status_code=400, detail="课程名不能为空")
+
+    # LLM 是软依赖：缺 langchain 时给 503，而不是让请求 500
+    try:
+        from llm.term_generator import TermGenerationUnavailable, generate_course_terms
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI 专业词汇生成不可用：{type(exc).__name__}: {exc}。"
+                   f"实时字幕与开始识别等主功能不受影响。",
+        ) from exc
+
+    try:
+        return await generate_course_terms(
+            course_name,
+            domain=req.domain or "",
+            language=req.language or "",
+        )
+    except TermGenerationUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
