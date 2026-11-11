@@ -77,24 +77,114 @@ def _detect_cpu_threads() -> int:
     return max(2, min(8, logical // 2))
 
 
+def _cuda_runtime_ready() -> tuple[bool, str]:
+    """检查 CUDA 运行时（cuBLAS / cuDNN）是否真的就位。
+
+    🔴 为什么要单独查：**ctranslate2 能枚举到 GPU ≠ 能推理**。
+    缺 cuBLAS 时，模型**构造成功**，直到 encoder 阶段才抛
+    `RuntimeError: Library cublas64_12.dll is not found` ——
+    那时整个识别管道已经崩了。构造期不报错，所以必须在
+    **决定用 CUDA 之前**就确认运行时齐全。
+
+    查法：扫描 ctranslate2 包目录与 venv 里的 nvidia-* pip 包目录，
+    找到 cublas*/cudnn* 的 DLL 并真加载一次（ctypes.WinDLL）。
+    不写死版本号（CUDA 12 是 cublas64_12、CUDA 13 是 cublas64_13），
+    用通配 + 实加载，避免版本耦合。
+    """
+    import ctypes
+    import glob
+
+    try:
+        import ctranslate2
+    except Exception as e:
+        return False, f"ctranslate2 不可用: {e}"
+
+    site = os.path.dirname(os.path.dirname(ctranslate2.__file__))
+    search_dirs = [
+        os.path.dirname(ctranslate2.__file__),
+        os.path.join(site, "nvidia", "cublas", "bin"),
+        os.path.join(site, "nvidia", "cudnn", "bin"),
+        os.path.join(site, "nvidia", "cuda_runtime", "bin"),
+    ]
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        try:
+            os.add_dll_directory(d)   # Python 3.8+ / Windows
+        except Exception:
+            pass
+
+    found: dict[str, str] = {}
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        for pat in ("cublas*.dll", "cudnn*.dll", "cudart*.dll"):
+            for path in glob.glob(os.path.join(d, pat)):
+                found.setdefault(os.path.basename(path).lower(), path)
+
+    missing = [k for k in ("cublas", "cudnn")
+               if not any(n.startswith(k) for n in found)]
+    if missing:
+        return False, f"缺少 CUDA 运行时 {', '.join(missing)}（已搜 {len(search_dirs)} 个目录）"
+
+    for name, path in found.items():
+        if name.startswith("cublas") or name.startswith("cudnn"):
+            try:
+                ctypes.WinDLL(path)
+            except OSError as e:
+                return False, f"{name} 加载失败: {e}"
+    return True, f"就位（{len(found)} 个 CUDA DLL）"
+
+
 def _detect_device() -> str:
-    """自动检测最佳计算设备"""
-    # 1. 环境变量强制指定
+    """自动检测最佳计算设备
+
+    🔴 2026-11-11 修正：原先**只用 `torch.cuda.is_available()`** 探测 CUDA。
+    这是错的 —— faster-whisper 底层是 **ctranslate2**，CUDA 支持由 ctranslate2
+    自己 + CUDA 运行时（cuBLAS/cuDNN）决定，**与 torch 无关**。而 CPU 版
+    torch（`torch+cpu`）的 `is_available()` 永远是 False，于是
+    **有 RTX 独显的机器也被判成 CPU**，白白丢掉 10~30 倍算力。
+
+    实测（本机 RTX 5060 Laptop / 8GB）：
+        torch 2.14.1+cpu   → cuda.is_available() = False
+        ctranslate2 4.8.2 → get_cuda_device_count() = 1   ← 真正的依据
+
+    现在改为以 ctranslate2 为主、torch 为辅，并额外确认 CUDA 运行时齐全
+    （`_cuda_runtime_ready`）—— 枚举到 GPU 但缺 cuBLAS 时必须安全走 CPU，
+    而不是等到推理阶段才炸掉整个识别管道。
+    """
     if env_device := os.environ.get("WHISPER_DEVICE"):
         logger.info(f"使用环境变量指定的设备: {env_device}")
         return env_device
 
-    # 2. 检查 CUDA
+    # 1) ctranslate2 自己的 CUDA 探测（faster-whisper 的真实依赖）
+    try:
+        import ctranslate2
+        n_gpu = ctranslate2.get_cuda_device_count()
+        if n_gpu > 0:
+            ok, detail = _cuda_runtime_ready()
+            if ok:
+                logger.info(f"检测到 CUDA 设备 (ctranslate2): {n_gpu} 个，运行时{detail}")
+                return "cuda"
+            logger.warning(
+                f"检测到 {n_gpu} 个 CUDA 设备，但运行时不可用（{detail}）→ 使用 CPU。"
+                f"如需 GPU 加速，请安装 CUDA 12 运行时（cuBLAS + cuDNN）后重启。"
+            )
+    except Exception as e:
+        logger.debug(f"ctranslate2 CUDA 探测失败: {e}")
+
+    # 2) torch 探测作为补充（万一用户装了 CUDA 版 torch 而 ctranslate2 异常）
     try:
         import torch
         if torch.cuda.is_available():
-            gpu_name = torch.cuda.get_device_name(0)
-            logger.info(f"检测到 CUDA GPU: {gpu_name}")
+            logger.info(f"检测到 CUDA GPU (torch): {torch.cuda.get_device_name(0)}")
             return "cuda"
     except ImportError:
         pass
+    except Exception as e:
+        logger.debug(f"torch CUDA 探测失败: {e}")
 
-    # 3. 检查 Apple Silicon (MPS)
+    # 3) Apple Silicon (MPS)
     try:
         import torch
         if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
@@ -103,7 +193,7 @@ def _detect_device() -> str:
     except ImportError:
         pass
 
-    logger.info("未检测到 GPU，使用 CPU")
+    logger.info("未检测到可用 GPU，使用 CPU")
     return "cpu"
 
 
@@ -303,6 +393,8 @@ class WhisperEngine:
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
+        # CUDA → CPU 回落只做一次，避免每次重试都在同一条失败路径上浪费时间
+        self._cuda_fallback_done = False
         self.language = language
         self.simp_mode = normalize_simp_mode(simp_mode)
         self.cpu_threads = cpu_threads or _detect_cpu_threads()
@@ -527,6 +619,11 @@ class WhisperEngine:
         等于把「内置模型」这个卖点浪费了。
         只有离线加载真的报错（例如缓存被改坏）时才回退到联网，
         让它有机会自己修复。
+
+        🔴 2026-11-11：新增 **CUDA → CPU 自动回落**（第二道防线）。
+        第一道防线是 `_cuda_runtime_ready()` 的运行时探测；
+        这里兜住「探测通过但构造仍失败」的情况（例如驱动版本不匹配）。
+        没有这道兜底的话，一台 CUDA 环境有问题的机器会**完全用不了**本软件。
         """
         common = dict(
             device=self.device,
@@ -538,6 +635,25 @@ class WhisperEngine:
             download_root=_MODEL_DIR,
         )
 
+        try:
+            return self._construct(whisper_model_cls, common, cached)
+        except Exception as exc:
+            if self.device != "cuda" or self._cuda_fallback_done:
+                raise
+            self._cuda_fallback_done = True
+            logger.warning(
+                "CUDA 模型构造失败（%s: %s），自动回落到 CPU int8。"
+                "如需 GPU 加速，请确认已安装 CUDA 12 运行时（cuBLAS + cuDNN）。",
+                type(exc).__name__, exc,
+            )
+            self.device = "cpu"
+            self.compute_type = "int8"
+            common["device"] = "cpu"
+            common["compute_type"] = "int8"
+            return self._construct(whisper_model_cls, common, cached)
+
+    def _construct(self, whisper_model_cls, common: dict, cached: bool):
+        """按 cached 策略构造模型（离线优先，失败再联网修复缓存）"""
         if not cached:
             return whisper_model_cls(self.model_size, **common)
 

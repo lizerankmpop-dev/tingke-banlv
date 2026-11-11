@@ -22,8 +22,15 @@ WINDOW_DURATION = VAD_WINDOW / SAMPLE_RATE  # 0.032s
 SPEECH_THRESHOLD = 0.5       # 语音概率阈值
 SILENCE_DURATION = float(os.environ.get("TINGKEBANLV_VAD_SILENCE", "0.8"))
                              # 静音多久后断句（秒）
-MAX_SPEECH_DURATION = 12.0   # 最大语音片段长度（秒）
+MAX_SPEECH_DURATION = float(os.environ.get("TINGKEBANLV_VAD_MAX_SPEECH", "5.0"))
+                             # 最大语音片段长度（秒）。
+                             # ⚠️ 2026-11-11 由 12.0 下调到 5.0，理由见下方
+                             # 「最长片段保护」注释：原先这个上限在连续讲话时
+                             # **根本不生效**，字幕延迟实测达 15s+（≈三句话）。
+                             # 配套的实测数据见 scripts/bench_latency.py。
 MIN_SPEECH_DURATION = 1.2    # 最小语音片段长度（秒），低于此不提交识别
+                             # （仅作用于「静音断句」路径；「达到最长上限」路径
+                             #   只要片段里出现过语音就会提交，见 _process_window）
 
 
 class VoiceActivityDetector:
@@ -39,6 +46,17 @@ class VoiceActivityDetector:
             8s 片段 → RTF 0.74（跟得上）
         但片段越长，字幕出字越晚（延迟 = 片段时长 + 识别耗时）。
         故默认静音阈值由 0.5s 放宽到 0.8s，让片段自然落在 4~12 秒。
+
+    🔴 2026-11-11 修正（「最长片段保护」此前是失效的）：
+        原实现把 `MAX_SPEECH_DURATION` 的检查**只写在静音分支**里。
+        老师连续讲话时，每个 32ms 窗口都是语音 ⇒ 永远进不了静音分支
+        ⇒ 上限从不触发 ⇒ 片段只能等到出现 0.8s 静音才提交。
+        实测（scripts/bench_latency.py，MIT 6034 真实讲课音频 120s）：
+            声明上限 12.0s → 实际最长片段 **15.07s**
+            把上限调到 6.0s → 实际最长片段 **14.30s**（几乎没变！）
+        这就是「字幕延迟三句话」的直接成因：
+            延迟 ≈ 最长片段 15s + 推理 0.7s + 前端轮询 0.5s ≈ 16s
+        现在语音分支也检查上限，连续讲话时按上限强制切，出字延迟有界。
     """
 
     def __init__(
@@ -53,6 +71,8 @@ class VoiceActivityDetector:
         self._speech_threshold = 0.45 if far_field else SPEECH_THRESHOLD
         self._silence_duration = SILENCE_DURATION + 0.2 if far_field else SILENCE_DURATION
         self._speech_pad = 0.65 if far_field else 0.5
+        # 线下教室的语句更长、语速更慢，最长片段给得更宽（否则切得太碎）。
+        self._max_speech_duration = MAX_SPEECH_DURATION + 2.0 if far_field else MAX_SPEECH_DURATION
 
         self._model = None
         self._backend = "energy"
@@ -152,25 +172,52 @@ class VoiceActivityDetector:
             self._speech_buffer.append(window)
             self._speech_windows += 1
             self._silence_windows = 0
+        elif self._is_speaking:
+            # 静音窗口也留在片段里 —— 它是上一句的尾巴，对 Whisper 有上下文价值
+            self._speech_buffer.append(window)
+            self._silence_windows += 1
         else:
-            if self._is_speaking:
-                self._speech_buffer.append(window)
-                self._silence_windows += 1
+            # 非说话状态保留档位对应的语音起始上下文
+            self._audio_buffer.append(window)
+            max_keep = int(self._speech_pad / WINDOW_DURATION)
+            if len(self._audio_buffer) > max_keep:
+                self._audio_buffer.pop(0)
+            return
 
-                silence_time = self._silence_windows * WINDOW_DURATION
-                speech_time = self._speech_windows * WINDOW_DURATION
-
-                if (
-                    silence_time >= self._silence_duration
-                    or speech_time >= MAX_SPEECH_DURATION
-                ) and speech_time >= MIN_SPEECH_DURATION:
-                    self._emit_segment()
-            else:
-                # 非说话状态保留档位对应的语音起始上下文
-                self._audio_buffer.append(window)
-                max_keep = int(self._speech_pad / WINDOW_DURATION)
-                if len(self._audio_buffer) > max_keep:
-                    self._audio_buffer.pop(0)
+        # ---- 统一的断句判定：语音路径与静音路径共用同一套条件 ----
+        #
+        # 🔴 2026-11-11 三次修正，根因都在「上限该度量什么 / 谁能否决它」：
+        #
+        # ① 上限原先**只写在静音分支**里 ⇒ 连续讲话时永远不触发
+        #    ⇒ 片段只能等 0.8s 静音才提交，实测最长 15.07s（声明 12s），
+        #       字幕延迟 ≈ 三句话。
+        #
+        # ② 上限即使在语音分支触发，量的是「**语音窗口累计**时长」也不对：
+        #    讲课时语音窗口只占 66.3%（实测，scripts/probe_vad_segments.py），
+        #    其余是呼吸/低音量被判为静音 ⇒ 实际片段时长被放大到约 1.5 倍，
+        #    声明 5s 实测 11.23s。
+        #
+        # ③ 上限触发时，若还用 `语音累计 ≥ MIN_SPEECH_DURATION(1.2s)` 兜底，
+        #    上限会被**这个守卫挡掉**：语音累计不够时既不提交也不重置，
+        #    buffer 继续涨 —— 实测 4s 上限下首段长达 7.26s，而语音累计只有 1.22s。
+        #    ⇒ 达到上限时必须**直接提交**，不能被 MIN 守卫否决。
+        #
+        # 正确口径：**片段实际时长**（= buffer 长度），它与 `_emit_segment`
+        # 里用于投递的 `duration` 是同一个量，两者必须一致。
+        segment_duration = len(self._speech_buffer) * WINDOW_DURATION
+        silence_time = self._silence_windows * WINDOW_DURATION
+        speech_time = self._speech_windows * WINDOW_DURATION
+        hit_silence = silence_time >= self._silence_duration
+        hit_limit = segment_duration >= self._max_speech_duration
+        if hit_silence or hit_limit:
+            # 静音触发：语音太短就不值得送识别（沿用原语义）。
+            # 上限触发：**只要片段里出现过语音就提交**。
+            #   这里刻意不用「语音累计 ≥ 某个下限」做判据 —— 那会让上限
+            #   再次被绕过：语音占比低时（例如每 10 个窗口只有 1 个判为语音），
+            #   语音累计迟迟达不到下限，片段就会继续涨（实测 2s 上限下涨到 2.56s）。
+            #   纯静音（一个语音窗口都没有）由 `self._speech_windows > 0` 排除。
+            if speech_time >= MIN_SPEECH_DURATION or (hit_limit and self._speech_windows > 0):
+                self._emit_segment()
 
     def flush(self):
         """强制输出当前语音片段（停止/暂停时调用）"""
