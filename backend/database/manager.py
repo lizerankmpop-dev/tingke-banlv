@@ -9,6 +9,7 @@ import json
 import uuid
 import time
 import logging
+import sqlite3
 from pathlib import Path
 
 import aiosqlite
@@ -186,14 +187,19 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_vocabulary_word ON vocabulary(course_id, word);
             CREATE INDEX IF NOT EXISTS idx_materials_course ON materials(course_id);
             CREATE INDEX IF NOT EXISTS idx_chapters_course ON chapters(course_id);
-            CREATE INDEX IF NOT EXISTS idx_subtitles_chapter ON subtitles(chapter_id);
         """)
         await self.db.commit()
-        # 注意：idx_vocabulary_due 不能在这里建。
-        # 老库的 vocabulary 表已经存在，CREATE TABLE IF NOT EXISTS 会被跳过，
-        # 此时 next_review_at 列还没加上 —— 在这里建索引会直接报
-        # `no such column: next_review_at`，后端启动即失败（所有老用户升级后打不开应用）。
-        # 它必须等到 _migrate() 的 ALTER TABLE 之后再建。
+        # 🔴 **依赖「迁移新增列」的索引一律不能在这里建**。
+        # 老库的表已经存在，CREATE TABLE IF NOT EXISTS 会被跳过，此时新列还不存在
+        # —— 在这里建索引会直接报 `no such column: xxx`，后端启动即失败
+        # （所有老用户升级后打不开应用）。
+        #
+        # 这个坑**已经犯过两次**：
+        #   ① 10-30 idx_vocabulary_due → vocabulary.next_review_at
+        #   ② 11-10 idx_subtitles_chapter → subtitles.chapter_id（章节功能）
+        # 所以现在统一收口：所有这类索引都放在 _migrate() 末尾（ALTER 之后）建，
+        # **新增索引时不要再往这个 executescript 里加**。
+        # 见 _migrate() 末尾的「依赖新增列的索引」区块。
 
     async def _migrate(self):
         """数据库迁移：为已有数据库补充新字段（只增列，不动老数据）"""
@@ -295,6 +301,28 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_vocabulary_due ON vocabulary(course_id, next_review_at)"
         )
         await self.db.commit()
+
+        # ============ 依赖「迁移新增列」的索引（统一收口）============
+        # 规则：**凡是引用了 ALTER TABLE 新增列的索引，都必须建在这里，不能建在
+        # _create_tables() 里**。老库 CREATE TABLE IF NOT EXISTS 会跳过已有表，
+        # 新列还不存在 ⇒ 建索引即报 `no such column: xxx` ⇒ 老用户升级后应用打不开。
+        #   - idx_subtitles_chapter → subtitles.chapter_id（11-10 章节功能）
+        #   - idx_vocabulary_due   → vocabulary.next_review_at（10-30 复习闭环）
+        # 逐条容错：某条索引因列仍不存在而失败，不应让整个后端启动失败
+        #（降级成「这个索引没有」，功能仍可用，只是查询慢一点）。
+        for _idx_name, _idx_ddl in [
+            ("idx_subtitles_chapter", "subtitles(chapter_id)"),
+            ("idx_vocabulary_due", "vocabulary(course_id, next_review_at)"),
+        ]:
+            try:
+                await self.db.execute(
+                    f"CREATE INDEX IF NOT EXISTS {_idx_name} ON {_idx_ddl}"
+                )
+                await self.db.commit()
+            except sqlite3.OperationalError as exc:
+                logger.warning(
+                    "索引 %s 未创建（列可能仍不存在）：%s", _idx_name, exc
+                )
 
     # ============ 课程 CRUD ============
 
