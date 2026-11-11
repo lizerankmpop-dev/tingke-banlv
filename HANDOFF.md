@@ -53,17 +53,23 @@ cd frontend && npm test
      `start_asr(course_id, chapterId="", req=None)`，两参数并存；前端 `_startBackendASR`
      线下课发 body + URL 带 chapterId、线上课纯 POST + URL 带 chapterId。
      已加 `backend/tests/test_integration_contract.py`（2 条）+ 前端契约测试（1 条）守住。
-3. **门禁基线（本机实测，核对 CI 用这个）**：后端 **559 passed / 1 skipped**、前端 **223 pass / 0 fail**、
-   `tsc --noEmit` 0。数字叠加口径：524（11/09 基线）+17 资料 +5 音频 +11 语言章节 +2 合入契约 = 559；
+3. **门禁基线（本机实测，核对 CI 用这个）**：后端 **579 passed / 1 skipped**、前端 **223 pass / 0 fail**、
+   `tsc --noEmit` 0。数字叠加口径：524（11/09 基线）+17 资料 +5 音频 +11 语言章节 +2 合入契约
+   = **559**（11/11 01:10 合入态）+ **20** 延迟修复新增测试（`test_vad_segmentation` 6 +
+   `test_whisper_device_detection` 9 + `test_prompt_echo` 增补 5）= **579**；
    前端 205+5+5+3+1+4 webview = 223（以实测为准，别按估算报数）。
    ⚠️ 00:25 版写的 219/0 是**合入 webview 之前**的数字，已作废。
+   ⚠️ 11/11 23:45 更新：**559/1 也已作废**（那是合入态的中间数字），CI 要对 `c9aac38` 核 **579/1**。
 4. **跑测试的两个环境坑**：① 必须用 `安装空间/venv/Scripts/python.exe`（系统 python 缺 langchain_core）；
    ② pytest 加 `--basetemp=<全新临时目录>`，否则沙箱批量删除保护会让用例全绿但退出码 1；
    ③ 前端用 `npm test`（runner 带 tsx），手动 `node --test xxx.mts` 会因 TS 无扩展名导入报错。
 5. **ADR 状态**：ADR-002 / 003 / 004 均已随代码合入主线（Implemented）；ADR-001（AI 术语生成）仍派发评审中，
    建议降级为「资料优先、LLM 兜底」。11/10 的「webview 挂起」决策已被 11/11 01:10 队长指令推翻。
 6. **官方留痕待补**：本次是本地 merge + 直推主线，提交历史有 merge commits 但**平台 MR 记录为空**。
-   需让张春阳在 CodeArts 上跑一次 CI（新数字 559/1、219/0）+ CodeCheck 复扫，并按需补 MR 记录。
+   需让张春阳在 CodeArts 上跑一次 CI（**新数字 579/1、223/0、tsc 0**，主线 HEAD `c9aac38`）
+   + CodeCheck 复扫，并按需补 MR 记录。
+   📄 已发《给张春阳_最新成果简报与留痕更新_2026-11-11.md》；旧《CI/CodeCheck/MR 补留痕操作包》**已标注作废**
+   （其中 `863677a` / `559` 全部过期，但三步操作流程、坑位速查、九项截图清单仍有效）。
 7. **待办**：郭宜平访谈还差 2 人（研究生工科/人文，现 4 人全本科生 < 报告 ≥5 线）；
    10dB 加噪 CER A/B 对比仍缺（ADR-003 验收未闭环，等队长明早录音）。
    ⚠️ **11/11 09:40 更新**：原「李梓萌返工清单 3 项 + 补交线上课页」**已作废** ——
@@ -309,7 +315,8 @@ TINGKEBANLV_DEBUG_PORT=9222 TINGKEBANLV_PORT=8765 VITE_DEV_SERVER_URL=http://loc
 
 ### 4.3 门禁基线（改动后必须复核）
 
-> **11/11 合入后以 §0.2 第 3 条为准：后端 559 / 1 skipped、前端 219 / 0、tsc 0。**
+> **11/11 23:45 更新（最新，以此为准）：后端 579 / 1 skipped、前端 223 / 0、tsc 0；主线 HEAD `c9aac38`。**
+> 11/11 合入后曾以「后端 559 / 1 skipped」为准，该数字已作废（合入态中间数字，11/11 中午延迟修复新增 20 条测试）。
 > 下表是 11/09–11/10 的历史基线，保留供追溯，别用它核对现在的 CI。
 
 | 项 | 历史基线 | 11/10 历史值 |
