@@ -1,74 +1,17 @@
 import { HashRouter, Routes, Route } from 'react-router-dom'
-import CourseList from './pages/CourseList'
-import CourseConfig from './pages/CourseConfig'
-import SubtitleOverlay from './pages/SubtitleOverlay'
+import Shell from './shell/Shell'
 import DictionaryWindow from './pages/DictionaryWindow'
 import OverlayWindow from './pages/OverlayWindow'
-import ReviewPage from './pages/ReviewPage'
 import OnboardingWizard from './pages/OnboardingWizard'
 import ReviewReminder from './components/ReviewReminder'
-import CourseWebview from './components/CourseWebview'
-import './components/CourseWebview.css'
-import { useCourseStore } from './stores/useCourseStore'
-import { useAppStore } from './stores/useAppStore'
-import { useHostHeartbeat } from './hooks/useHostHeartbeat'
 
 /**
- * 主应用视图切换
+ * 主应用入口：Hash 路由
  *
- * 保留原有的 store 驱动方式（useAppStore().view），不改成路由跳转：
- * 4 个页面之间大量依赖「带着 courseId 切视图」的隐式状态传递，
- * 一次性改写成路由参数会牵动全部页面且难以回归验证。
- * 路由只用来区分「两个独立入口」，不承担应用内导航职责。
- */
-function MainApp() {
-  const { view, courseId } = useAppStore()
-  const course = useCourseStore(state => state.courses.find(item => item.id === courseId))
-
-  // 存活心跳：主窗口崩溃时悬浮窗要能明确提示，而不是永远停在最后一句字幕
-  useHostHeartbeat()
-
-  const listening = view === 'subtitle-overlay'
-  if ((view === 'course-config' || listening) &&
-      course && course.courseType !== 'offline' && window.electronAPI?.courseWebviewEnabled) {
-    return (
-      <div className={'course-workspace' + (listening ? ' course-workspace--listening' : '')}>
-        <div className="course-workspace__controls">
-          {listening ? <SubtitleOverlay embedded /> : <CourseConfig embedded />}
-        </div>
-        <CourseWebview key={course.id} />
-      </div>
-    )
-  }
-
-  switch (view) {
-    case 'course-list':
-      return <CourseList />
-    case 'course-config':
-      return <CourseConfig />
-    case 'subtitle-overlay':
-      return <SubtitleOverlay />
-    case 'dictionary':
-      return <DictionaryWindow />
-    case 'review':
-      return <ReviewPage />
-    default:
-      return <CourseList />
-  }
-}
-
-/** 主应用外壳：所有视图共用（复习提醒与视图无关） */
-function MainShell() {
-  return (
-    <>
-      <MainApp />
-      <ReviewReminder />
-    </>
-  )
-}
-
-/**
- * 应用入口：Hash 路由
+ * 2026-11-12 起主界面 = 李梓萌界面骨架（shell/Shell.tsx）：
+ * 课程列表 / 识别（线上网页框·线下转写）/ 配置 / 复习 / 生词本五屏 + 可收起侧栏。
+ * 旧主视图（CourseList / CourseConfig / SubtitleOverlay / ReviewPage）不再挂载，
+ * 文件保留供独立窗口（悬浮窗 / 向导 / 词典窗）与既有测试引用。
  *
  * 为什么必须是 hash 而不是 BrowserRouter：
  *   打包后页面由后端同源托管（http://127.0.0.1:<动态端口>），直接打开
@@ -87,8 +30,16 @@ export default function App() {
             否则向导窗口里渲染的是整个主应用（一块不透明的完整界面），
             表现为「窗口打开了、加载也成功了，但内容完全不对」。 */}
         <Route path="/onboarding" element={<OnboardingWizard />} />
-        {/* 其余一切路径（含 /）都进主应用 */}
-        <Route path="*" element={<MainShell />} />
+        {/* 其余一切路径（含 /）都进主应用（新界面骨架 + 复习提醒） */}
+        <Route
+          path="*"
+          element={
+            <>
+              <Shell />
+              <ReviewReminder />
+            </>
+          }
+        />
       </Routes>
     </HashRouter>
   )

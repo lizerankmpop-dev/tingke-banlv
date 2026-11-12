@@ -348,6 +348,80 @@ class AudioCapture:
             logger.error(f"枚举音频设备失败: {e}")
             return []
 
+    # ---------- 麦克风试采（建课/配置页「试采 3 秒」） ----------
+
+    @staticmethod
+    def mic_test_burst(device_index: Optional[int] = None, seconds: float = 3.0) -> dict:
+        """短时试采：开 N 秒输入流测 RMS 电平，不识别、不入库、不留录音。
+
+        与 list_devices 同样必须拿 _CrossProcessGuard（碰 PortAudio 开流的
+        地方都要与采集线程/其它枚举方串行，防 hostApi 断言 abort）。
+
+        返回：
+            ok: bool            是否成功采到
+            level: float        0~1 归一化 RMS（16bit 满幅/32768 再开方压到 0~1）
+            peak: float         0~1 峰值
+            deviceIndex: int|None 实际使用的设备（None = 系统默认）
+            message: str        给前端直接展示的判定文案
+        """
+        if pyaudio is None:
+            return {"ok": False, "level": 0.0, "peak": 0.0,
+                    "deviceIndex": device_index, "message": "未安装音频库，无法试采"}
+        try:
+            with _CrossProcessGuard():
+                p = pyaudio.PyAudio()
+                try:
+                    kwargs = {}
+                    if device_index is not None:
+                        kwargs["input_device_index"] = device_index
+                    stream = p.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=16000,
+                        input=True,
+                        frames_per_buffer=1600,  # 100ms
+                        **kwargs,
+                    )
+                    try:
+                        frames = int(seconds * 10)
+                        squares = 0.0
+                        count = 0
+                        peak = 0
+                        for _ in range(frames):
+                            data = stream.read(1600, exception_on_overflow=False)
+                            arr = np.frombuffer(data, dtype=np.int16)
+                            absarr = np.abs(arr.astype(np.int32))
+                            squares += float((absarr * absarr).sum())
+                            count += len(arr)
+                            local_peak = int(absarr.max()) if len(arr) else 0
+                            peak = max(peak, local_peak)
+                        rms = (squares / count) ** 0.5 if count else 0.0
+                        level = min(1.0, rms / 32768.0 * 8)   # 经验放大：教室远场 RMS 常在满幅 5% 以下
+                        peak_level = min(1.0, peak / 32768.0)
+                        if level < 0.02:
+                            verdict = "几乎没采到声音：检查麦克风选择与物理开关"
+                        elif level < 0.08:
+                            verdict = "声音偏弱：建议靠近讲台或调高系统增益"
+                        elif level > 0.9:
+                            verdict = "电平过高：可能出现削波，建议调低增益"
+                        else:
+                            verdict = "电平良好"
+                        return {
+                            "ok": True, "level": round(level, 4),
+                            "peak": round(peak_level, 4),
+                            "deviceIndex": device_index,
+                            "message": verdict,
+                        }
+                    finally:
+                        stream.stop_stream()
+                        stream.close()
+                finally:
+                    p.terminate()
+        except Exception as e:
+            logger.error(f"麦克风试采失败: {e}")
+            return {"ok": False, "level": 0.0, "peak": 0.0,
+                    "deviceIndex": device_index, "message": f"试采失败：{e}"}
+
     # ---------- 捕获主循环 ----------
 
     def _capture_loop(self):

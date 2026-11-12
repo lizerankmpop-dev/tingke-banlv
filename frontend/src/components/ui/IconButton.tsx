@@ -18,7 +18,8 @@ import type { ReactNode } from 'react';
 export interface IconButtonProps {
   /** 可访问名 —— 同时用作 title 与 aria-label */
   label: string;
-  onClick?: () => void;
+  /** 点击回调；带原生事件（原型场景：课程卡内的图标按钮要 stopPropagation） */
+  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   /** 激活态（当前开启） */
   active?: boolean;
   className?: string;

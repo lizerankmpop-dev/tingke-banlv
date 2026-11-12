@@ -1191,6 +1191,49 @@ async def audio_devices():
     ]}
 
 
+# ---------- 课堂笔记本（2026-11-12 界面定版：识别页右侧「小笔记本」） ----------
+
+class NoteRequest(BaseModel):
+    content: str = Field(max_length=20_000)
+
+
+@router.get("/courses/{course_id}/note")
+async def get_course_note(course_id: str):
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    note = await db.get_note(course_id)
+    return note or {"content": "", "updatedAt": None}
+
+
+@router.put("/courses/{course_id}/note")
+async def set_course_note(course_id: str, req: NoteRequest):
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    return await db.set_note(course_id, req.content)
+
+
+# ---------- 麦克风试采（建课/配置页「试采 3 秒」） ----------
+
+class MicTestRequest(BaseModel):
+    deviceIndex: Optional[int] = None
+    seconds: float = Field(default=3.0, ge=0.5, le=10.0)
+
+
+@router.post("/audio/mic-test")
+async def mic_test(req: MicTestRequest):
+    """短时试采测电平：不识别、不写库、不留录音文件（界面承诺的三不）。
+
+    开流 3 秒 + 与采集/枚举共用 PortAudio 锁 ⇒ 必须 to_thread 离开事件循环。
+    """
+    from audio.capture import AudioCapture
+
+    return await asyncio.to_thread(
+        AudioCapture.mic_test_burst, req.deviceIndex, req.seconds
+    )
+
+
 @router.get("/audio/check-loopback")
 async def check_loopback():
     """检查 Loopback 设备是否可用，返回安装指引"""

@@ -182,6 +182,16 @@ class DatabaseManager:
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
             );
 
+            -- 课堂笔记本（2026-11-12，界面定版：李梓萌识别页右侧「小笔记本」）
+            -- 全新表：老库 CREATE TABLE IF NOT EXISTS 也会执行 ⇒ 不涉及
+            -- 「依赖迁移新增列」的索引坑（那种坑只发生在给**老表补列**的场景）。
+            CREATE TABLE IF NOT EXISTS course_notes (
+                course_id TEXT PRIMARY KEY,
+                content TEXT NOT NULL DEFAULT '',
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS idx_subtitles_course ON subtitles(course_id);
             CREATE INDEX IF NOT EXISTS idx_vocabulary_course ON vocabulary(course_id);
             CREATE INDEX IF NOT EXISTS idx_vocabulary_word ON vocabulary(course_id, word);
@@ -400,6 +410,31 @@ class DatabaseManager:
             await self.db.commit()
 
         return await self.get_course(course_id)
+
+    # ---------- 课堂笔记本（course_notes） ----------
+
+    async def get_note(self, course_id: str) -> dict | None:
+        """课程笔记内容；没有记录时返回 None（前端展示空笔记）"""
+        row = await self.db.execute_fetchall(
+            "SELECT content, updated_at FROM course_notes WHERE course_id = ?",
+            (course_id,),
+        )
+        if row:
+            # _row_to_dict 会把 updated_at 重命名为 updatedAt（见其重命名段）
+            record = self._row_to_dict(row[0])
+            return {"content": record["content"] or "", "updatedAt": record["updatedAt"]}
+        return None
+
+    async def set_note(self, course_id: str, content: str) -> dict:
+        now = int(time.time() * 1000)
+        await self.db.execute(
+            """INSERT INTO course_notes (course_id, content, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(course_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at""",
+            (course_id, content, now),
+        )
+        await self.db.commit()
+        return {"content": content, "updatedAt": now}
 
     async def delete_course(self, course_id: str) -> bool:
         cursor = await self.db.execute("DELETE FROM courses WHERE id = ?", (course_id,))
