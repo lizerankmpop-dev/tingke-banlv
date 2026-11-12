@@ -138,11 +138,22 @@ html.overlay-transparent body {
   background: var(--text-muted);
 }
 
+/*
+ * 文档级 button 重置 —— 必须完整。
+ * shell/limeng.css 的类样式（.nav-item / .nav-sub-item / .nav-chevron / 各卡片按钮）
+ * 原样来自李梓萌原型：它们只声明 color，背景默认透明是**依赖原型里这条全局
+ * button 重置**实现的。把文档级规则收归本文件时，若只清 border/outline 而漏掉
+ * background / color，所有 <button> 会吃到 Chromium 的 ButtonFace 默认灰底，
+ * 表现为整片侧栏「犯灰」（2026-11-13 真机实测）。类选择器优先级高于元素选择器，
+ * 因此下面两条不会覆盖 .nav-item.active / .btn-primary 等显式背景。
+ */
 button {
   cursor: pointer;
   border: none;
   outline: none;
   font-family: inherit;
+  background: transparent;
+  color: inherit;
 }
 
 input, textarea, select {

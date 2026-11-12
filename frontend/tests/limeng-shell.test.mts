@@ -162,3 +162,17 @@ test('配置页：试采必须走真实端点（不得再用 3 秒 setTimeout �
   assert.ok(source.includes('/api/audio/mic-test'), '试采必须调 POST /api/audio/mic-test')
   assert.ok(!/setMicVerdict\('电平良好'\)/.test(source), '不得写死「电平良好」判定')
 })
+
+test('红线：global.css 的 button 文档级重置必须完整（否则新骨架整片犯灰）', () => {
+  const css = readFileSync(join(SRC, 'styles', 'global.css'), 'utf-8')
+  // 只取行首的元素级 button 规则（不误匹配 .segmented button 之类的后代选择器）
+  const m = css.match(/^\s*button\s*\{([^}]*)\}/m)
+  assert.ok(m, 'global.css 必须存在元素级 button 重置')
+  const body = m[1]
+  // limeng.css 的 .nav-item/.nav-sub-item/.nav-chevron 只写 color 不写 background，
+  // 全靠这两条把 Chromium 的 ButtonFace 默认灰底清掉。缺任一条 → 侧栏全灰。
+  assert.match(body, /background\s*:\s*transparent/,
+    'button 重置缺 background: transparent —— 所有 <button> 会变浏览器默认灰底')
+  assert.match(body, /color\s*:\s*inherit/,
+    'button 重置缺 color: inherit —— 按钮文字会落到默认 ButtonText')
+})
