@@ -124,8 +124,8 @@ export default function CourseList() {
                   <h3 style={styles.cardName}>{course.name}</h3>
                   <span style={{
                     ...styles.typeTag,
-                    background: isOffline ? 'rgba(0,206,201,0.15)' : 'var(--accent-glow)',
-                    color: isOffline ? '#00cec9' : 'var(--accent-light)',
+                    background: isOffline ? 'var(--accent-offline-glow)' : 'var(--accent-glow)',
+                    color: isOffline ? 'var(--accent-offline)' : 'var(--accent-light)',
                   }}>
                     {isOffline ? <School size={11} /> : <Monitor size={11} />}
                     {isOffline ? ' 线下课堂' : ' 在线网课'}
@@ -140,7 +140,7 @@ export default function CourseList() {
                 {course.description && <p style={styles.cardDesc}>{course.description}</p>}
               </div>
               <div style={styles.cardRight}>
-                <Play size={20} color={isOffline ? '#00cec9' : 'var(--accent-light)'} style={{ marginRight: 8 }} />
+                <Play size={20} color={isOffline ? 'var(--accent-offline)' : 'var(--accent-light)'} style={{ marginRight: 8 }} />
                 <button onClick={(e) => handleDelete(e, course.id, course.name)} style={styles.delBtn}>
                   <Trash2 size={14} />
                 </button>
@@ -184,11 +184,11 @@ export default function CourseList() {
                 onClick={() => setForm({ ...form, courseType: 'offline' })}
                 style={{
                   ...styles.modeCard,
-                  borderColor: form.courseType === 'offline' ? '#00cec9' : 'var(--border)',
-                  background: form.courseType === 'offline' ? 'rgba(0,206,201,0.06)' : undefined,
+                  borderColor: form.courseType === 'offline' ? 'var(--accent-offline)' : 'var(--border)',
+                  background: form.courseType === 'offline' ? 'var(--accent-offline-wash)' : undefined,
                 }}
               >
-                <School size={28} color="#00cec9" />
+                <School size={28} color="var(--accent-offline)" />
                 <div style={styles.modeLabel}>线下课堂</div>
                 <div style={styles.modeHint}>使用麦克风收音<br />适用于教室 / 讲座 / 会议室</div>
               </div>

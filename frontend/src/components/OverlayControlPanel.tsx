@@ -24,6 +24,13 @@ import { buildTermGuardRows } from '../lib/termGuard'
  * 只是一个 18px 的小圆点，读屏拿不到任何信息（hex 值念出来也没意义），
  * 必须由数据提供一个可读名，再让 `aria-label` 与鼠标 `title` 共用同一份。
  */
+/**
+ * ⚠️ 这几个 hex 是**字幕颜色预设（用户可选的内容数据）**，不是设计 token。
+ *    与 `--accent` / `--accent-light` 无关，**不要跟着主题色一起改** ——
+ *    改主题是换「界面长什么样」，改这里是换「用户能选什么颜色」，两件事。
+ *    （2026-11-12 色值定版时确认过：#a29bfe 恰好等于旧 --accent-light，
+ *      但它属于预设列表，与主题色解耦。）
+ */
 const PRESET_COLORS = [
   { value: '#ffffff', name: '白色' },
   { value: '#ffeaa7', name: '米黄' },
@@ -373,7 +380,7 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
                     ...styles.actionBtn,
                     background: settings.clickThrough ? 'var(--bg-tertiary)' : 'var(--accent-glow)',
                     color: settings.clickThrough ? 'var(--text-secondary)' : 'var(--accent-light)',
-                    borderColor: settings.clickThrough ? 'var(--border)' : 'rgba(108,92,231,0.5)',
+                    borderColor: settings.clickThrough ? 'var(--border)' : 'var(--accent-glow-strong)',
                   }}
                 >
                   {settings.clickThrough ? <Eye size={13} /> : <Move size={13} />}
@@ -468,7 +475,7 @@ function SliderRow({
 const styles: Record<string, React.CSSProperties> = {
   backdrop: {
     position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,0.55)',
+    background: 'var(--scrim)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     zIndex: 300,
   },
@@ -521,8 +528,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', gap: 6, alignItems: 'flex-start',
     fontSize: 11, color: 'var(--warning)', lineHeight: 1.5,
     marginBottom: 8, padding: '6px 8px', borderRadius: 6,
-    background: 'rgba(253,203,110,0.10)',
-    border: '1px solid rgba(253,203,110,0.35)',
+    background: 'var(--warning-soft)',
+    border: '1px solid var(--warning-border)',
   },
   error: { fontSize: 12, color: 'var(--danger)', marginTop: 4 },
   notice: {

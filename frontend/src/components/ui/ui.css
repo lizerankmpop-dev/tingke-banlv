@@ -1,0 +1,177 @@
+/*
+ * 通用 UI 层（2026-11-12 从李梓萌界面原型 v1.1 移植）
+ * ---------------------------------------------------------------------------
+ * 移植纪律：**颜色一律走 var(--x)，不写死 hex**。
+ * 原型 styles.css 里用的是它自己的 --text-3 / --surface-2 / --green / --cyan /
+ * --purple，这里全部换成主线 2026-11-12 定版的 token
+ * （--text-muted / --bg-tertiary / --success / --accent-offline / --accent）。
+ *
+ * 换 token 名不是「翻译」，是**降级耦合**：原型和主线是两套独立实现，
+ * 共用一份 token 定义就会让「改主题色要改两个地方」的老毛病复发。
+ */
+
+/* ── IconButton ───────────────────────────────────────────────── */
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  background: transparent;
+  transition: background 0.15s, color 0.15s;
+}
+.icon-btn:hover:not(:disabled) {
+  background: var(--light-overlay);
+  color: var(--text-primary);
+}
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* 补原型的缺口：原型传了 active 但样式表没实现 */
+.icon-btn.active {
+  background: var(--accent-glow);
+  color: var(--accent-light);
+}
+
+/* ── StatusDot ────────────────────────────────────────────────── */
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  background: var(--success);
+}
+.status-dot.cyan {
+  background: var(--accent-offline);
+}
+.status-dot.purple {
+  background: var(--accent);
+}
+.status-dot.muted {
+  background: var(--text-muted);
+}
+
+/* ── Pill ─────────────────────────────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+/* 补原型的缺口：原型有 tone prop 但一个变体都没实现 */
+.pill.purple {
+  border-color: var(--accent-border);
+  background: var(--accent-glow);
+  color: var(--accent-light);
+}
+.pill.cyan {
+  border-color: var(--accent-offline-border);
+  background: var(--accent-offline-glow);
+  color: var(--accent-offline);
+}
+.pill.green {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.pill.muted {
+  color: var(--text-muted);
+}
+
+/* ── LevelMeter ───────────────────────────────────────────────── */
+.level-meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 58px;
+}
+.level-meter span {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  opacity: 0.5;
+  transform-origin: bottom;
+  background: var(--accent-offline);
+}
+.level-meter.purple span {
+  background: var(--accent);
+}
+.level-meter.active span {
+  opacity: 0.8;
+  animation: levelPulse 0.8s ease-in-out infinite alternate;
+}
+.mini-level .level-meter {
+  flex: 1;
+  height: 30px;
+}
+
+@keyframes levelPulse {
+  from {
+    transform: scaleY(0.55);
+    opacity: 0.45;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 0.95;
+  }
+}
+
+/* ── Toast ────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  z-index: 120;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 10.5px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.toast svg {
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+/* ── EmptyState ───────────────────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 52px 20px;
+  text-align: center;
+}
+.empty-state h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+.empty-state p {
+  margin: 0 0 12px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.empty-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}

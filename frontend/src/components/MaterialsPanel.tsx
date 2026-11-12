@@ -36,9 +36,9 @@ export default function MaterialsPanel({ courseId, offline, onAppendTerms }: Pro
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const accent = offline ? '#00cec9' : 'var(--accent)'
-  const accentBg = offline ? 'rgba(0,206,201,0.08)' : 'var(--accent-glow)'
-  const accentText = offline ? '#00cec9' : 'var(--accent-light)'
+  const accent = offline ? 'var(--accent-offline)' : 'var(--accent)'
+  const accentBg = offline ? 'var(--accent-offline-wash)' : 'var(--accent-glow)'
+  const accentText = offline ? 'var(--accent-offline)' : 'var(--accent-light)'
 
   useEffect(() => {
     if (!courseId) return

@@ -192,9 +192,9 @@ export default function SubtitleOverlay({ embedded = false }: { embedded?: boole
     return (
       <div style={{
         ...styles.collapsed,
-        borderColor: isOffline ? 'rgba(0,206,201,0.3)' : 'var(--border)',
+        borderColor: isOffline ? 'var(--accent-offline-border)' : 'var(--border)',
       }} onClick={() => setCollapsed(false)}>
-        {isOffline ? <School size={14} color="#00cec9" /> : <Mic size={14} color="var(--accent-light)" />}
+        {isOffline ? <School size={14} color="var(--accent-offline)" /> : <Mic size={14} color="var(--accent-light)" />}
         <span style={styles.collapsedText}>听课伴侣</span>
         <span style={{
           width: 6, height: 6, borderRadius: 3,
@@ -214,8 +214,8 @@ export default function SubtitleOverlay({ embedded = false }: { embedded?: boole
           {/* 模式标签 */}
           <span style={{
             ...styles.modeTag,
-            background: isOffline ? 'rgba(0,206,201,0.15)' : 'var(--accent-glow)',
-            color: isOffline ? '#00cec9' : 'var(--accent-light)',
+            background: isOffline ? 'var(--accent-offline-glow)' : 'var(--accent-glow)',
+            color: isOffline ? 'var(--accent-offline)' : 'var(--accent-light)',
           }}>
             {isOffline ? <School size={10} /> : <Monitor size={10} />}
             {isOffline ? ' 线下' : ' 网课'}
@@ -224,8 +224,8 @@ export default function SubtitleOverlay({ embedded = false }: { embedded?: boole
           {activeChapterName && (
             <span style={{
               ...styles.modeTag,
-              background: isOffline ? 'rgba(0,206,201,0.10)' : 'var(--bg-card)',
-              color: isOffline ? '#00cec9' : 'var(--text-secondary)',
+              background: isOffline ? 'var(--accent-offline-wash)' : 'var(--bg-card)',
+              color: isOffline ? 'var(--accent-offline)' : 'var(--text-secondary)',
             }}>
               <ListVideo size={10} />
               {' '}{activeChapterName}
@@ -349,7 +349,7 @@ export default function SubtitleOverlay({ embedded = false }: { embedded?: boole
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={exportSrt} style={{
               flex: 1, padding: '5px 8px', borderRadius: 5, cursor: 'pointer',
-              border: 'none', background: 'var(--accent-light)', color: '#0e1116',
+              border: 'none', background: 'var(--accent-light)', color: 'var(--on-accent)',
               fontSize: 12, fontWeight: 600,
             }}>导出</button>
             <button onClick={() => setExportPanel(false)} style={{
@@ -860,7 +860,7 @@ const styles: Record<string, React.CSSProperties> = {
   // AI 课摘要模态
   sumOverlay: {
     position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,0.55)',
+    background: 'var(--scrim)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     zIndex: 200,
   },
@@ -927,7 +927,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   qaAnswerError: {
     fontSize: 12, color: 'var(--danger)', lineHeight: 1.6,
-    background: 'rgba(225,112,85,0.08)', borderRadius: 'var(--radius-sm)',
+    background: 'var(--danger-soft)', borderRadius: 'var(--radius-sm)',
     padding: '8px 12px',
   },
   qaLoading: {

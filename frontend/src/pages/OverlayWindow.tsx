@@ -152,7 +152,7 @@ export default function OverlayWindow() {
                 </>
               ) : hasError ? (
                 <>
-                  <AlertCircle size={16} color="#e17055" />
+                  <AlertCircle size={16} color="var(--danger)" />
                   {payload?.message || '连接错误'}
                 </>
               ) : (
@@ -193,7 +193,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     gap: 6,
     padding: '4px 10px',
-    background: 'rgba(225, 112, 85, 0.92)',
+    background: 'var(--danger-strong)',
     color: '#fff',
     fontSize: 11,
     flexShrink: 0,
@@ -205,7 +205,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     gap: 6,
     padding: '3px 0',
-    background: 'rgba(108, 92, 231, 0.85)',
+    background: 'var(--accent-strong)',
     color: '#fff',
     fontSize: 11,
     flexShrink: 0,

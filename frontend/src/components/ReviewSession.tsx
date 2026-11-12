@@ -336,7 +336,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
     margin: '0 20px 10px',
     padding: '8px 12px',
-    background: 'rgba(225, 112, 85, 0.12)',
+    background: 'var(--danger-soft)',
     border: '1px solid var(--danger)',
     borderRadius: 'var(--radius-sm)',
     color: 'var(--danger)',

@@ -30,7 +30,31 @@ test('切换麦克风后重新计时', () => {
 test('电平组件显示当前音量、增益和静音提示', () => {
   const meter = { level: 0.01, gainDb: 4.2, quietSince: 0, silent: true, activeDevice: 1 }
   const html = renderToStaticMarkup(createElement(InputMeter, { meter }))
-  assert.match(html, /<meter[^>]+value="0.01"/)
+  // 2026-11-12：原生 <meter> 已换成移植自界面原型的 26 段电平柱（ui/LevelMeter）。
+  // 断言「电平柱存在」而不是「原生 meter 的 value 属性」—— 后者是实现细节，
+  // 而「电平被显示出来」才是这个组件该保证的事。
+  assert.match(html, /class="level-meter/)
   assert.match(html, /4.2 dB/)
   assert.match(html, /没检测到声音/)
+})
+
+test('电平组件给出 good / low / silent 三态判定（ADR-003 §0 验收项）', () => {
+  const base = { gainDb: null, quietSince: null, silent: false, activeDevice: 1 }
+  const good = renderToStaticMarkup(
+    createElement(InputMeter, { meter: { ...base, level: 0.6 } }),
+  )
+  assert.match(good, /收音正常/, 'level 0.6 应判 good')
+  assert.match(good, /status-dot green/, 'good 应是绿点')
+
+  const low = renderToStaticMarkup(
+    createElement(InputMeter, { meter: { ...base, level: 0.05 } }),
+  )
+  assert.match(low, /声音偏弱/, 'level 0.05 应判 low')
+  assert.match(low, /status-dot purple/, 'low 应是紫点')
+
+  const silent = renderToStaticMarkup(
+    createElement(InputMeter, { meter: { ...base, level: 0.01, silent: true } }),
+  )
+  assert.match(silent, /没检测到声音/, 'silent 应由后端判定直接透出')
+  assert.match(silent, /status-dot cyan/, 'silent 应是青点')
 })

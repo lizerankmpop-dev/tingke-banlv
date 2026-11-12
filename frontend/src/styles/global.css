@@ -1,21 +1,83 @@
+@import '../components/ui/ui.css';
+
+/*
+ * 设计 token —— 2026-11-12 色值定版（以李梓萌 v1.1 原型为准）
+ * ---------------------------------------------------------------------------
+ * 为什么现在改：此前底色是**蓝紫调**（#1a1a2e / #16213e / #1e1e30），
+ * 与紫 accent **同色域** ⇒ 面板层次糊、对比度弱；且线下青（0x00cec9）**没有 token**，
+ * 魔法值散落 16 处（4 个文件），改一次线下的配色要动 16 处。
+ *
+ * 现在的规则（以后改色只改这一处）：
+ *   · 底色系 = **中性灰黑**（不带任何色相），场景色（紫/青）才有彩度 ⇒ 层次分明；
+ *   · 一色一场景：线上=紫 --accent，线下=青 --accent-offline；
+ *   · 语义色保留主线命名（--success/--warning/--danger），值对齐原型；
+ *   · 圆角 10px → 12px，与样张一致。
+ *
+ * ⚠️ 改动纪律：**不要在组件里写死色值**，一律走 var()。
+ *    验收：frontend/src 内旧线下青硬编码值必须出现 0 次。
+ */
 :root {
-  --bg-primary: #0f0f0f;
-  --bg-secondary: #1a1a2e;
-  --bg-tertiary: #16213e;
-  --bg-card: #1e1e30;
-  --bg-hover: #252545;
-  --text-primary: #e8e8f0;
-  --text-secondary: #a0a0b8;
-  --text-muted: #6c6c80;
-  --accent: #6c5ce7;
-  --accent-light: #a29bfe;
-  --accent-glow: rgba(108, 92, 231, 0.3);
-  --success: #00b894;
-  --warning: #fdcb6e;
-  --danger: #e17055;
-  --border: #2d2d44;
-  --radius: 10px;
-  --radius-sm: 6px;
+  color-scheme: dark;
+
+  /* 底色：中性灰黑（原为蓝紫调，与 accent 同色域导致层次糊） */
+  --bg-primary: #0e0e11;
+  --bg-secondary: #151519;
+  --bg-tertiary: #1a1a20;
+  --bg-card: #202027;
+  --bg-hover: #2a2a32;
+
+  /* 文字 */
+  --text-primary: #ececf1;
+  --text-secondary: #a3a3ad;
+  --text-muted: #6b6b76;
+
+  /* 场景色 —— 线上紫 */
+  --accent: #8b84e8;
+  --accent-light: #bdb8f2;
+  --accent-hover: #9b95ec;
+  --accent-glow: rgba(139, 132, 232, 0.3);
+
+  /* 场景色 —— 线下青（此前散落 16 处硬编码，2026-11-12 收敛为 token）
+     青色需要多档透明度：淡底 / 中底 / 亮底 / 边框 / 强边框。
+     收敛成 5 档而不是各写各的 —— 否则「改一次线下配色要动十几处」的老毛病会复发。 */
+  --accent-offline: #2dd4cf;
+  --accent-offline-light: #8ce9e5;
+  --accent-offline-wash: rgba(45, 212, 207, 0.08);
+  --accent-offline-soft: rgba(45, 212, 207, 0.12);
+  --accent-offline-glow: rgba(45, 212, 207, 0.15);
+  --accent-offline-border: rgba(45, 212, 207, 0.25);
+  --accent-offline-border-strong: rgba(45, 212, 207, 0.55);
+
+  /* 语义色 */
+  --success: #6cc9a5;
+  --success-soft: rgba(108, 201, 165, 0.12);
+  --warning: #d8a35f;
+  --danger: #d97765;
+  /* 语义色的淡底/边框派生：必须与上面的主色同源。
+     此前这些 rgba 是按旧语义色（黄 #fdcb6e / 红 #e17055）手写的，
+     换主色不改派生 ⇒ 淡底与主色对不上（肉眼可见的"脏"）。 */
+  --warning-soft: rgba(216, 163, 95, 0.12);
+  --warning-border: rgba(216, 163, 95, 0.30);
+  --danger-soft: rgba(217, 119, 101, 0.12);
+  --danger-border: rgba(217, 119, 101, 0.30);
+  --danger-strong: rgba(217, 119, 101, 0.92);
+
+  /* 遮罩 / 半透明白（此前各处手写 rgba(0,0,0,0.5x) 与 rgba(255,255,255,0.0x)） */
+  --scrim: rgba(0, 0, 0, 0.55);
+  --scrim-strong: rgba(0, 0, 0, 0.5);
+  --light-overlay: rgba(255, 255, 255, 0.03);
+  --accent-glow-strong: rgba(139, 132, 232, 0.5);
+  --accent-border: rgba(139, 132, 232, 0.35);
+  --accent-strong: rgba(139, 132, 232, 0.85);
+  /* 彩色底上的前景色（accent / accent-light 背景上的文字）——
+     固定深色以保证对比度，不随底色变 */
+  --on-accent: #0e1116;
+
+  /* 边框 / 圆角 / 阴影 */
+  --border: #2a2a32;
+  --border-soft: #232329;
+  --radius: 12px;
+  --radius-sm: 8px;
   --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
 }
 
@@ -112,7 +174,7 @@ input:focus, textarea:focus, select:focus {
   color: white;
 }
 .btn-primary:hover {
-  background: #7c6ff7;
+  background: var(--accent-hover);
   box-shadow: 0 0 20px var(--accent-glow);
 }
 .btn-secondary {
@@ -129,7 +191,7 @@ input:focus, textarea:focus, select:focus {
   border: 1px solid var(--danger);
 }
 .btn-danger:hover {
-  background: rgba(225, 112, 85, 0.1);
+  background: var(--danger-soft);
 }
 .btn-ghost {
   background: transparent;

@@ -572,7 +572,7 @@ const styles: Record<string, React.CSSProperties> = {
   checks: { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 12 },
   checkItem: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' },
   failBox: {
-    border: '1px solid rgba(225,112,85,0.4)', background: 'rgba(225,112,85,0.08)',
+    border: '1px solid var(--danger-border)', background: 'var(--danger-soft)',
     borderRadius: 'var(--radius-sm)', padding: '10px 12px',
   },
   failHead: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 2 },
@@ -626,7 +626,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 10px', marginBottom: 6,
   },
   faqWarn: {
-    border: '1px solid rgba(253,203,110,0.35)', background: 'rgba(253,203,110,0.08)',
+    border: '1px solid var(--warning-border)', background: 'var(--warning-soft)',
     borderRadius: 'var(--radius-sm)', padding: '8px 10px', marginBottom: 6,
   },
   faqTitle: { fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 3 },

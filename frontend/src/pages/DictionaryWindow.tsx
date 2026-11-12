@@ -365,7 +365,7 @@ const styles: Record<string, React.CSSProperties> = {
   entryTrans: { fontSize: 13, color: 'var(--accent-light)' },
   entryMeta: { fontSize: 10, color: 'var(--text-muted)', marginTop: 4 },
   dueTag: {
-    background: 'rgba(253, 203, 110, 0.18)', color: 'var(--warning)',
+    background: 'var(--warning-soft)', color: 'var(--warning)',
     padding: '0px 5px', borderRadius: 4, fontSize: 9, fontWeight: 700,
   },
   entryContext: {

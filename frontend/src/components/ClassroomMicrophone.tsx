@@ -2,16 +2,45 @@ import { useEffect, useState } from 'react'
 import { useClassroomAudioStore } from '../stores/useClassroomAudioStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
 import type { MicrophoneMeter } from '../lib/classroomAudio'
+import { LevelMeter } from './ui/LevelMeter'
+import { StatusDot } from './ui/StatusDot'
+import type { StatusDotTone } from './ui/StatusDot'
+
+/**
+ * 电平条 + 三态判定（ADR-003 §0 验收要求「电平 / good·low·silent 判定」）
+ *
+ * 2026-11-12：原先用原生 `<meter>` 元素画电平 —— 那是浏览器默认样式，
+ * 随平台变化且是横向的，表达不出「瞬时峰值」。
+ * 现改为移植自界面原型的 26 段电平柱（`ui/LevelMeter`），并补上 good / low 两档
+ * （此前只有后端给的 silent 一档，用户看到电平偏低时没有任何提示）。
+ *
+ * 阈值：silent 由后端判定（level < 0.02 持续一段时间）；low 取 0.15 —— 低于此值
+ * 意味着「在收音但几乎收不到」，用户需要调麦克风位置或增益。
+ */
+const LOW_LEVEL_THRESHOLD = 0.15
 
 export function InputMeter({ meter }: { meter: MicrophoneMeter | null }) {
+  const level = meter?.level ?? 0
+  const verdict = !meter ? 'idle' : meter.silent ? 'silent' : level < LOW_LEVEL_THRESHOLD ? 'low' : 'good'
+  const verdictText = {
+    idle: '等待麦克风输入…',
+    silent: '没检测到声音，请检查麦克风。',
+    low: '声音偏弱，建议靠近讲台或调高增益。',
+    good: '收音正常。',
+  }[verdict]
+  const verdictTone = ({ idle: 'muted', silent: 'cyan', low: 'purple', good: 'green' } as const)[verdict]
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-      <label>
-        麦克风电平{' '}
-        <meter min={0} max={1} value={meter?.level ?? 0} />
-      </label>
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, fontSize: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <LevelMeter level={level} active={verdict === 'good'} tone="cyan" />
+        <span>麦克风电平</span>
+      </div>
       {meter?.gainDb != null && <span>增益 {meter.gainDb.toFixed(1)} dB</span>}
-      {meter?.silent && <span role="status" style={{ color: 'var(--warning)' }}>没检测到声音，请检查麦克风。</span>}
+      <span role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: verdict === 'good' ? 'var(--text-secondary)' : 'var(--warning)' }}>
+        <StatusDot tone={verdictTone} />
+        {verdictText}
+      </span>
     </div>
   )
 }

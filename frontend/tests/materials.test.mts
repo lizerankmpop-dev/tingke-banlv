@@ -41,5 +41,9 @@ test('MaterialsPanel 线下课边框用青色主题', () => {
     createElement(MaterialsPanel, { courseId: 'c1', offline: true, onAppendTerms: () => {} }),
   )
   assert.ok(online.includes('var(--accent)'), '线上应使用紫色主题变量')
-  assert.ok(offline.includes('#00cec9'), '线下应使用青色主题')
+  // 2026-11-12 色值定版：线下青已从散落的硬编码 #00cec9 收敛为 token。
+  // 这里断言的是**主题变量**而不是色值字面量 —— 断言字面量等于把实现细节
+  // 钉死，改一次主题色就要改一次测试，而那种测试不会拦住「又写死一个色」。
+  // 防复发由 css-vars.test.mts 的「不得再出现硬编码色值」守卫负责。
+  assert.ok(offline.includes('var(--accent-offline)'), '线下应使用青色主题变量')
 })

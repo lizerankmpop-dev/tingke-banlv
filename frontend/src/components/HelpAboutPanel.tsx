@@ -150,7 +150,7 @@ const styles: Record<string, React.CSSProperties> = {
   backdrop: {
     position: 'fixed',
     inset: 0,
-    background: 'rgba(0,0,0,0.55)',
+    background: 'var(--scrim)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -193,8 +193,8 @@ const styles: Record<string, React.CSSProperties> = {
   warn: {
     fontSize: 12,
     color: 'var(--warning)',
-    background: 'rgba(253,203,110,0.10)',
-    border: '1px solid rgba(253,203,110,0.30)',
+    background: 'var(--warning-soft)',
+    border: '1px solid var(--warning-border)',
     borderRadius: 'var(--radius-sm)',
     padding: '7px 10px',
     margin: '0 0 10px',

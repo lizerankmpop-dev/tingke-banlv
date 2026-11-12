@@ -110,7 +110,7 @@ function TerminologyPreview({ domain, language, customTerms }: { domain: string;
     <div style={termStyles.panel}>
       <div style={termStyles.header}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Sparkles size={13} color="#00cec9" />
+          <Sparkles size={13} color="var(--accent-offline)" />
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
             识别优化已启用
           </span>
@@ -166,8 +166,8 @@ const termStyles: Record<string, React.CSSProperties> = {
     marginTop: 14,
     padding: '12px 14px',
     borderRadius: 8,
-    background: 'rgba(0, 206, 201, 0.06)',
-    border: '1px solid rgba(0, 206, 201, 0.22)',
+    background: 'var(--accent-offline-wash)',
+    border: '1px solid var(--accent-offline-border)',
   },
   header: {
     display: 'flex',
@@ -198,11 +198,11 @@ const termStyles: Record<string, React.CSSProperties> = {
     border: '1px solid var(--border)',
   },
   chipCustom: {
-    borderColor: 'rgba(0, 206, 201, 0.55)',
-    background: 'rgba(0, 206, 201, 0.12)',
+    borderColor: 'var(--accent-offline-border-strong)',
+    background: 'var(--accent-offline-soft)',
   },
   chipTrans: { color: 'var(--text-secondary)', fontSize: 10 },
-  chipNoTrans: { color: '#00cec9', fontSize: 9, fontWeight: 700 },
+  chipNoTrans: { color: 'var(--accent-offline)', fontSize: 9, fontWeight: 700 },
   toggle: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -211,7 +211,7 @@ const termStyles: Record<string, React.CSSProperties> = {
     padding: 0,
     background: 'none',
     border: 'none',
-    color: '#00cec9',
+    color: 'var(--accent-offline)',
     fontSize: 11,
     cursor: 'pointer',
   },
@@ -245,7 +245,7 @@ function ChapterPanel({
 }) {
   const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(false)
-  const accent = offline ? '#00cec9' : 'var(--accent-light)'
+  const accent = offline ? 'var(--accent-offline)' : 'var(--accent-light)'
 
   const addChapter = async () => {
     const name = newName.trim()
@@ -283,7 +283,7 @@ function ChapterPanel({
       padding: '12px 14px',
       borderRadius: 8,
       background: 'var(--bg-card)',
-      border: `1px solid ${offline ? 'rgba(0,206,201,0.25)' : 'var(--border)'}`,
+      border: `1px solid ${offline ? 'var(--accent-offline-border)' : 'var(--border)'}`,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
         <ListVideo size={13} color={accent} />
@@ -356,7 +356,7 @@ function ChapterPanel({
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             padding: '0 10px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
-            border: 'none', background: accent, color: '#0e1116',
+            border: 'none', background: accent, color: 'var(--on-accent)',
             opacity: !newName.trim() || busy ? 0.5 : 1,
           }}
         >
@@ -493,8 +493,8 @@ export default function CourseConfig({ embedded = false }: { embedded?: boolean 
         <span style={styles.title}>{course?.name || '课程配置'}</span>
         <span style={{
           ...styles.typeTag,
-          background: isOffline ? 'rgba(0,206,201,0.15)' : 'var(--accent-glow)',
-          color: isOffline ? '#00cec9' : 'var(--accent-light)',
+          background: isOffline ? 'var(--accent-offline-glow)' : 'var(--accent-glow)',
+          color: isOffline ? 'var(--accent-offline)' : 'var(--accent-light)',
         }}>
           {isOffline ? <School size={11} /> : <Monitor size={11} />}
           {isOffline ? ' 线下课堂' : ' 在线网课'}
@@ -508,11 +508,11 @@ export default function CourseConfig({ embedded = false }: { embedded?: boolean 
         {/* 顶部提示 */}
         <div style={{
           ...styles.hint,
-          background: isOffline ? 'rgba(0,206,201,0.06)' : 'var(--bg-card)',
-          border: isOffline ? '1px solid rgba(0,206,201,0.15)' : '1px solid transparent',
+          background: isOffline ? 'var(--accent-offline-wash)' : 'var(--bg-card)',
+          border: isOffline ? '1px solid var(--accent-offline-glow)' : '1px solid transparent',
         }}>
           {isOffline ? (
-            <School size={40} color="#00cec9" />
+            <School size={40} color="var(--accent-offline)" />
           ) : (
             <Mic size={40} color="var(--accent-light)" />
           )}
@@ -522,7 +522,7 @@ export default function CourseConfig({ embedded = false }: { embedded?: boolean 
             {isOffline ? (
               <>
                 请确保麦克风已连接，靠近讲台效果更佳。<br />
-                <span style={{ color: '#00cec9', fontSize: 12 }}>💡 教室环境建议使用降噪麦克风</span>
+                <span style={{ color: 'var(--accent-offline)', fontSize: 12 }}>💡 教室环境建议使用降噪麦克风</span>
               </>
             ) : (
               '请确保您的网课视频正在播放，系统将自动捕获音频。'
@@ -779,8 +779,8 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
   },
   warningBar: {
-    background: 'rgba(225,112,85,0.08)',
-    border: '1px solid rgba(225,112,85,0.3)',
+    background: 'var(--danger-soft)',
+    border: '1px solid var(--danger-border)',
     borderRadius: 'var(--radius-sm)',
     padding: 12,
     marginTop: 16,
