@@ -16,7 +16,8 @@ import numpy as np
 from audio.capture import AudioCapture
 from audio.classroom import ClassroomAudio, input_rms
 from audio.vad import VoiceActivityDetector
-from asr.whisper_engine import WhisperEngine, WordTimestamp, DEVICE, COMPUTE_TYPE
+from asr.backend_factory import create_asr_backend
+from asr.whisper_engine import WordTimestamp, DEVICE, COMPUTE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,10 @@ class ASRPipeline:
         )
         logger.info(f"Whisper 模型规格: {model_size}")
 
-        self._whisper = WhisperEngine(
+        # 后端选择：课程配置 asrBackend > TINGKEBANLV_ASR_BACKEND > local。
+        # 本地分支拿到的参数与直连 WhisperEngine 时完全一致，音频/VAD/字幕链路不变。
+        self._whisper = create_asr_backend(
+            course_config,
             model_size=model_size,
             device=DEVICE,
             compute_type=COMPUTE_TYPE,
@@ -151,10 +155,25 @@ class ASRPipeline:
                 t.start()
                 return
             else:
-                self.on_status("error", "Whisper 模型加载失败")
+                self.on_status("error", self._backend_unavailable_message())
                 return
 
         self._start_listening()
+
+    def _backend_unavailable_message(self) -> str:
+        """后端不可用时的用户提示
+
+        云端配置缺失时 `HuaweiASRBackend.last_error` 已经是具体的中文原因
+        （例如缺 HUAWEI_ASR_ENDPOINT / AK / SK），直接透出；本地引擎没有
+        `last_error`，保留原来的 Whisper 文案。
+        """
+        last_error = getattr(self._whisper, "last_error", None)
+        if last_error:
+            return str(last_error)
+        backend_name = getattr(self._whisper, "backend_name", "whisper")
+        if backend_name == "huawei-asr":
+            return "华为云语音识别不可用，请检查 HUAWEI_ASR_* 环境变量配置"
+        return "Whisper 模型加载失败"
 
     def _terminology_language(self) -> str:
         """术语层该按哪个语种构建（V5-8）
@@ -310,7 +329,7 @@ class ASRPipeline:
         if self._running and self._whisper.is_loaded:
             self._start_listening()
         elif self._running:
-            self.on_status("error", "Whisper 模型加载失败")
+            self.on_status("error", self._backend_unavailable_message())
 
     def _start_listening(self):
         """启动音频监听"""
