@@ -121,6 +121,13 @@ hiddenimports += [
     # 显式列出是为了防止将来改成惰性导入（例如为了缩短启动时间）后悄悄漏掉 ——
     # 漏了的表现是「安装包能用但首启不播种」，最难排查的那一类。
     "asr.model_bootstrap",
+    # v4.0.0 合入的两个功能分支：
+    # · /api/terms/generate 里 llm.term_generator 是**函数内惰性导入**；
+    # · asr.pipeline → asr.backend_factory → asr.huawei_asr 是新增链。
+    # 显式列出，防止冻结后端缺模块（表现为「包能启动但端点 500」，最难排查）。
+    "llm.term_generator",
+    "asr.backend_factory",
+    "asr.huawei_asr",
 ]
 
 # torch 只是「如果装了就用它探测 CUDA」的可选依赖（见 asr/whisper_engine.py 的

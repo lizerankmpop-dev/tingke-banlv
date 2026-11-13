@@ -9,6 +9,7 @@ import { LevelMeter } from '../../components/ui/LevelMeter'
 import { useCourseStore } from '../../stores/useCourseStore'
 import { useClassroomAudioStore } from '../../stores/useClassroomAudioStore'
 import { formatSize } from '../../lib/materials'
+import { generateTerms, mergeTerms, TERM_GENERATE_TIMEOUT_MS } from '../../lib/termApi'
 import type { Course } from '../../types'
 import { isOnline, languageLabel } from '../lib/mapping'
 
@@ -56,6 +57,45 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
   const [language, setLanguage] = useState(course.language || 'auto')
   const [subtitleLang, setSubtitleLang] = useState(course.subtitleLang || 'both')
   const [customTerms, setCustomTerms] = useState((course.customTerms || []).join(', '))
+  // ADR-001 AI 术语生成（v4.0.0 从旧 CourseConfig 移植到新骨架，否则按钮在主路由里看不见）
+  const [generatingTerms, setGeneratingTerms] = useState(false)
+  const [termGenNotice, setTermGenNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+
+  /** 只把结果合并进输入框，不落库；保存仍由「保存配置 / 开始识别」的 PUT 决定。 */
+  const handleGenerateTerms = async () => {
+    if (generatingTerms) return
+    setGeneratingTerms(true)
+    setTermGenNotice(null)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), TERM_GENERATE_TIMEOUT_MS)
+    try {
+      const result = await generateTerms(
+        { courseName: course.name, domain, language },
+        controller.signal,
+      )
+      if (result.terms.length === 0) {
+        setTermGenNotice({ tone: 'error', text: 'AI 没有返回可用术语，已保留原有内容，可稍后重试或手动填写。' })
+        return
+      }
+      setCustomTerms(prev => mergeTerms(prev, result.terms))
+      setTermGenNotice({
+        tone: 'ok',
+        text: `已追加 ${result.terms.length} 个候选术语（${result.provider === 'ollama' ? '本地 Ollama' : '云端'}），可手动删改；点「保存配置」或「开始识别」后才会保存。`,
+      })
+    } catch (err) {
+      const timedOut = controller.signal.aborted
+      const detail = err instanceof Error ? err.message : ''
+      setTermGenNotice({
+        tone: 'error',
+        text: timedOut
+          ? 'AI 生成超时，已保留原有术语；不影响开始识别。'
+          : `AI 生成失败：${detail || '服务暂不可用'}。已保留原有术语；不影响开始识别。`,
+      })
+    } finally {
+      clearTimeout(timer)
+      setGeneratingTerms(false)
+    }
+  }
 
   // 章节管理（主线 feat/lang-chapters 能力，样式按她的卡片）
   const [chapters, setChapters] = useState<{ id: string; name: string; sortOrder: number }[]>([])
@@ -372,12 +412,27 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
             <h2>课程术语</h2>
             <p>优先参与识别，减少专业词被听错</p>
           </div>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => void handleGenerateTerms()}
+            disabled={generatingTerms}
+            aria-busy={generatingTerms}
+            title="云端优先，失败自动降级本地 Ollama；不会覆盖已填术语"
+          >
+            <Sparkles size={14} /> {generatingTerms ? '生成中…' : 'AI 生成术语'}
+          </button>
           <span className="badge green">已自动积累 {customTerms.split(/[,，、]/).map((t) => t.trim()).filter(Boolean).length} 个</span>
         </div>
         <label className="field field-full">
           <span>术语列表（逗号分隔）</span>
           <textarea rows={2} value={customTerms} onChange={(event) => setCustomTerms(event.target.value)} placeholder="gradient descent, 反向传播, 特征向量…" />
         </label>
+        {termGenNotice ? (
+          <p className="fineprint" role={termGenNotice.tone === 'error' ? 'alert' : 'status'}>
+            {termGenNotice.text}
+          </p>
+        ) : null}
         <div className="term-note">
           <CheckCircle2 size={14} />
           <span>三层术语：内置领域词表 + 你填的自定义术语 + 识别过程中自动积累。</span>

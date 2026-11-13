@@ -176,3 +176,13 @@ test('红线：global.css 的 button 文档级重置必须完整（否则新骨�
   assert.match(body, /color\s*:\s*inherit/,
     'button 重置缺 color: inherit —— 按钮文字会落到默认 ButtonText')
 })
+
+test('红线：ADR-001 AI 术语生成入口必须在新骨架 ConfigPage（旧页面按钮主路由不可见）', () => {
+  const source = readFileSync(join(SRC, 'shell', 'pages', 'ConfigPage.tsx'), 'utf-8')
+  // v4.0.0 合入 feat/ai-term-suggest 时踩过：按钮只加在旧 CourseConfig.tsx，
+  // 而 App.tsx 主路由挂的是 shell/ 新骨架 ⇒ 合并成功但成品里看不到这个功能。
+  assert.ok(source.includes('generateTerms'), '新骨架配置页必须调用 generateTerms')
+  assert.ok(source.includes('mergeTerms'), '生成结果必须走合并去重，不得覆盖用户已填术语')
+  assert.ok(source.includes('lib/termApi'), '必须复用 termApi.ts（8.5s 超时 + 降级语义）')
+  assert.ok(source.includes('AI 生成术语'), '新骨架配置页必须有可见的 AI 生成按钮')
+})
