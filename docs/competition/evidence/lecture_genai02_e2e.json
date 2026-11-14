@@ -1,0 +1,86 @@
+{
+  "title": "真实线下课《生成式人工智能（二）》端到端验收",
+  "generatedAt": "2026-11-15T03:04:23",
+  "baseUrl": "http://127.0.0.1:8765",
+  "courseId": "e6a15af3-cd93-40cc-8294-21d0f7a41160",
+  "sessionId": "genai02-offline-20261115",
+  "expectedSubtitleCount": 715,
+  "summary": {
+    "pass": 10,
+    "warn": 4,
+    "fail": 0,
+    "total": 14
+  },
+  "checks": [
+    {
+      "name": "后端 /api/ping 就绪",
+      "status": "PASS",
+      "detail": "HTTP 200 / version=4.0.0"
+    },
+    {
+      "name": "课程出现在 /api/courses",
+      "status": "PASS",
+      "detail": "HTTP 200 / name=生成式人工智能（二）"
+    },
+    {
+      "name": "/subtitles 单次上限 500",
+      "status": "WARN",
+      "detail": "limit=1000 → HTTP 422（Query le=500）；记忆回放必须分页或改契约，不能一次拉全量"
+    },
+    {
+      "name": "字幕可读（/subtitles 裸数组，limit=500）",
+      "status": "PASS",
+      "detail": "HTTP 200 / 500 条"
+    },
+    {
+      "name": "/subtitles 按 start_ms 倒序",
+      "status": "PASS",
+      "detail": "首 1783930 / 末 502760"
+    },
+    {
+      "name": "字段为 snake_case（is_final / session_id）",
+      "status": "PASS",
+      "detail": "字段样例 ['chapterId', 'course_id', 'createdAt', 'end_ms', 'id', 'is_final', 'session_id', 'start_ms', 'text', 'translation', 'video_id', 'words']"
+    },
+    {
+      "name": "识别会话可列（/sessions）",
+      "status": "PASS",
+      "detail": "HTTP 200 / total=1 / 本会话 count=715 / isLatest=True"
+    },
+    {
+      "name": "SRT 可导出（/export-srt）",
+      "status": "PASS",
+      "detail": "HTTP 200 / count=500 / 实际块=500 / 首行='1\\n00:08:22,760 --> 00:08:25,190\\n不属于园体的这儿\\n\\n2\\n00:08:26,190 -->'"
+    },
+    {
+      "name": "🟡 export-srt 是否被 limit=500 截断",
+      "status": "WARN",
+      "detail": "入库 715 条，导出只有 500 条 → 端点内 limit=500 硬上限，产品缺陷已复现"
+    },
+    {
+      "name": "🟡 AI 总结端点可用但 LLM 未配置",
+      "status": "WARN",
+      "detail": "HTTP 200 / available=false / AI 摘要服务不可用，请确认 Ollama 已启动并拉取了模型"
+    },
+    {
+      "name": "生词本可读",
+      "status": "PASS",
+      "detail": "HTTP 200 / 7 词"
+    },
+    {
+      "name": "🟡 backup.json 缺下载头",
+      "status": "WARN",
+      "detail": "HTTP 200 但无 Content-Disposition → 浏览器不会下载，第 11 条反馈的后端根因之一"
+    },
+    {
+      "name": "课堂笔记写入并回读（/note）",
+      "status": "PASS",
+      "detail": "PUT 200 / GET 200 / 1296 字 / 回读一致=True"
+    },
+    {
+      "name": "ASR 模型状态端点",
+      "status": "PASS",
+      "detail": "HTTP 200 / {'ok': True, 'model': 'base', 'seed_exists': True, 'seeding': False, 'error': None}"
+    }
+  ]
+}

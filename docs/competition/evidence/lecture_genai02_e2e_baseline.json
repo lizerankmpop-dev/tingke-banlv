@@ -1,0 +1,66 @@
+{
+  "title": "真实线下课《生成式人工智能（二）》端到端验收",
+  "generatedAt": "2026-11-15T02:54:40",
+  "baseUrl": "http://127.0.0.1:8765",
+  "courseId": "e6a15af3-cd93-40cc-8294-21d0f7a41160",
+  "sessionId": "genai02-offline-20261115",
+  "expectedSubtitleCount": 395,
+  "summary": {
+    "pass": 7,
+    "warn": 2,
+    "fail": 1,
+    "total": 10
+  },
+  "checks": [
+    {
+      "name": "后端 /api/ping 就绪",
+      "status": "PASS",
+      "detail": "HTTP 200 / version=4.0.0"
+    },
+    {
+      "name": "课程出现在 /api/courses",
+      "status": "PASS",
+      "detail": "HTTP 200 / name=生成式人工智能（二）"
+    },
+    {
+      "name": "字幕可读（/subtitles 裸数组）",
+      "status": "FAIL",
+      "detail": "HTTP 422 / 0 条"
+    },
+    {
+      "name": "识别会话可列（/sessions）",
+      "status": "PASS",
+      "detail": "HTTP 200 / total=1 / 本会话 count=395 / isLatest=True"
+    },
+    {
+      "name": "SRT 可导出（/export-srt）",
+      "status": "PASS",
+      "detail": "HTTP 200 / count=395 / 实际块=395 / 首行='1\\n00:00:00,000 --> 00:00:15,410\\n上一步的话,我们今天对我们最来的还是比较一线,比如说通常'"
+    },
+    {
+      "name": "导出条数与入库一致",
+      "status": "PASS",
+      "detail": "入库 395 / 导出 395"
+    },
+    {
+      "name": "🟡 AI 总结端点可用但 LLM 未配置",
+      "status": "WARN",
+      "detail": "HTTP 200 / available=false / AI 摘要服务不可用，请确认 Ollama 已启动并拉取了模型"
+    },
+    {
+      "name": "生词本可读",
+      "status": "PASS",
+      "detail": "HTTP 200 / 0 词"
+    },
+    {
+      "name": "🟡 backup.json 缺下载头",
+      "status": "WARN",
+      "detail": "HTTP 200 但无 Content-Disposition → 浏览器不会下载，第 11 条反馈的后端根因之一"
+    },
+    {
+      "name": "ASR 模型状态端点",
+      "status": "PASS",
+      "detail": "HTTP 200 / {'ok': True, 'model': 'base', 'seed_exists': True, 'seeding': False, 'error': None}"
+    }
+  ]
+}

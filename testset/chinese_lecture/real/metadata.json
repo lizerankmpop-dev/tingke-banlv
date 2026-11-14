@@ -33,6 +33,41 @@
         "channels": 1,
         "format": "wav/16-bit PCM"
       }
+    },
+    {
+      "name": "real_zhlecture_genai_02",
+      "audio": "real_zhlecture_genai_02.m4a",
+      "reference": "real_zhlecture_genai_02.txt",
+      "sha256": "d8a104baa21ed77800fe1dd101d0fd98899e285189bfdc9995aee3cbf58d9745",
+      "durationSeconds": 1786.912,
+      "durationMinutes": 29.78,
+      "referenceChars": 0,
+      "source": "线下课堂录音《生成式人工智能（二）》，2026-11-13 11:40 录制，课程组成员提供原文件「2026年11月13日 11点40分.m4a」",
+      "channel": "offline_classroom",
+      "provenance": {
+        "origin": "微信文件 2026-11/2026年11月13日 11点40分.m4a",
+        "course": "生成式人工智能（二）",
+        "recordedAt": "2026-11-13 11:40",
+        "archivedAt": "2026-11-15",
+        "license": "课程组内部教学录音；含授课教师与他人声音，音频与逐字稿均不入库，仅登记来源与指纹"
+      },
+      "consent": "仅用于本项目内部 ASR 评测与课程内容整理，不对外分发；音频不入库",
+      "recordedAt": "2026-11-13",
+      "notes": "本项目第一段 REAL 属性的「线下课堂」长音频（此前 real/ 只有 B 站网课）。48kHz 立体声 AAC 128kbps，未做降噪/归一化，保留真实教室声学环境。用途：① 真实线下课长稳/分段/延迟证据；② 产品端到端链路（字幕落库 → 会话 → SRT 导出 → 总结）验证；③ 该课完整内容资产。referenceChars 待人工定稿后回填，未定稿前不得据此算 CER。",
+      "audioStats": {
+        "sampleRate": 48000,
+        "channels": 2,
+        "codec": "aac",
+        "bitRate": 128000,
+        "format": "m4a/AAC-LC",
+        "sizeBytes": 29108449,
+        "rmsDbfs": -34.17,
+        "peakDbfs": -5.08,
+        "quietRatio": 0.531,
+        "medianFrameDbfs": -40.9,
+        "quietThresholdDbfs": -40,
+        "statsNote": "20ms 窗 RMS 实测；远场低音量课堂录音，静音占比 53.1%，明显高于同目录 B 站网课素材的 27.6%"
+      }
     }
   ]
 }
