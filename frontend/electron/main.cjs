@@ -1889,10 +1889,46 @@ process.on('SIGTERM', () => {
 
 // ============ IPC ============
 
+function isMainCourseFrame(event) {
+  return !!mainWindow && event.sender === mainWindow.webContents &&
+    !!event.senderFrame && event.senderFrame === event.sender.mainFrame;
+}
+
+function courseWebLinkPath(courseId) {
+  if (typeof courseId !== 'string' || !/^[a-z0-9-]{1,80}$/i.test(courseId)) return null;
+  return path.join(dataHome(), 'course-web-links', `${courseId}.json`);
+}
+
+ipcMain.handle('course:get-web-link', (event, courseId) => {
+  if (!isMainCourseFrame(event)) return '';
+  const linkPath = courseWebLinkPath(courseId);
+  if (!linkPath) return '';
+  try {
+    const { url } = JSON.parse(fs.readFileSync(linkPath, 'utf8'));
+    return typeof url === 'string' && isCourseURL(url) ? url : '';
+  } catch (error) {
+    if (error.code !== 'ENOENT') logWarn('[course] 无法读取课程网页链接');
+    return '';
+  }
+});
+
+ipcMain.handle('course:set-web-link', (event, courseId, url) => {
+  if (!isMainCourseFrame(event) || typeof url !== 'string' ||
+      (url !== '' && !isCourseURL(url))) return false;
+  const linkPath = courseWebLinkPath(courseId);
+  if (!linkPath) return false;
+  try {
+    fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+    writeConfigAtomic(fs, linkPath, { url });
+    return true;
+  } catch (_) {
+    logWarn('[course] 无法保存课程网页链接');
+    return false;
+  }
+});
+
 ipcMain.handle('course:open-external', async (event, url) => {
-  if (!mainWindow || event.sender !== mainWindow.webContents ||
-      !event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
-      typeof url !== 'string' || !isCourseURL(url)) return false;
+  if (!isMainCourseFrame(event) || typeof url !== 'string' || !isCourseURL(url)) return false;
   await shell.openExternal(new URL(url).href);
   return true;
 });

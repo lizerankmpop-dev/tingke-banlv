@@ -219,7 +219,7 @@ export function RecognitionPage({
       {online ? (
         <div className="recognition-grid">
           <div className="recognition-main">
-            <WebFrame courseName={course.name} onToast={onToast} />
+            <WebFrame key={course.id} courseId={course.id} courseName={course.name} onToast={onToast} />
             <CurrentSubtitle
               label="实时字幕"
               courseTypeHint={course.language === 'zh' ? '中文识别 · 系统音频' : '双语 · 原文识别'}
@@ -485,12 +485,39 @@ function CourseGuest({ url, onStatus }: { url: string; onStatus: (text: string) 
   })
 }
 
-function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: string) => void }) {
+function WebFrame({ courseId, courseName, onToast }: {
+  courseId: string
+  courseName: string
+  onToast: (msg: string) => void
+}) {
   const [url, setUrl] = useState('')
   const [draft, setDraft] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const [status, setStatus] = useState('')
+
+  const editedLink = useRef(false)
+
+  useEffect(() => {
+    let active = true
+    window.electronAPI?.getCourseWebLink?.(courseId).then(saved => {
+      if (!active || editedLink.current || !saved) return
+      setUrl(saved)
+      setDraft(saved)
+      setStatus('正在加载课程网页…')
+    }).catch(() => {})
+    return () => { active = false }
+  }, [courseId])
+
+  async function saveLink(next: string) {
+    const save = window.electronAPI?.setCourseWebLink
+    if (!save) return
+    try {
+      if (!await save(courseId, next)) onToast('课程网页链接未能保存')
+    } catch {
+      onToast('课程网页链接未能保存')
+    }
+  }
 
   function loadPage(next?: string) {
     const text = (next ?? draft).trim()
@@ -500,7 +527,10 @@ function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: 
       onToast('请粘贴有效的 HTTPS 课程链接')
       return
     }
+    editedLink.current = true
     setUrl(target)
+    setDraft(target)
+    void saveLink(target)
     setAttempt((n) => n + 1)
     setStatus('正在加载课程网页…')
   }
@@ -513,7 +543,6 @@ function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: 
       onToast('请拖入有效的课程网页链接')
       return
     }
-    setDraft(text)
     loadPage(text)
   }
 
@@ -538,7 +567,13 @@ function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: 
         </button>
         <div className="web-tab-spacer" />
         {url ? (
-          <button type="button" className="text-btn" onClick={() => { setUrl(''); setStatus(''); setDraft('') }}>
+          <button type="button" className="text-btn" onClick={() => {
+            editedLink.current = true
+            setUrl('')
+            setStatus('')
+            setDraft('')
+            void saveLink('')
+          }}>
             移除网页
           </button>
         ) : null}
@@ -558,7 +593,10 @@ function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: 
           <Globe size={13} />
           <input
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              editedLink.current = true
+              setDraft(event.target.value)
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') loadPage()
             }}
@@ -596,7 +634,7 @@ function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: 
       ) : null}
 
       <div
-        className={`web-content ${dragOver ? 'drag-over' : ''}`}
+        className={`web-content${url ? ' has-course-guest' : ''}${dragOver ? ' drag-over' : ''}`}
         onDragOver={(event) => {
           event.preventDefault()
           setDragOver(true)

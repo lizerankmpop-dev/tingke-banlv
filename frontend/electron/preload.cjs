@@ -19,6 +19,8 @@ function subscribe(channel, cb) {
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getCourseWebLink: (courseId) => ipcRenderer.invoke('course:get-web-link', courseId),
+  setCourseWebLink: (courseId, url) => ipcRenderer.invoke('course:set-web-link', courseId, url),
   openCourseExternal: (url) => ipcRenderer.invoke('course:open-external', url),
   courseWebviewEnabled: process.argv.includes('--tingke-course-webview'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
