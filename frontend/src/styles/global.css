@@ -32,21 +32,21 @@
   --text-muted: #6b6b76;
 
   /* 场景色 —— 线上紫 */
-  --accent: #8b84e8;
-  --accent-light: #bdb8f2;
+  --accent: #5F6F96;
+  --accent-light: #A6B2CC;
   --accent-hover: #9b95ec;
-  --accent-glow: rgba(139, 132, 232, 0.3);
+  --accent-glow: rgba(95, 111, 150, 0.3);
 
   /* 场景色 —— 线下青（此前散落 16 处硬编码，2026-11-12 收敛为 token）
      青色需要多档透明度：淡底 / 中底 / 亮底 / 边框 / 强边框。
      收敛成 5 档而不是各写各的 —— 否则「改一次线下配色要动十几处」的老毛病会复发。 */
-  --accent-offline: #2dd4cf;
-  --accent-offline-light: #8ce9e5;
-  --accent-offline-wash: rgba(45, 212, 207, 0.08);
-  --accent-offline-soft: rgba(45, 212, 207, 0.12);
-  --accent-offline-glow: rgba(45, 212, 207, 0.15);
-  --accent-offline-border: rgba(45, 212, 207, 0.25);
-  --accent-offline-border-strong: rgba(45, 212, 207, 0.55);
+  --accent-offline: #5F8F84;
+  --accent-offline-light: #A6C8C0;
+  --accent-offline-wash: rgba(95, 143, 132, 0.08);
+  --accent-offline-soft: rgba(95, 143, 132, 0.12);
+  --accent-offline-glow: rgba(95, 143, 132, 0.15);
+  --accent-offline-border: rgba(95, 143, 132, 0.25);
+  --accent-offline-border-strong: rgba(95, 143, 132, 0.55);
 
   /* 语义色 */
   --success: #6cc9a5;
@@ -66,9 +66,9 @@
   --scrim: rgba(0, 0, 0, 0.55);
   --scrim-strong: rgba(0, 0, 0, 0.5);
   --light-overlay: rgba(255, 255, 255, 0.03);
-  --accent-glow-strong: rgba(139, 132, 232, 0.5);
-  --accent-border: rgba(139, 132, 232, 0.35);
-  --accent-strong: rgba(139, 132, 232, 0.85);
+  --accent-glow-strong: rgba(95, 111, 150, 0.5);
+  --accent-border: rgba(95, 111, 150, 0.35);
+  --accent-strong: rgba(95, 111, 150, 0.85);
   /* 彩色底上的前景色（accent / accent-light 背景上的文字）——
      固定深色以保证对比度，不随底色变 */
   --on-accent: #0e1116;
@@ -176,7 +176,7 @@ input:focus, textarea:focus, select:focus {
   gap: 6px;
   padding: 8px 16px;
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
   transition: all 0.2s;
 }
@@ -212,3 +212,41 @@ input:focus, textarea:focus, select:focus {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
+
+/* TINGKE_VISUAL_REFACTOR_V1_GLOBAL
+   ============================================================
+   视觉改造 v1 · 2026-11-15 · 李梓萌（视觉 owner）
+   用途：global.css:root 的参考 token 块
+   说明：只替换 accent 家族 + 新增字号 token；背景/文字/状态色不动
+   ============================================================ */
+
+:root {
+  /* ---------- 线上：墨靛 ---------- */
+  --accent: #5f6f96;
+  --accent-strong: #4e5d80;
+  --accent-light: #a6b2cc;
+  --accent-hover: #52618a;
+  --accent-glow: rgba(95, 111, 150, 0.18);
+  --accent-border: rgba(95, 111, 150, 0.3);
+  --accent-contrast: #ffffff;
+
+  /* ---------- 线下：黛青 ---------- */
+  --accent-offline: #5f8f84;
+  --accent-offline-strong: #4e776d;
+  --accent-offline-light: #a6c8c0;
+  --accent-offline-hover: #527d73;
+  --accent-offline-glow: rgba(95, 143, 132, 0.16);
+  --accent-offline-border: rgba(95, 143, 132, 0.28);
+  --accent-offline-contrast: #0b1513;
+
+  /* ---------- 字号体系 ---------- */
+  --fs-micro: 11px;
+  --fs-caption: 12px;
+  --fs-ui: 13px;
+  --fs-body: 14px;
+  --fs-subtitle: 16px;
+  --fs-subtitle-lg: 18px;
+  --fs-title: 22px;
+  --fs-display: 28px;
+}
+

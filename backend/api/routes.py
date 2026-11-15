@@ -43,6 +43,14 @@ _starting_courses: set[str] = set()
 # 再开始听课，开关又变回开启了。
 term_auto_degrade_default: bool = True
 
+# 🔴 字幕读取上限（2026-11-15 真实线下课实测修复）
+# 原状：/subtitles 的 Query(le=500)，/export-srt 与 /sessions 内部又各写死 500/1000。
+# 29 分 47 秒真实课产生 715 条字幕 ⇒ 导出只拿到最新的 500 条，且 DB 按
+# start_ms DESC 取数后再 reverse ⇒ SRT 从 08:22 才开始，开头 8 分钟整段丢失。
+# 本地 SQLite 单课按 1 小时约 1500 条估算，5000 足够覆盖，一次取全量无性能问题；
+# 真要超过这个量级再统一改分页，不要在三个地方各写死一个不同的数字。
+SUBTITLE_MAX_ROWS = 5000
+
 # 轮询消息队列（按课程 ID）
 #
 # 用 deque 而非 list：生产者是 ASR 的工作线程，消费者是事件循环里的 /asr/poll，
@@ -536,7 +544,7 @@ def _schedule_translation(course_id: str, subtitle_id: str, text: str,
 @router.get("/courses/{course_id}/subtitles")
 async def get_subtitles(
     course_id: str,
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=100, le=SUBTITLE_MAX_ROWS),
     chapterId: str | None = Query(default=None),
 ):
     """获取课程字幕记录。chapterId 传入时按章节过滤（传空串 = 只看未分章字幕）。"""
@@ -581,7 +589,7 @@ async def list_sessions(course_id: str):
 
     返回：[{sessionId, startedAt, count, firstText, isLatest}]
     """
-    rows = await db.get_subtitles(course_id, limit=1000)
+    rows = await db.get_subtitles(course_id, limit=SUBTITLE_MAX_ROWS)
     buckets: dict = {}
     for s in rows:
         sid = s.get("session_id") or ""
@@ -637,7 +645,8 @@ async def export_srt(course_id: str, offsetMs: int = Query(default=0, ge=0),
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
 
-    subtitles = await db.get_subtitles(course_id, limit=500)
+    # 🔴 2026-11-15：原为 limit=500，长课会静默截断且时间轴错位（见文件头常量注释）。
+    subtitles = await db.get_subtitles(course_id, limit=SUBTITLE_MAX_ROWS)
     # 数据库按 start_ms DESC 返回，SRT 需要时间正序
     subtitles = list(reversed(subtitles))
 
@@ -765,7 +774,7 @@ async def export_vocabulary_backup(course_id: str):
         raise HTTPException(status_code=404, detail="课程不存在")
 
     items = await db.get_vocabulary(course_id)
-    return {
+    payload = {
         "format": "tingkebanlv-vocabulary-backup",
         "version": 1,
         "exportedAt": int(time.time() * 1000),
@@ -774,6 +783,16 @@ async def export_vocabulary_backup(course_id: str):
         "count": len(items),
         "items": items,
     }
+    # 🔴 2026-11-15 实测修复：原来直接 return dict，浏览器拿到 200 却不触发下载。
+    # 与同文件的 export.csv 保持一致（那边一直带下载头），补齐 Content-Disposition。
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False),
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="vocabulary-{course_id[:8]}-backup.json"'
+        },
+    )
 
 
 @router.post("/courses/{course_id}/vocabulary/backup.json")

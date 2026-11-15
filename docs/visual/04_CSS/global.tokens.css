@@ -1,0 +1,36 @@
+/* TINGKE_VISUAL_REFACTOR_V1_GLOBAL
+   ============================================================
+   视觉改造 v1 · 2026-11-15 · 李梓萌（视觉 owner）
+   用途：global.css:root 的参考 token 块
+   说明：只替换 accent 家族 + 新增字号 token；背景/文字/状态色不动
+   ============================================================ */
+
+:root {
+  /* ---------- 线上：墨靛 ---------- */
+  --accent: #5f6f96;
+  --accent-strong: #4e5d80;
+  --accent-light: #a6b2cc;
+  --accent-hover: #52618a;
+  --accent-glow: rgba(95, 111, 150, 0.18);
+  --accent-border: rgba(95, 111, 150, 0.3);
+  --accent-contrast: #ffffff;
+
+  /* ---------- 线下：黛青 ---------- */
+  --accent-offline: #5f8f84;
+  --accent-offline-strong: #4e776d;
+  --accent-offline-light: #a6c8c0;
+  --accent-offline-hover: #527d73;
+  --accent-offline-glow: rgba(95, 143, 132, 0.16);
+  --accent-offline-border: rgba(95, 143, 132, 0.28);
+  --accent-offline-contrast: #0b1513;
+
+  /* ---------- 字号体系 ---------- */
+  --fs-micro: 11px;
+  --fs-caption: 12px;
+  --fs-ui: 13px;
+  --fs-body: 14px;
+  --fs-subtitle: 16px;
+  --fs-subtitle-lg: 18px;
+  --fs-title: 22px;
+  --fs-display: 28px;
+}

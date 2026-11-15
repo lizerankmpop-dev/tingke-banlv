@@ -16,7 +16,8 @@
 ----
     <venv>/python.exe scripts/verify_lecture_e2e.py \
         --course-id <id> --session <id> --expected <入库条数> \
-        [--note-file <课堂笔记.md>] [--report packaging/eval/xxx.json] \
+        [--note-file <课堂笔记.md>] \
+        [--report docs/competition/evidence/xxx.json] \
         [--base-url http://127.0.0.1:8765]
 """
 from __future__ import annotations
@@ -102,14 +103,28 @@ def main() -> int:
     add("课程出现在 /api/courses", st == 200 and found is not None,
         f"HTTP {st} / name={found.get('name') if found else None}")
 
-    # 🔴 2026-11-15 实测边界：routes.py 的 Query(le=500)，传 limit=1000 会 422。
-    #    前端「记忆回放」若照抄「一次性拉全量」写法会直接失败，必须分页或改契约。
-    st_over, _, _ = call(base, "GET", f"/api/courses/{cid}/subtitles?limit=1000",
-                         timeout=args.timeout)
+    # 🔴 2026-11-15 真实课实测：原 Query(le=500) 让 limit=1000 直接 422，
+    #    且 /export-srt 内部写死 500 导致 715 条字幕静默截断。
+    #    本轮已统一为 SUBTITLE_MAX_ROWS=5000，下面两组检查在修复前后都要如实报：
+    #    修复前 → WARN（旧缺陷复现）；修复后 → PASS（可一次取全量、导出不截断）。
+    st_over, subs_over, _ = call(base, "GET", f"/api/courses/{cid}/subtitles?limit=1000",
+                                 timeout=args.timeout)
     if st_over == 422:
-        add("/subtitles 单次上限 500", True,
+        add("🟡 /subtitles 单次上限仍为 500", True,
             "limit=1000 → HTTP 422（Query le=500）；记忆回放必须分页或改契约，不能一次拉全量",
             "WARN")
+    else:
+        n_over = len(subs_over) if isinstance(subs_over, list) else 0
+        add("/subtitles limit=1000 可读（上限已放宽）",
+            st_over == 200 and isinstance(subs_over, list) and n_over > 0,
+            f"HTTP {st_over} / 返回 {n_over} 条 / 不再 422")
+
+    st_all, subs_all, _ = call(base, "GET", f"/api/courses/{cid}/subtitles?limit=5000",
+                               timeout=args.timeout)
+    n_all = len(subs_all) if isinstance(subs_all, list) else 0
+    all_ok = st_all == 200 and (not args.expected or n_all == args.expected)
+    add("一次拉全量字幕（记忆回放前提）", all_ok,
+        f"HTTP {st_all} / 返回 {n_all} 条 / 入库 {args.expected or '?'} 条")
     st, subs, _ = call(base, "GET", f"/api/courses/{cid}/subtitles?limit=500",
                        timeout=args.timeout)
     n = len(subs) if isinstance(subs, list) else 0
@@ -137,9 +152,17 @@ def main() -> int:
     blocks = len([b for b in srt_text.strip().split("\n\n") if b.strip()]) if srt_text else 0
     add("SRT 可导出（/export-srt）", st == 200 and cnt and cnt > 0,
         f"HTTP {st} / count={cnt} / 实际块={blocks} / 首行={srt_text[:60]!r}")
+    # 时间轴不能错位：修复前 DB 按 start_ms DESC LIMIT 500 再 reverse，
+    # 首行会是 00:08:22,760 —— 开头 8 分钟整段丢失，但 count 看着「正常」。
+    import re as _re
+    m_first = _re.search(r"(\d{2}):(\d{2}):(\d{2}),\d{3}\s*-->", srt_text)
+    first_ms = (int(m_first.group(1)) * 3600 + int(m_first.group(2)) * 60
+                + int(m_first.group(3))) * 1000 if m_first else -1
+    add("SRT 时间轴从课程开头开始（无静默截断）", 0 <= first_ms < 60_000,
+        f"首条时间 {m_first.group(0).strip() if m_first else 'N/A'} / 阈值 < 60s")
     if args.expected and cnt is not None and cnt < args.expected:
         add("🟡 export-srt 是否被 limit=500 截断", True,
-            f"入库 {args.expected} 条，导出只有 {cnt} 条 → 端点内 limit=500 硬上限，产品缺陷已复现",
+            f"入库 {args.expected} 条，导出只有 {cnt} 条 → 端点内硬上限，产品缺陷已复现",
             "WARN")
     elif args.expected:
         add("导出条数与入库一致", cnt == args.expected, f"入库 {args.expected} / 导出 {cnt}")

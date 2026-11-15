@@ -115,3 +115,10 @@ testset/chinese_lecture/real/*
 # 音频一样都是**逐字稿**，一律不入库；规则表里也只有短片段，不含成篇讲课文本。
 !testset/chinese_lecture/real/*.corrections.tsv
 backend/.venv/
+
+# 2026-11-15 合入李梓萌视觉交付时产生的临时文件：
+# apply-visual-refactor.ps1 会给三个 CSS 自动留 .bak-<时间戳> 副本（已另行归档到
+# 安装空间/inbox_20261115/css_backup/），以及评分表 xlsx 解包出的 .ref/ 目录。
+# 两者都不是源码，别让 git add -A 扫进仓库。
+*.bak-20*
+*.ref/

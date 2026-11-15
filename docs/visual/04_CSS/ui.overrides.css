@@ -1,0 +1,21 @@
+/* TINGKE_VISUAL_REFACTOR_V1_UI
+   视觉改造 v1 · 2026-11-15 · 李梓萌（视觉 owner）
+   追加到 frontend/src/components/ui/ui.css 末尾。
+   只改字号，不写死颜色。
+*/
+
+.pill {
+  font-size: var(--fs-caption);
+}
+
+.toast {
+  font-size: var(--fs-ui);
+}
+
+.btn {
+  font-size: var(--fs-body);
+}
+
+.badge {
+  font-size: var(--fs-micro);
+}

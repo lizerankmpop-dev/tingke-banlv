@@ -1,0 +1,16 @@
+old,new,kind,note
+#8b84e8,#5F6F96,hex,线上主色/旧紫
+#7b74db,#52618A,hex,线上 hover/旧紫深
+#bdb8f2,#A6B2CC,hex,线上浅色
+#afa9ec,#A6B2CC,hex,线上浅色旧值
+#3c3489,#4E5D80,hex,线上深色旧值
+#2dd4cf,#5F8F84,hex,线下主色/旧青
+#25c5c0,#527D73,hex,线下 hover/旧青深
+#8ce9e5,#A6C8C0,hex,线下浅色
+#7ff5f1,#A6C8C0,hex,线下浅色旧值
+#00cec9,#5F8F84,hex,线下 legacy 青
+#006b68,#4E776D,hex,线下深色旧值
+"rgba(139,132,232,","rgba(95,111,150,",rgba,线上派生（无空格）
+"rgba(139, 132, 232,","rgba(95, 111, 150,",rgba,线上派生（有空格）
+"rgba(45,212,207,","rgba(95,143,132,",rgba,线下派生（无空格）
+"rgba(45, 212, 207,","rgba(95, 143, 132,",rgba,线下派生（有空格）

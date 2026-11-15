@@ -1,15 +1,15 @@
 {
   "title": "真实线下课《生成式人工智能（二）》端到端验收",
-  "generatedAt": "2026-11-15T03:04:23",
+  "generatedAt": "2026-11-15T22:37:13",
   "baseUrl": "http://127.0.0.1:8765",
   "courseId": "e6a15af3-cd93-40cc-8294-21d0f7a41160",
   "sessionId": "genai02-offline-20261115",
   "expectedSubtitleCount": 715,
   "summary": {
-    "pass": 10,
-    "warn": 4,
+    "pass": 15,
+    "warn": 1,
     "fail": 0,
-    "total": 14
+    "total": 16
   },
   "checks": [
     {
@@ -23,9 +23,14 @@
       "detail": "HTTP 200 / name=生成式人工智能（二）"
     },
     {
-      "name": "/subtitles 单次上限 500",
-      "status": "WARN",
-      "detail": "limit=1000 → HTTP 422（Query le=500）；记忆回放必须分页或改契约，不能一次拉全量"
+      "name": "/subtitles limit=1000 可读（上限已放宽）",
+      "status": "PASS",
+      "detail": "HTTP 200 / 返回 715 条 / 不再 422"
+    },
+    {
+      "name": "一次拉全量字幕（记忆回放前提）",
+      "status": "PASS",
+      "detail": "HTTP 200 / 返回 715 条 / 入库 715 条"
     },
     {
       "name": "字幕可读（/subtitles 裸数组，limit=500）",
@@ -50,12 +55,17 @@
     {
       "name": "SRT 可导出（/export-srt）",
       "status": "PASS",
-      "detail": "HTTP 200 / count=500 / 实际块=500 / 首行='1\\n00:08:22,760 --> 00:08:25,190\\n不属于园体的这儿\\n\\n2\\n00:08:26,190 -->'"
+      "detail": "HTTP 200 / count=715 / 实际块=715 / 首行='1\\n00:00:00,000 --> 00:00:02,820\\n上语就能吗?\\n\\n2\\n00:00:02,820 --> 0'"
     },
     {
-      "name": "🟡 export-srt 是否被 limit=500 截断",
-      "status": "WARN",
-      "detail": "入库 715 条，导出只有 500 条 → 端点内 limit=500 硬上限，产品缺陷已复现"
+      "name": "SRT 时间轴从课程开头开始（无静默截断）",
+      "status": "PASS",
+      "detail": "首条时间 00:00:00,000 --> / 阈值 < 60s"
+    },
+    {
+      "name": "导出条数与入库一致",
+      "status": "PASS",
+      "detail": "入库 715 / 导出 715"
     },
     {
       "name": "🟡 AI 总结端点可用但 LLM 未配置",
@@ -68,9 +78,9 @@
       "detail": "HTTP 200 / 7 词"
     },
     {
-      "name": "🟡 backup.json 缺下载头",
-      "status": "WARN",
-      "detail": "HTTP 200 但无 Content-Disposition → 浏览器不会下载，第 11 条反馈的后端根因之一"
+      "name": "backup.json 可导出",
+      "status": "PASS",
+      "detail": "HTTP 200 / Content-Disposition=attachment; filename=\"vocabulary-e6a15af3-backup.json\""
     },
     {
       "name": "课堂笔记写入并回读（/note）",

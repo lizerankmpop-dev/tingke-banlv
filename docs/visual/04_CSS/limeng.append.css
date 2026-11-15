@@ -1,0 +1,238 @@
+/* TINGKE_VISUAL_REFACTOR_V1
+   视觉改造 v1 · 2026-11-15 · 李梓萌（视觉 owner）
+   追加到 frontend/src/shell/limeng.css 末尾。
+   内容：字号覆盖 + 高对比度 + 视频填满布局。
+   原则：只改 font-size / line-height / color / background / border-color / text-shadow / opacity，
+         不改宽高与结构。
+*/
+
+/* ============================================================
+   一、字号体系（重点类精确覆盖）
+   ============================================================ */
+
+.current-en {
+  font-size: var(--fs-subtitle-lg) !important;
+}
+
+.current-zh {
+  font-size: var(--fs-body) !important;
+}
+
+.transcript-text {
+  font-size: var(--fs-subtitle) !important;
+  line-height: 1.5 !important;
+}
+
+.transcript-en {
+  font-size: var(--fs-caption) !important;
+}
+
+.transcript-time {
+  font-size: var(--fs-micro) !important;
+}
+
+.overlay-en {
+  font-size: var(--fs-subtitle) !important;
+  line-height: 1.25 !important;
+}
+
+.overlay-zh {
+  font-size: var(--fs-ui) !important;
+}
+
+.history-row-en,
+.history-row-zh {
+  font-size: var(--fs-caption) !important;
+}
+
+.history-time {
+  font-size: var(--fs-micro) !important;
+}
+
+.transcript-current-label,
+.meter-scale,
+.due-badge,
+.rating small,
+.badge,
+.word-row-badge,
+.file-size,
+.file-status,
+.fineprint,
+.verdict span,
+.notebook-foot span,
+.term-note,
+.chip,
+.candidate-head,
+.audio-source-sub,
+.overlay-course-meta,
+.insight-steps span,
+.vocab-stat span,
+.vocab-word small,
+.wp-label,
+.wp-foot {
+  font-size: var(--fs-micro) !important;
+}
+
+.pill,
+.side-panel-count,
+.side-link,
+.history-row-zh,
+.current-subtitle-meta,
+.topbar-sub,
+.course-card-meta,
+.course-type,
+.section-hint,
+.section-count,
+.due-head,
+.due-item,
+.review-count,
+.review-phonetic,
+.summary-block li,
+.insight-title,
+.insight-steps p,
+.vocab-head,
+.vocab-row,
+.wp-context,
+.wp-ai p,
+.modal-hint,
+.field small,
+.mode-copy span,
+.search-box input,
+.btn-sm {
+  font-size: var(--fs-caption) !important;
+}
+
+.toast,
+.page-sub,
+.review-context,
+.review-definition,
+.wp-definition,
+.modal-sub,
+.field input,
+.field select,
+.field textarea,
+.mode-copy p,
+.form-error,
+.overlay-zh {
+  font-size: var(--fs-ui) !important;
+}
+
+.btn,
+.field > span,
+.notebook-head {
+  font-size: var(--fs-body) !important;
+}
+
+/* ============================================================
+   二、高对比度字幕
+   触发：html[data-contrast="high"]
+   只改颜色/底板/描边/淡化，不改布局与字号
+   ============================================================ */
+
+html[data-contrast="high"] .current-en,
+html[data-contrast="high"] .subtitle-en,
+html[data-contrast="high"] .transcript-text,
+html[data-contrast="high"] .overlay-en {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px #000, 0 0 2px #000;
+}
+
+html[data-contrast="high"] .current-zh,
+html[data-contrast="high"] .subtitle-zh,
+html[data-contrast="high"] .transcript-en,
+html[data-contrast="high"] .overlay-zh,
+html[data-contrast="high"] .history-row-en,
+html[data-contrast="high"] .history-row-zh {
+  color: #e6e6ee !important;
+}
+
+html[data-contrast="high"] .current-subtitle,
+html[data-contrast="high"] .subtitle-panel,
+html[data-contrast="high"] .transcript-panel,
+html[data-contrast="high"] .overlay-bar {
+  background: rgba(8, 8, 10, 0.92) !important;
+  border-color: rgba(255, 255, 255, 0.28) !important;
+}
+
+html[data-contrast="high"] .transcript-line.current {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-left-color: #ffffff !important;
+}
+
+html[data-contrast="high"] .history-row-en,
+html[data-contrast="high"] .history-row-zh {
+  opacity: 0.75 !important;
+}
+
+html[data-contrast="high"] .transcript-time,
+html[data-contrast="high"] .history-time,
+html[data-contrast="high"] .transcript-current-label {
+  color: #e6e6ee !important;
+}
+
+html[data-contrast="high"] .term {
+  color: #ffffff !important;
+  border-bottom-color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* ============================================================
+   三、视频填满布局（张春阳只加 class，不改布局值）
+   class 约定：.recognition-page.web-fill
+   ============================================================ */
+
+.web-view-guest {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.web-content {
+  height: min(70vh, 720px);
+  min-height: 380px;
+}
+
+.recognition-page.web-fill .recognition-grid {
+  grid-template-columns: 1fr;
+}
+
+/* 视频优先：右侧面板收起。若想叠在视频上，见下方注释替代块。 */
+.recognition-page.web-fill .recognition-side {
+  display: none;
+}
+
+.recognition-page.web-fill .current-subtitle,
+.recognition-page.web-fill .subtitle-panel {
+  background: rgba(8, 8, 10, 0.92);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.recognition-page.web-fill .current-en,
+.recognition-page.web-fill .subtitle-en {
+  color: #ffffff;
+  text-shadow: 0 1px 2px #000;
+}
+
+.recognition-page.web-fill .current-zh,
+.recognition-page.web-fill .subtitle-zh {
+  color: #e6e6ee;
+}
+
+/* 可选替代：右侧面板叠在视频右上角，而不是隐藏。
+   如果产品决定「视频填满但保留生字/历史」，把上面的 display:none 换成下面这块。
+.recognition-page.web-fill .recognition-side {
+  display: flex;
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 280px;
+  max-height: calc(100% - 32px);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(10, 10, 12, 0.86);
+  backdrop-filter: blur(10px);
+}
+*/
