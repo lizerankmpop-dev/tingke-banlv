@@ -1,0 +1,22 @@
+.recognition-page .web-content.has-course-guest {
+  aspect-ratio: 16 / 9;
+}
+
+.recognition-page .web-view-guest {
+  display: flex;
+  position: absolute;
+  inset: 0;
+}
+
+.recognition-page.web-fill {
+  max-width: none;
+}
+
+.recognition-page.web-fill .recognition-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.recognition-page.web-fill .web-content {
+  aspect-ratio: auto;
+  height: max(380px, calc(100dvh - 220px));
+}

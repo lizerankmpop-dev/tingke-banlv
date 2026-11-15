@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Compass,
   ChevronDown,
   Download,
   GraduationCap,
@@ -48,6 +49,7 @@ interface SidebarProps {
   onNewCourse: () => void
   onExport: () => void
   onSettings: () => void
+  onOpenGuide: () => void
   onHelp: () => void
 }
 
@@ -66,6 +68,7 @@ export function Sidebar({
   onNewCourse,
   onExport,
   onSettings,
+  onOpenGuide,
   onHelp,
 }: SidebarProps) {
   const isCourses = screen === 'courses'
@@ -177,6 +180,10 @@ export function Sidebar({
         <button type="button" className="nav-item" onClick={onSettings} title="设置">
           <Settings size={16} />
           {!collapsed ? <span className="nav-text">设置</span> : null}
+        </button>
+        <button type="button" className="nav-item" onClick={onOpenGuide} title="重看使用向导">
+          <Compass size={16} />
+          {!collapsed ? <span className="nav-text">重看使用向导</span> : null}
         </button>
         <button type="button" className="nav-item" onClick={onHelp} title="帮助与关于">
           <HelpCircle size={16} />

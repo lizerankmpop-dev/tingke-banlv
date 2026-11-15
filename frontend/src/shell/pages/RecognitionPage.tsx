@@ -8,13 +8,14 @@ import {
 import { IconButton } from '../../components/ui/IconButton'
 import { StatusDot } from '../../components/ui/StatusDot'
 import { HighlightedText } from '../components/HighlightedText'
+import { SubtitleExportPanel } from '../components/SubtitleExportPanel'
 import { readCourseURL } from '../../lib/courseDrop'
 import { useSubtitleStore } from '../../stores/useSubtitleStore'
 import { useCourseStore } from '../../stores/useCourseStore'
 import { useOverlayStore } from '../../stores/useOverlayStore'
 import { vocabularyApi } from '../../lib/vocabularyApi'
 import type { Course, VocabularyEntry } from '../../types'
-import { highlightTerms, isOnline, toDisplayLine, sm2Badge, relativeTime, type DisplayLine } from '../lib/mapping'
+import { fromBackendRow, highlightTerms, isOnline, toDisplayLine, sm2Badge, relativeTime, type DisplayLine, type SubtitleRow } from '../lib/mapping'
 
 /**
  * 识别页（自李梓萌原型 App.jsx 的 Recognition / WebFrame / CurrentSubtitle /
@@ -35,6 +36,7 @@ interface RecognitionPageProps {
   course: Course
   onBack: () => void
   onOpenConfig: () => void
+  onOpenOverlaySettings: () => void
   onGoReview: () => void
   onSelectWord: (word: string) => void
   onToast: (message: string) => void
@@ -44,6 +46,7 @@ export function RecognitionPage({
   course,
   onBack,
   onOpenConfig,
+  onOpenOverlaySettings,
   onGoReview,
   onSelectWord,
   onToast,
@@ -53,7 +56,7 @@ export function RecognitionPage({
 
   const {
     subtitleLines, currentText, asrStatus, asrMessage,
-    connectASR, disconnectASR, retryConnect,
+    connectASR, disconnectASR, hydrateSubtitles,
   } = useSubtitleStore()
 
   const overlayOpen = useOverlayStore((s) => s.open)
@@ -72,12 +75,55 @@ export function RecognitionPage({
     if (subtitleLines.length > 0 && subtitleLines.length % 15 === 0) loadVocab()
   }, [subtitleLines.length, loadVocab])
 
-  // 进入识别页即启动后端 ASR；离开时停（她的交互：点课程卡 = 开始听课）
+  const historyRequest = useRef<AbortController | null>(null)
+  const startRecognition = useCallback(() => {
+    historyRequest.current?.abort()
+    const request = new AbortController()
+    historyRequest.current = request
+    // 只回填启动前已保存的字幕。新会话的行会由实时轮询添加。
+    const startedAt = Date.now()
+    connectASR(course.id, '')
+    fetch(`/api/courses/${course.id}/subtitles?limit=200`, { signal: request.signal })
+      .then(response => response.ok ? response.json() : [])
+      .then((rows: SubtitleRow[]) => {
+        if (!request.signal.aborted && Array.isArray(rows)) {
+          hydrateSubtitles(rows.filter(row => row.createdAt == null || row.createdAt < startedAt))
+        }
+      })
+      .catch(() => { /* 实时识别仍可继续 */ })
+  }, [connectASR, course.id, hydrateSubtitles])
+
   useEffect(() => {
     setActiveCourse(course.id)
-    connectASR(course.id, '')
-    return () => { disconnectASR() }
-  }, [course.id]) // eslint-disable-line react-hooks/exhaustive-deps
+    startRecognition()
+    return () => {
+      historyRequest.current?.abort()
+      disconnectASR()
+    }
+  }, [course.id, disconnectASR, setActiveCourse, startRecognition])
+
+  const [showExport, setShowExport] = useState(false)
+  const [webFill, setWebFill] = useState(false)
+  const [ending, setEnding] = useState(false)
+  const [summaryRequest, setSummaryRequest] = useState(0)
+  const pageActive = useRef(false)
+  useEffect(() => {
+    pageActive.current = true
+    return () => { pageActive.current = false }
+  }, [])
+
+  async function endAndSummarize() {
+    if (ending) return
+    setEnding(true)
+    const stopped = await disconnectASR()
+    if (!pageActive.current) return
+    setEnding(false)
+    if (!stopped) {
+      onToast('未能确认识别已结束，请检查连接后重试')
+      return
+    }
+    setSummaryRequest(request => request + 1)
+  }
 
   const listening = asrStatus === 'listening' || asrStatus === 'processing'
   const hasError = asrStatus === 'error'
@@ -87,7 +133,7 @@ export function RecognitionPage({
       disconnectASR()
       onToast('识别已暂停，字幕会保留在当前句')
     } else {
-      retryConnect()
+      startRecognition()
       onToast('识别已继续，字幕会实时更新')
     }
   }
@@ -102,20 +148,8 @@ export function RecognitionPage({
 
   const terms = highlightTerms(course, vocab)
 
-  async function exportSrt() {
-    try {
-      const res = await fetch(`/api/courses/${course.id}/export-srt?offsetMs=0`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      const count = data?.count ?? 0
-      onToast(count > 0 ? `已导出 ${count} 条字幕（SRT，最新一次识别）` : '还没有字幕可导出')
-    } catch {
-      onToast('导出失败：后端服务未运行')
-    }
-  }
-
   return (
-    <div className="page page-wide recognition-page">
+    <div className={`page page-wide recognition-page${online && webFill ? ' web-fill' : ''}`}>
       <div className="topbar">
         <div className="topbar-left">
           <IconButton label="返回课程列表" onClick={onBack}>
@@ -142,10 +176,20 @@ export function RecognitionPage({
           >
             悬浮条
           </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenOverlaySettings}>
+            悬浮设置
+          </button>
+          {online && (
+            <button type="button" className="btn btn-ghost btn-sm" aria-pressed={webFill}
+              onClick={() => setWebFill(value => !value)}>
+              {webFill ? '分栏' : '填满视频'}
+            </button>
+          )}
           <button
             type="button"
             className={`btn btn-sm ${listening ? 'btn-secondary' : 'btn-primary'}`}
             onClick={toggleListening}
+            disabled={ending}
           >
             {listening ? (
               <>
@@ -157,6 +201,10 @@ export function RecognitionPage({
               </>
             )}
           </button>
+          <button type="button" className="btn btn-secondary btn-sm" disabled={ending}
+            onClick={() => void endAndSummarize()}>
+            {ending ? '正在结束…' : '结束并总结'}
+          </button>
         </div>
       </div>
 
@@ -164,14 +212,14 @@ export function RecognitionPage({
         <div className="asr-error-bar" role="alert">
           <RefreshCw size={13} />
           <span style={{ flex: 1 }}>{asrMessage}</span>
-          <button type="button" className="text-btn" onClick={retryConnect}>重试</button>
+          <button type="button" className="text-btn" onClick={startRecognition}>重试</button>
         </div>
       ) : null}
 
       {online ? (
         <div className="recognition-grid">
           <div className="recognition-main">
-            <WebFrame courseName={course.name} onToast={onToast} />
+            <WebFrame key={course.id} courseId={course.id} courseName={course.name} onToast={onToast} />
             <CurrentSubtitle
               label="实时字幕"
               courseTypeHint={course.language === 'zh' ? '中文识别 · 系统音频' : '双语 · 原文识别'}
@@ -179,7 +227,7 @@ export function RecognitionPage({
               listening={listening}
               terms={terms}
               onTerm={onSelectWord}
-              onExport={() => void exportSrt()}
+              onExport={() => setShowExport(true)}
             />
           </div>
 
@@ -196,22 +244,9 @@ export function RecognitionPage({
               <WordList entries={vocab} onSelectWord={onSelectWord} />
             </SidePanel>
 
-            <SidePanel title="历史字幕" count={historyLines.length}>
-              <div className="history-list">
-                {historyLines.slice(-6).map((line) => (
-                  <div className="history-row" key={line.id}>
-                    <span className="history-time">{line.time}</span>
-                    <div className="history-copy">
-                      <div className="history-row-en">{line.orig}</div>
-                      {line.trans ? <div className="history-row-zh">{line.trans}</div> : null}
-                    </div>
-                  </div>
-                ))}
-                {historyLines.length === 0 ? (
-                  <div className="side-empty">字幕会随着讲课实时出现在这里</div>
-                ) : null}
-              </div>
-            </SidePanel>
+            <HistoryPanel key={course.id} courseId={course.id} recent={historyLines}
+              refresh={summaryRequest} />
+            {summaryRequest > 0 && <SummaryPanel courseId={course.id} request={summaryRequest} />}
           </aside>
         </div>
       ) : (
@@ -223,7 +258,7 @@ export function RecognitionPage({
               listening={listening}
               terms={terms}
               onTerm={onSelectWord}
-              onExport={() => void exportSrt()}
+              onExport={() => setShowExport(true)}
             />
             <CurrentSubtitle
               label="当前句"
@@ -232,7 +267,7 @@ export function RecognitionPage({
               listening={listening}
               terms={terms}
               onTerm={onSelectWord}
-              onExport={() => void exportSrt()}
+              onExport={() => setShowExport(true)}
             />
           </div>
 
@@ -241,13 +276,150 @@ export function RecognitionPage({
               <WordList entries={vocab} onSelectWord={onSelectWord} />
             </SidePanel>
 
-            <SummaryPanel courseId={course.id} />
+            <HistoryPanel courseId={course.id} recent={historyLines} refresh={summaryRequest} />
+            <SummaryPanel courseId={course.id} request={summaryRequest} />
 
             <NotebookPanel courseId={course.id} onToast={onToast} />
           </aside>
         </div>
       )}
+      {showExport && <SubtitleExportPanel course={course} onToast={onToast} onClose={() => setShowExport(false)} />}
     </div>
+  )
+}
+
+interface HistorySession {
+  sessionId: string
+  startedAt: number
+  isLatest: boolean
+}
+
+function HistoryPanel({ courseId, recent, refresh }: {
+  courseId: string
+  recent: DisplayLine[]
+  refresh: number
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [sessionId, setSessionId] = useState('')
+  const [chapterId, setChapterId] = useState<string | null>(null)
+  const [sessions, setSessions] = useState<HistorySession[]>([])
+  const [chapters, setChapters] = useState<{ id: string; name: string }[]>([])
+  const [rows, setRows] = useState<SubtitleRow[]>([])
+  const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading')
+
+  useEffect(() => {
+    if (!expanded) return
+    const request = new AbortController()
+    const options = { signal: request.signal }
+
+    fetch(`/api/courses/${courseId}/sessions`, options)
+      .then(response => response.ok ? response.json() : { sessions: [] })
+      .then(data => {
+        if (request.signal.aborted) return
+        const list: HistorySession[] = data.sessions ?? []
+        setSessions(list)
+        if (!refresh) setSessionId(list.find(session => session.isLatest)?.sessionId ?? '')
+      })
+      .catch(() => {})
+    fetch(`/api/courses/${courseId}/chapters`, options)
+      .then(response => response.ok ? response.json() : [])
+      .then(data => {
+        if (!request.signal.aborted) setChapters(Array.isArray(data) ? data : [])
+      })
+      .catch(() => {})
+
+    return () => { request.abort() }
+  }, [courseId, expanded, refresh])
+
+  useEffect(() => {
+    if (refresh) {
+      setExpanded(true)
+      setSessionId('')
+      setChapterId(null)
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    if (!expanded) return
+    const request = new AbortController()
+    const query = new URLSearchParams({ limit: '200' })
+    if (chapterId !== null) query.set('chapterId', chapterId)
+    setState('loading')
+
+    fetch(`/api/courses/${courseId}/subtitles?${query}`, { signal: request.signal })
+      .then(response => {
+        if (!response.ok) throw new Error('历史字幕请求失败')
+        return response.json()
+      })
+      .then((data: SubtitleRow[]) => {
+        if (request.signal.aborted) return
+        setRows(data)
+        setState('ready')
+      })
+      .catch(() => {
+        if (!request.signal.aborted) setState('error')
+      })
+
+    return () => { request.abort() }
+  }, [chapterId, courseId, expanded, refresh])
+
+  const lines = expanded
+    ? state === 'ready'
+      ? rows.filter(row => !sessionId || row.session_id === sessionId).reverse().map(row => toDisplayLine(fromBackendRow(row)))
+      : []
+    : recent.slice(-6)
+
+  return (
+    <SidePanel
+      title="历史字幕"
+      count={expanded ? lines.length : recent.length}
+      action={
+        <button type="button" className="side-link" aria-expanded={expanded}
+          onClick={() => setExpanded(value => !value)}>
+          {expanded ? '收起' : '查看与筛选'}
+        </button>
+      }
+    >
+      {expanded && (
+        <div>
+          <label>会话{' '}
+            <select value={sessionId} onChange={event => setSessionId(event.target.value)}>
+              <option value="">全部会话</option>
+              {sessions.map(session => (
+                <option key={session.sessionId} value={session.sessionId}>
+                  {session.startedAt ? new Date(session.startedAt).toLocaleString() : '历史会话'}
+                  {session.isLatest ? '（最近一次）' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>章节{' '}
+            <select value={chapterId ?? '__all__'}
+              onChange={event => setChapterId(event.target.value === '__all__' ? null : event.target.value)}>
+              <option value="__all__">全部章节</option>
+              <option value="">未分章</option>
+              {chapters.map(chapter => <option key={chapter.id} value={chapter.id}>{chapter.name}</option>)}
+            </select>
+          </label>
+          {state === 'loading' && <div className="side-empty" role="status">正在加载历史字幕…</div>}
+          {state === 'error' && <div className="side-empty" role="alert">历史字幕加载失败，请收起后重试。</div>}
+        </div>
+      )}
+      <div className="history-list">
+        {lines.map(line => (
+          <div className="history-row" key={line.id}>
+            <span className="history-time">{line.time}</span>
+            <div className="history-copy">
+              <div className="history-row-en">{line.orig}</div>
+              {line.trans ? <div className="history-row-zh">{line.trans}</div> : null}
+            </div>
+          </div>
+        ))}
+        {lines.length === 0 && (!expanded || state === 'ready') && (
+          <div className="side-empty">{expanded ? '没有符合条件的字幕' : '字幕会随着讲课实时出现在这里'}</div>
+        )}
+      </div>
+    </SidePanel>
   )
 }
 
@@ -255,6 +427,8 @@ export function RecognitionPage({
    线上：网页框（真实 <webview>，替换原型的 MockCoursePage）
    ------------------------------------------------------------ */
 
+const LOGIN_HOSTS = new Set(['passport.bilibili.com'])
+const loginHelp = '该站点需要登录。可在系统浏览器登录并播放课程，听课伴侣仍可识别系统声音。内嵌网页使用独立会话，如在应用内登录，请登录后刷新。'
 const browserHelp = '该站点不支持内嵌播放时，请在系统浏览器打开，仍可识别字幕。'
 
 function CourseGuest({ url, onStatus }: { url: string; onStatus: (text: string) => void }) {
@@ -270,19 +444,33 @@ function CourseGuest({ url, onStatus }: { url: string; onStatus: (text: string) 
       window.clearTimeout(timeout)
       onStatus(message)
     }
-    const didLoad = () => finish('')
+    let mainFrameFailed = false
+    const didStart = (event: Event) => {
+      if ((event as Event & { isMainFrame?: boolean }).isMainFrame) mainFrameFailed = false
+    }
+    const didLoad = () => {
+      if (mainFrameFailed) return
+      const currentUrl = (guest as HTMLElement & { getURL: () => string }).getURL()
+      const host = URL.canParse(currentUrl) ? new URL(currentUrl).hostname : ''
+      finish(LOGIN_HOSTS.has(host) ? loginHelp : '')
+    }
     const didFail = (event: Event) => {
       const { isMainFrame, errorCode } = event as Event & { isMainFrame: boolean; errorCode: number }
-      if (isMainFrame && errorCode !== -3) finish('网页加载失败。' + browserHelp)
+      if (isMainFrame && errorCode !== -3) {
+        mainFrameFailed = true
+        finish('网页加载失败。' + browserHelp)
+      }
     }
     const didCrash = () => finish('网页进程已退出，请重新拖入链接。' + browserHelp)
+    guest.addEventListener('did-start-navigation', didStart)
     guest.addEventListener('did-finish-load', didLoad)
     guest.addEventListener('did-fail-load', didFail)
     guest.addEventListener('render-process-gone', didCrash)
     guest.setAttribute('src', url)
     return () => {
       window.clearTimeout(timeout)
-      guest.removeEventListener('did-finish-load', didLoad)
+      guest.removeEventListener('did-start-navigation', didStart)
+    guest.removeEventListener('did-finish-load', didLoad)
       guest.removeEventListener('did-fail-load', didFail)
       guest.removeEventListener('render-process-gone', didCrash)
     }
@@ -292,28 +480,59 @@ function CourseGuest({ url, onStatus }: { url: string; onStatus: (text: string) 
     ref: guestRef,
     partition: 'persist:course',
     className: 'web-view-guest',
+    style: { width: '100%', height: '100%' },
     title: '课程网页',
   })
 }
 
-function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: string) => void }) {
+function WebFrame({ courseId, courseName, onToast }: {
+  courseId: string
+  courseName: string
+  onToast: (msg: string) => void
+}) {
   const [url, setUrl] = useState('')
   const [draft, setDraft] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const [status, setStatus] = useState('')
 
+  const editedLink = useRef(false)
+
+  useEffect(() => {
+    let active = true
+    window.electronAPI?.getCourseWebLink?.(courseId).then(saved => {
+      if (!active || editedLink.current || !saved) return
+      setUrl(saved)
+      setDraft(saved)
+      setStatus('正在加载课程网页…')
+    }).catch(() => {})
+    return () => { active = false }
+  }, [courseId])
+
+  async function saveLink(next: string) {
+    const save = window.electronAPI?.setCourseWebLink
+    if (!save) return
+    try {
+      if (!await save(courseId, next)) onToast('课程网页链接未能保存')
+    } catch {
+      onToast('课程网页链接未能保存')
+    }
+  }
+
   function loadPage(next?: string) {
-    const target = (next ?? draft).trim()
-    if (!target) return
-    if (!/^https?:\/\//i.test(target)) {
-      onToast('请粘贴 http(s) 课程链接')
+    const text = (next ?? draft).trim()
+    if (!text) return
+    const target = readCourseURL({ getData: type => type === 'text/plain' ? text : '' })
+    if (!target) {
+      onToast('请粘贴有效的 HTTPS 课程链接')
       return
     }
+    editedLink.current = true
     setUrl(target)
+    setDraft(target)
+    void saveLink(target)
     setAttempt((n) => n + 1)
     setStatus('正在加载课程网页…')
-    onToast('网页已嵌入到听课伴侣中间')
   }
 
   function onDrop(event: DragEvent<HTMLElement>) {
@@ -324,7 +543,6 @@ function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: 
       onToast('请拖入有效的课程网页链接')
       return
     }
-    setDraft(text)
     loadPage(text)
   }
 
@@ -349,7 +567,13 @@ function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: 
         </button>
         <div className="web-tab-spacer" />
         {url ? (
-          <button type="button" className="text-btn" onClick={() => { setUrl(''); setStatus(''); setDraft('') }}>
+          <button type="button" className="text-btn" onClick={() => {
+            editedLink.current = true
+            setUrl('')
+            setStatus('')
+            setDraft('')
+            void saveLink('')
+          }}>
             移除网页
           </button>
         ) : null}
@@ -369,7 +593,10 @@ function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: 
           <Globe size={13} />
           <input
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              editedLink.current = true
+              setDraft(event.target.value)
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') loadPage()
             }}
@@ -381,10 +608,33 @@ function WebFrame({ courseName, onToast }: { courseName: string; onToast: (msg: 
         </button>
       </div>
 
-      {status ? <div className="web-status" role="status">{status}</div> : null}
+      {url && (
+        <button type="button" className="text-btn" onClick={async () => {
+          try {
+            if (await window.electronAPI?.openCourseExternal?.(url)) return
+            await navigator.clipboard.writeText(url)
+            onToast('链接已复制，可在系统浏览器打开课程并继续识别')
+          } catch {
+            onToast('请复制地址栏中的课程链接，在系统浏览器打开')
+          }
+        }}>
+          在系统浏览器打开
+        </button>
+      )}
+
+      {status ? (
+        <div className="web-status" role="status">
+          {status}
+          {url && !status.startsWith('正在加载') && (
+            <button type="button" className="text-btn" onClick={() => loadPage(url)}>
+              重新加载
+            </button>
+          )}
+        </div>
+      ) : null}
 
       <div
-        className={`web-content ${dragOver ? 'drag-over' : ''}`}
+        className={`web-content${url ? ' has-course-guest' : ''}${dragOver ? ' drag-over' : ''}`}
         onDragOver={(event) => {
           event.preventDefault()
           setDragOver(true)
@@ -580,34 +830,48 @@ function WordList({ entries, onSelectWord }: { entries: VocabularyEntry[]; onSel
    课堂总结（POST /summary，LLM 生成，key_points → 原型 points）
    ------------------------------------------------------------ */
 
-function SummaryPanel({ courseId }: { courseId: string }) {
+function SummaryPanel({ courseId, request }: { courseId: string; request: number }) {
   const [loading, setLoading] = useState(false)
-  const [unavailable, setUnavailable] = useState(false)
+  const [unavailable, setUnavailable] = useState('')
+  const inFlight = useRef<AbortController | null>(null)
   const [data, setData] = useState<{
     summary: string
     key_points: string[]
     review_words: string[]
     updatedAt: number
+    subtitleCount?: number
   } | null>(null)
 
-  const fetchSummary = async () => {
-    if (loading) return
+  const fetchSummary = useCallback(async () => {
+    inFlight.current?.abort()
+    const controller = new AbortController()
+    inFlight.current = controller
     setLoading(true)
-    setUnavailable(false)
+    setUnavailable('')
     setData(null)
     try {
-      const res = await fetch(`/api/courses/${courseId}/summary`, { method: 'POST' })
-      const body = await res.json()
-      if (body.available) {
+      const response = await fetch(`/api/courses/${courseId}/summary`, {
+        method: 'POST',
+        signal: controller.signal,
+      })
+      const body = await response.json()
+      if (controller.signal.aborted) return
+      if (response.ok && body.available) {
         setData({ ...body, updatedAt: Date.now() })
       } else {
-        setUnavailable(true)
+        setUnavailable(body.detail || body.message || 'AI 摘要服务不可用')
       }
     } catch {
-      setUnavailable(true)
+      if (!controller.signal.aborted) setUnavailable('无法连接摘要服务，请稍后重试')
+    } finally {
+      if (!controller.signal.aborted) setLoading(false)
     }
-    setLoading(false)
-  }
+  }, [courseId])
+
+  useEffect(() => {
+    if (request) void fetchSummary()
+    return () => { inFlight.current?.abort() }
+  }, [fetchSummary, request])
 
   return (
     <SidePanel
@@ -622,11 +886,13 @@ function SummaryPanel({ courseId }: { courseId: string }) {
         <div className="side-empty">AI 正在阅读最近的字幕，约需十几秒…</div>
       ) : unavailable ? (
         <div className="side-empty">
-          AI 摘要服务不可用：请确认 Ollama 已启动并拉取了模型
+          {unavailable}
         </div>
       ) : data ? (
         <div className="summary-block">
-          <h4>{data.summary?.slice(0, 40) || '本节课摘要'}</h4>
+          <h4>本节课摘要</h4>
+          <p>{data.summary}</p>
+          {data.subtitleCount != null && <p>根据 {data.subtitleCount} 条字幕生成</p>}
           <ul>
             {(data.key_points ?? []).map((point) => (
               <li key={point}>{point}</li>

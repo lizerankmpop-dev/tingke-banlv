@@ -1,3 +1,4 @@
+import { fromBackendRow, type SubtitleRow } from '../shell/lib/mapping'
 import { create } from 'zustand'
 import type { SubtitleLine, VocabularyEntry, ASRStatus, TermGuardStats } from '../types'
 import { useCourseStore } from './useCourseStore'
@@ -56,8 +57,9 @@ interface SubtitleState {
   chapterId: string
 
   connectASR: (courseId: string, chapterId?: string) => void
-  disconnectASR: () => void
+  disconnectASR: () => Promise<boolean>
   retryConnect: () => void
+  hydrateSubtitles: (rows: SubtitleRow[]) => void
   _startBackendASR: (courseId: string) => void
   _tryReconnect: (courseId: string) => void
   addSubtitleLine: (line: SubtitleLine) => void
@@ -122,6 +124,10 @@ function handleMessage(msg: any, get: any, set: any) {
   }
 }
 
+let pendingASR: Promise<unknown> = Promise.resolve()
+let connectionRevision = 0
+let connectedCourseId: string | null = null
+
 export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   subtitleLines: [],
   currentWords: [],
@@ -147,7 +153,8 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
 
   connectASR: (courseId: string, chapterId?: string) => {
     // 先断开旧连接（会设置 intentionalClose = true）
-    get().disconnectASR()
+    void get().disconnectASR()
+    connectedCourseId = courseId
 
     // 重置状态，标记为非主动关闭
     set({
@@ -237,62 +244,57 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   _startBackendASR: (courseId: string) => {
     get().setASRStatus('listening', '正在启动识别...')
 
-    // 🔴 **先 stop 再 start，必须串行**（2026-10-29 修）
-    //
-    // 原来 `disconnectASR` 里的 stop 是 fire-and-forget（不等它返回），
-    // 而 `_startBackendASR` 紧接着就发 start ⇒ **两个管道短暂并存** ⇒
-    // 两个采集线程同一毫秒枚举音频设备 ⇒ PortAudio 断言失败
-    // ⇒ **整个后端进程 abort**（页面显示「已连接」但永远没有字幕）。
-    //
-    // ⇒ 现在串行：等 stop 落地（失败也继续）再 start。
-    //    重连路径走这里也安全 —— 重连的前提本来就是管道已经不在了。
-    fetch(`/api/asr/stop?course_id=${courseId}`, { method: 'POST' })
-      .catch(() => {})
-      .finally(() => {
-        if (get().intentionalClose) return
-        const course = useCourseStore.getState().courses.find(item => item.id === courseId)
-        const settings = useClassroomAudioStore.getState().settings
-        // 章节归属随 start 一起告诉后端（字幕入库时挂到该章节；空串 = 不分章节）。
-        // 线下课的音频增强参数走 JSON body，两种课型的 chapterId 都走 query。
-        const chapter = encodeURIComponent(get().chapterId || '')
-        const options: RequestInit = course?.courseType === 'offline'
-          ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) }
-          : { method: 'POST' }
-        fetch(`/api/asr/start?course_id=${courseId}&chapterId=${chapter}`, options)
-          .then(async (res) => {
-            // 🔴 **必须检查状态码**（2026-10-29 修）
-            //
-            // 原来只看「fetch 没抛异常」⇒ 后端返回 **409 / 4xx / 5xx** 也走 `.then()`
-            // ⇒ 前端显示「识别中...」而**后端根本没起管道**
-            // ⇒ 用户看到「已连接」但永远没有字幕，且完全不知道原因。
-            if (!res.ok) {
-              let detail = ''
-              try {
-                const body = await res.json()
-                detail = body?.detail || ''
-              } catch { /* 响应不是 JSON，忽略 */ }
-              const err = new Error(detail || `启动失败（HTTP ${res.status}）`)
-              ;(err as any).status = res.status
-              throw err
-            }
-            if (!get().intentionalClose) {
-              set({ reconnectAttempts: 0 })
-              get().setASRStatus('listening', '识别中...')
-            }
-          })
-          .catch((err) => {
-            if (get().intentionalClose) return
-            // 🔴 **409 = 设备被另一门课占用** ⇒ 那是**业务上的永久冲突**，
-            //    重试多少次都不会变（还会把后端拖进雪崩）。
-            //    ⇒ 直接把原因显示给用户，**不重连**。
-            const status = (err as any)?.status
-            if (status === 409) {
-              get().setASRStatus('error', err?.message || '系统音频已被另一门课占用')
-              return
-            }
-            get()._tryReconnect(courseId)
-          })
-      })
+    const revision = connectionRevision
+    const isCurrent = () => !get().intentionalClose && connectionRevision === revision
+    // 等待上次启停完成，并在启动前清理该课程可能遗留的后端管道。
+    pendingASR = pendingASR.then(async () => {
+      if (!isCurrent()) return
+      await fetch(`/api/asr/stop?course_id=${courseId}`, { method: 'POST' }).catch(() => {})
+      if (!isCurrent()) return
+      const course = useCourseStore.getState().courses.find(item => item.id === courseId)
+      const settings = useClassroomAudioStore.getState().settings
+      // 章节归属随 start 一起告诉后端（字幕入库时挂到该章节；空串 = 不分章节）。
+      // 线下课的音频增强参数走 JSON body，两种课型的 chapterId 都走 query。
+      const chapter = encodeURIComponent(get().chapterId || '')
+      const options: RequestInit = course?.courseType === 'offline'
+        ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) }
+        : { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ latencyProfile: settings.latencyProfile }) }
+      return fetch(`/api/asr/start?course_id=${courseId}&chapterId=${chapter}`, options)
+        .then(async (res) => {
+          // 🔴 **必须检查状态码**（2026-10-29 修）
+          //
+          // 原来只看「fetch 没抛异常」⇒ 后端返回 **409 / 4xx / 5xx** 也走 `.then()`
+          // ⇒ 前端显示「识别中...」而**后端根本没起管道**
+          // ⇒ 用户看到「已连接」但永远没有字幕，且完全不知道原因。
+          if (!res.ok) {
+            let detail = ''
+            try {
+              const body = await res.json()
+              detail = body?.detail || ''
+            } catch { /* 响应不是 JSON，忽略 */ }
+            const err = new Error(detail || `启动失败（HTTP ${res.status}）`)
+            ;(err as any).status = res.status
+            throw err
+          }
+          if (isCurrent()) {
+            set({ reconnectAttempts: 0 })
+            get().setASRStatus('listening', '识别中...')
+          }
+        })
+        .catch((err) => {
+          if (!isCurrent()) return
+          // 🔴 **409 = 设备被另一门课占用** ⇒ 那是**业务上的永久冲突**，
+          //    重试多少次都不会变（还会把后端拖进雪崩）。
+          //    ⇒ 直接把原因显示给用户，**不重连**。
+          const status = (err as any)?.status
+          if (status === 409) {
+            get().setASRStatus('error', err?.message || '系统音频已被另一门课占用')
+            return
+          }
+          get()._tryReconnect(courseId)
+        })
+    })
   },
 
   _tryReconnect: (courseId: string) => {
@@ -322,6 +324,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   },
 
   disconnectASR: () => {
+    connectionRevision += 1
     const { pollInterval, reconnectTimer } = get()
     if (pollInterval) {
       window.clearInterval(pollInterval)
@@ -342,10 +345,19 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       termGuard: null,
     })
     pushOverlay(get)
-    const courseId = useCourseStore.getState().activeCourseId
-    if (courseId) {
-      fetch(`/api/asr/stop?course_id=${courseId}`, { method: 'POST' }).catch(() => {})
-    }
+    const courseId = connectedCourseId ?? useCourseStore.getState().activeCourseId
+    connectedCourseId = null
+    if (!courseId) return Promise.resolve(true)
+    const stopped = pendingASR.then(async () => {
+      try {
+        const response = await fetch(`/api/asr/stop?course_id=${courseId}`, { method: 'POST' })
+        return response.ok
+      } catch {
+        return false
+      }
+    })
+    pendingASR = stopped
+    return stopped
   },
 
   retryConnect: () => {
@@ -353,6 +365,17 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
     if (courseId) {
       get().connectASR(courseId)
     }
+  },
+
+  hydrateSubtitles: (rows) => {
+    const history = new Map<string, SubtitleLine>()
+    for (const row of [...rows].reverse()) {
+      history.set(row.id, fromBackendRow(row))
+    }
+    set(state => ({
+      subtitleLines: [...history.values(), ...state.subtitleLines.filter(line => !history.has(line.id))],
+    }))
+    pushOverlay(get)
   },
 
   addSubtitleLine: (line) => {

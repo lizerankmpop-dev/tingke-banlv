@@ -70,6 +70,9 @@ export interface ElectronDiagAPI {
 
 export type ElectronAPI = ElectronHostAPI & {
   courseWebviewEnabled?: boolean
+  getCourseWebLink?: (courseId: string) => Promise<string>
+  setCourseWebLink?: (courseId: string, url: string) => Promise<boolean>
+  openCourseExternal?: (url: string) => Promise<boolean>
   getAppVersion: () => Promise<string>
   getBackendPort: () => Promise<number | null>
   overlay?: ElectronOverlayAPI

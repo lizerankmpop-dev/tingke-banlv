@@ -73,6 +73,13 @@ export default function OverlayWindow() {
     return () => document.documentElement.classList.remove('overlay-transparent')
   }, [])
 
+  useEffect(() => {
+    const root = document.documentElement
+    if (settings.highContrast) root.dataset.contrast = 'high'
+    else delete root.dataset.contrast
+    return () => { delete root.dataset.contrast }
+  }, [settings.highContrast])
+
   const { fontSize, color, lineCount, textBgOpacity, clickThrough } = settings
 
   // 历史行 + 当前行，总数不超过 lineCount

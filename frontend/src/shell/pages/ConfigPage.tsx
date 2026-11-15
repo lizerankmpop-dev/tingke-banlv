@@ -5,6 +5,7 @@ import {
   Play, RefreshCw, Sparkles, Trash2, Upload, Volume2, Wifi, Plus, X,
 } from 'lucide-react'
 import { IconButton } from '../../components/ui/IconButton'
+import CourseConfigHint from '../../components/CourseConfigHint'
 import { LevelMeter } from '../../components/ui/LevelMeter'
 import { useCourseStore } from '../../stores/useCourseStore'
 import { useClassroomAudioStore } from '../../stores/useClassroomAudioStore'
@@ -220,6 +221,7 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
         </div>
       </div>
 
+      <CourseConfigHint />
       <div className="config-grid">
         <section className="config-card">
           <div className="card-head">
@@ -387,6 +389,15 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
               {LANGUAGES.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>识别速度</span>
+            <select value={settings.latencyProfile} onChange={(event) => {
+              setSettings({ latencyProfile: event.target.value === 'fast' ? 'fast' : 'balanced' })
+            }}>
+              <option value="balanced">均衡</option>
+              <option value="fast">快速</option>
             </select>
           </label>
           <label className="field">
