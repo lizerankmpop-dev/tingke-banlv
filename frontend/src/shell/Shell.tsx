@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { useCourseStore } from '../stores/useCourseStore'
 import { useSubtitleStore } from '../stores/useSubtitleStore'
 import { useHostHeartbeat } from '../hooks/useHostHeartbeat'
+import { useOverlayStore } from '../stores/useOverlayStore'
 import { vocabularyApi, type DueSummary } from '../lib/vocabularyApi'
 import { getDiagInfo } from '../lib/diagBridge'
 import { onboardingBridge } from '../lib/onboardingBridge'
@@ -17,6 +18,7 @@ import './limeng.css'
 
 /** 帮助/关于：主线既有面板（版本、FAQ、日志目录），惰性加载避免拖慢首屏 */
 const HelpAboutPanel = lazy(() => import('../components/HelpAboutPanel'))
+const OverlayControlPanel = lazy(() => import('../components/OverlayControlPanel'))
 
 /**
  * 主应用骨架（自李梓萌原型 App.jsx 的 App() 原样转写）
@@ -52,6 +54,17 @@ export default function Shell() {
   const [dueSummary, setDueSummary] = useState<DueSummary | null>(null)
   const [version, setVersion] = useState('')
   const [showHelp, setShowHelp] = useState(false)
+  const [showOverlayPanel, setShowOverlayPanel] = useState(false)
+  const initializeOverlay = useOverlayStore(state => state.init)
+  const highContrast = useOverlayStore(state => state.settings.highContrast)
+
+  useEffect(() => { void initializeOverlay() }, [initializeOverlay])
+  useEffect(() => {
+    const root = document.documentElement
+    if (highContrast) root.dataset.contrast = 'high'
+    else delete root.dataset.contrast
+    return () => { delete root.dataset.contrast }
+  }, [highContrast])
 
   useEffect(() => {
     void loadCourses()
@@ -142,7 +155,8 @@ export default function Shell() {
         onNavigate={navigate}
         onNewCourse={() => openNewCourse()}
         onExport={() => navigate('vocabulary')}
-        onSettings={() => void onboardingBridge.reopen()}
+        onSettings={() => setShowOverlayPanel(true)}
+        onOpenGuide={() => void onboardingBridge.reopen()}
         onHelp={() => setShowHelp(true)}
       />
 
@@ -160,9 +174,11 @@ export default function Shell() {
 
         {screen === 'recognition' && selectedCourse && (
           <RecognitionPage
+            key={selectedCourse.id}
             course={selectedCourse}
             onBack={() => navigate('courses', 'all')}
             onOpenConfig={() => openConfig(selectedCourse.id)}
+            onOpenOverlaySettings={() => setShowOverlayPanel(true)}
             onGoReview={() => navigate('review')}
             onSelectWord={(word) => void selectWord(word)}
             onToast={setToast}
@@ -222,6 +238,15 @@ export default function Shell() {
       />
 
       <Toast message={toast} />
+
+      {showOverlayPanel && (
+        <Suspense fallback={null}>
+          <OverlayControlPanel
+            onClose={() => setShowOverlayPanel(false)}
+            showHighContrast
+          />
+        </Suspense>
+      )}
 
       {showHelp && (
         <Suspense fallback={null}>

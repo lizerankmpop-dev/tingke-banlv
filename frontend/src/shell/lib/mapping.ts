@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { Course, SubtitleLine, VocabularyEntry } from '../../types'
+import type { Course, SubtitleLine, SubtitleWord, VocabularyEntry } from '../../types'
 
 /**
  * 她的原型数据模型（data.js）↔ 主线真实数据模型的映射层。
@@ -76,6 +76,31 @@ export interface DisplayLine {
   orig: string
   trans: string
   isFinal: boolean
+}
+
+export interface SubtitleRow {
+  id: string
+  text: string
+  translation?: string
+  words?: unknown
+  start_ms: number
+  end_ms: number
+  is_final: boolean
+  session_id?: string
+  chapterId?: string
+  createdAt?: number
+}
+
+export function fromBackendRow(row: SubtitleRow): SubtitleLine {
+  return {
+    id: row.id,
+    text: row.text,
+    translation: row.translation || undefined,
+    words: Array.isArray(row.words) ? row.words as SubtitleWord[] : [],
+    start: row.start_ms,
+    end: row.end_ms,
+    isFinal: !!row.is_final,
+  }
 }
 
 export function toDisplayLine(line: SubtitleLine): DisplayLine {

@@ -35,7 +35,7 @@
  */
 
 const { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, shell, session } = require('electron');
-const { configureCourseWebview } = require('./course-webview.cjs');
+const { configureCourseWebview, isCourseURL } = require('./course-webview.cjs');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -1888,6 +1888,14 @@ process.on('SIGTERM', () => {
 });
 
 // ============ IPC ============
+
+ipcMain.handle('course:open-external', async (event, url) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents ||
+      !event.senderFrame || event.senderFrame !== event.sender.mainFrame ||
+      typeof url !== 'string' || !isCourseURL(url)) return false;
+  await shell.openExternal(new URL(url).href);
+  return true;
+});
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('get-backend-port', () => backendPort);

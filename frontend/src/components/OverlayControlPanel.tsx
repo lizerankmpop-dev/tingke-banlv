@@ -62,7 +62,10 @@ const A11Y_ID = {
   colorGroup: 'ov-label-color',
 } as const
 
-export default function OverlayControlPanel({ onClose }: { onClose: () => void }) {
+export default function OverlayControlPanel({ onClose, showHighContrast = false }: {
+  onClose: () => void
+  showHighContrast?: boolean
+}) {
   const { available, open, settings, loading, error, init, patch, toggle, resetPosition } = useOverlayStore()
   // 引擎侧的实时降级状态由主窗口的 500ms 轮询带回来（面板自己不发请求）
   const termGuard = useSubtitleStore((s) => s.termGuard)
@@ -141,6 +144,14 @@ export default function OverlayControlPanel({ onClose }: { onClose: () => void }
         </div>
 
         <div style={styles.body}>
+          {showHighContrast && available && settings.highContrast !== undefined && (
+            <label style={styles.row}>
+              高对比度
+              <input type="checkbox" aria-label="高对比度" checked={settings.highContrast}
+                disabled={loading}
+                onChange={event => set({ highContrast: event.target.checked })} />
+            </label>
+          )}
           {!available ? (
             <div style={styles.notice}>
               <AlertCircle size={16} color="var(--warning)" />

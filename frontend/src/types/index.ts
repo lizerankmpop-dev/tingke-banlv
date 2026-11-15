@@ -164,6 +164,7 @@ export interface OverlayAnchor {
 }
 
 export interface OverlaySettings {
+  highContrast?: boolean
   /** 配置结构版本（决定主进程如何迁移老配置） */
   schemaVersion?: number
   enabled: boolean          // 是否显示悬浮窗

@@ -9,12 +9,14 @@ export interface ClassroomSettings {
   micDeviceIndex: number | null
   agc: boolean
   vadProfile: 'near' | 'far-field'
+  latencyProfile: 'fast' | 'balanced'
 }
 
 export const defaultClassroomSettings: ClassroomSettings = {
   micDeviceIndex: null,
   agc: false,
   vadProfile: 'far-field',
+  latencyProfile: 'balanced',
 }
 
 export interface MicrophoneMeter {
