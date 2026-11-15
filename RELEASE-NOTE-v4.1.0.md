@@ -57,7 +57,18 @@
 
 ## 四、产物
 
-见《本地跑通操作卡_免安装成品版_v4.1.0_2026-11-15.md》（打包完成后回填指纹）。
+构建于提交 `362bc6f`（2026-11-15 24:00，`bash scripts/build-v400.sh`）：
+
+| 文件 | 大小（B） | sha256 前 16 |
+|---|---:|---|
+| `frontend/release/tingkebanlv-4.1.0-setup.exe` | 312,163,576 | `fd914e98ea9671dd` |
+| `frontend/release/win-unpacked-4.1.0.zip` | 373,450,259 | `45337ec109017f5e` |
+
+包内验收（2026-11-15 24:00 实测，冻结后端）：`/api/ping` → `4.1.0`；
+openapi `/subtitles` limit max = **5000**；`backup.json` → 200 +
+`Content-Disposition: attachment`；前端 `hydrateSubtitles` / `结束并总结` /
+`createObjectURL` / 新色 `#5f6f96` 均在包内，旧色 `#8b84e8` 为 0。
+操作指引见《本地跑通操作卡_免安装成品版_v4.1.0_2026-11-15.md》。
 
 ## 五、明确没做 / 下一步
 
