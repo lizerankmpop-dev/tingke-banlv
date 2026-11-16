@@ -97,6 +97,22 @@ class VoiceActivityDetector:
 
         self._init_model()
 
+    def apply_latency_profile(self, profile: str) -> None:
+        """延迟档（12 条反馈第 10 条，2026-11-16）。
+
+        `fast`：按**比例**收紧静音判定与最长片段，出字更快；
+        `balanced`：保持构造时的档位默认值（far-field/near 已各自给过偏置）。
+
+        🔴 只做乘法缩放、**不写死绝对值**：`SILENCE_DURATION` / `MAX_SPEECH_DURATION`
+        是 env 可调的（`TINGKEBANLV_VAD_SILENCE` / `_MAX_SPEECH`），如果在这里写死
+        `0.6 / 4.2` 这类数字，用户/env 的调参会被静默覆盖。基准测试
+        （bench_latency.py）给出的对应关系是：最坏端到端 ≈ 最长片段 + 推理 + 轮询，
+        所以收紧片段上限是收益最大的一刀，静音判定其次。
+        """
+        if profile == "fast":
+            self._silence_duration *= 0.75
+            self._max_speech_duration *= 0.7
+
     # ---------- 模型加载 ----------
 
     def _init_model(self):

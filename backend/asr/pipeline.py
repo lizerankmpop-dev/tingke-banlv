@@ -133,6 +133,12 @@ class ASRPipeline:
             on_speech_segment=self._on_speech_segment,
             profile=course_config.get("vadProfile", "far-field") if self._offline else "near",
         )
+        # 🔴 延迟档（12 条反馈第 10 条，2026-11-16）：前端在 /asr/start body 里带
+        # `latencyProfile`（快/均衡）。此前后端没有这个字段，pydantic 静默丢弃，
+        # 前端的档位选择是「看着能选、实际无效」。fast 档按比例收紧 VAD
+        # （出字更快），balanced 保持默认。只在启动时生效；改档后重新开始识别即可。
+        if course_config.get("latencyProfile") == "fast":
+            self._vad.apply_latency_profile("fast")
 
         self._capture = AudioCapture(
             on_audio_chunk=self._on_audio_chunk,

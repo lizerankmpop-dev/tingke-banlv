@@ -128,3 +128,47 @@ def test_far_field_profile_allows_longer_segments():
 def test_min_speech_constant_is_sane():
     """MIN_SPEECH_DURATION 必须为正且在合理量级（否则静音断句路径会失效）。"""
     assert 0 < MIN_SPEECH_DURATION <= 3.0
+
+
+# ============ 延迟档 latencyProfile（12 条反馈第 10 条，2026-11-16） ============
+
+def test_apply_latency_profile_scales_proportionally():
+    """🔴 fast 档必须**按比例**收紧，不许写死绝对值。
+
+    `SILENCE_DURATION` / `MAX_SPEECH_DURATION` 是 env 可调的（TINGKEBANLV_VAD_*），
+    如果这里写死 0.6/4.2 这类数字，env 调参会被静默覆盖 ——
+    那正是 11/11 延迟修复最忌讳的「调参看起来生效实际被吃掉」。
+    """
+    det = VoiceActivityDetector(on_speech_segment=lambda *_: None, profile="far-field")
+    sil_before = det._silence_duration
+    max_before = det._max_speech_duration
+    det.apply_latency_profile("fast")
+    assert det._silence_duration == pytest.approx(sil_before * 0.75)
+    assert det._max_speech_duration == pytest.approx(max_before * 0.7)
+    # fast 档后必须确实比 balanced 严格（出字更快的前提）
+    assert det._silence_duration < sil_before
+    assert det._max_speech_duration < max_before
+
+
+def test_apply_latency_profile_balanced_is_noop():
+    """balanced 是默认档，重复应用必须是无操作（不能越调越快）。"""
+    det = VoiceActivityDetector(on_speech_segment=lambda *_: None)
+    sil_before = det._silence_duration
+    max_before = det._max_speech_duration
+    det.apply_latency_profile("balanced")
+    det.apply_latency_profile("unknown-profile")
+    assert det._silence_duration == sil_before
+    assert det._max_speech_duration == max_before
+
+
+def test_asr_start_request_accepts_latency_profile():
+    """前端 ConfigPage 的速度档随 /asr/start body 发 latencyProfile，
+    此前模型没这个字段被 pydantic 静默丢弃（第 10 条「选了没反应」的根因）。
+    """
+    from api.routes import AsrStartRequest
+
+    assert AsrStartRequest().latencyProfile == "balanced"
+    assert AsrStartRequest(latencyProfile="fast").latencyProfile == "fast"
+    with pytest.raises(Exception):
+        AsrStartRequest(latencyProfile="turbo")  # 非法档位必须拒绝
+

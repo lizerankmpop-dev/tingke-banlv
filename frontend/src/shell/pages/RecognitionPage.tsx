@@ -81,9 +81,13 @@ export function RecognitionPage({
     const request = new AbortController()
     historyRequest.current = request
     // 只回填启动前已保存的字幕。新会话的行会由实时轮询添加。
+    // 🔴 limit=5000（2026-11-16，C6 修复后契约）：后端单次上限已放宽到
+    // SUBTITLE_MAX_ROWS=5000，一节 45 分钟课约 1500 条 —— 原来取 200 会把
+    // 大半节课的历史静默截掉（真实课《生成式人工智能（二）》有 715 条）。
+    // 一次性拉全量比分页简单，~1500 行 JSON 在本机回环上毫秒级。
     const startedAt = Date.now()
     connectASR(course.id, '')
-    fetch(`/api/courses/${course.id}/subtitles?limit=200`, { signal: request.signal })
+    fetch(`/api/courses/${course.id}/subtitles?limit=5000`, { signal: request.signal })
       .then(response => response.ok ? response.json() : [])
       .then((rows: SubtitleRow[]) => {
         if (!request.signal.aborted && Array.isArray(rows)) {

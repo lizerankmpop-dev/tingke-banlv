@@ -1547,6 +1547,10 @@ class MicrophoneRequest(BaseModel):
 class AsrStartRequest(MicrophoneRequest):
     agc: bool = False
     vadProfile: Literal["near", "far-field"] = "far-field"
+    # 🔴 延迟档（12 条反馈第 10 条，2026-11-16）：前端 ConfigPage 的「速度档」
+    # 一直随 /asr/start body 发这个字段，但此前模型没声明，pydantic 静默丢弃
+    # ⇒ 用户切换快/均衡实际无效。fast 由 pipeline 转成 VAD 比例收紧。
+    latencyProfile: Literal["fast", "balanced"] = "balanced"
 
 
 @router.post("/asr/start")
@@ -1573,8 +1577,13 @@ async def start_asr(
 
     if course_id in active_pipelines or course_id in _starting_courses:
         return {"status": "already_running"}
-    if req is not None and course.get("courseType") == "offline":
-        course = {**course, **req.model_dump()}
+    if req is not None:
+        extra = req.model_dump()
+        if course.get("courseType") != "offline":
+            # 在线课只认延迟档：micDeviceIndex / agc / vadProfile 是线下课堂专属，
+            # 不能让 body 里的其它键漏进 course_config（前端在线课也只发 latencyProfile）。
+            extra = {"latencyProfile": extra.get("latencyProfile", "balanced")}
+        course = {**course, **extra}
 
     # 🔴 **音频设备是独占的**（2026-10-29 加）
     #
