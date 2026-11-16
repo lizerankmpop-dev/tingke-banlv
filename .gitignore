@@ -124,5 +124,5 @@ backend/.venv/
 *.ref/
 
 # v4.x 包内验收的临时数据目录（验证用测试库，不入库）
-packaging/_verify410*
+packaging/_verify4*/
 packaging/_stale_*/

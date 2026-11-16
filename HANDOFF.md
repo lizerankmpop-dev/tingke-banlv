@@ -313,8 +313,19 @@ cd frontend && npm test
 4. ✅ 合并后门禁：后端 **624/1**、前端 **264/0**、tsc 0、build OK；
    产物双特征共存（他的功能 + 新色 `#5f6f96`，旧色 0）。
 5. 📦 v4.1.0 产物与指纹见《RELEASE-NOTE-v4.1.0.md》与《本地跑通操作卡_免安装成品版_v4.1.0_2026-11-15.md》。
-6. 📌 仍未做：后端 `latencyProfile` 联动（第 10 条后端半边）；他的回放取 `limit=200`（后端已支持 5000）；
-   GitHub `origin` 因网络断 SSH（198.18.x 段）落后，CodeArts 已同步；
+6. ✅ **11/16 中午收尾（版本 4.1.1，提交 `fd2b7fd`，双产物已出）**：
+   - `latencyProfile` 后端联动：此前前端一直发、后端模型没字段被 pydantic 静默丢弃
+     （第 10 条「选了没反应」的根因）。现 `AsrStartRequest` 收该字段、在线课也合并、
+     `vad.py.apply_latency_profile()` **按比例**收紧（silence ×0.75 / max_speech ×0.7，
+     不写死绝对值避免覆盖 env 调参）；生效时机 = 下次开始识别。
+   - 记忆回放 `limit=200 → 5000`（第 8 条收尾，真实课 715 条原来只回填 200 条）。
+   - 门禁 **627/1**（+3 守卫）· 264/0 · tsc 0 · build OK；
+     包内验收：ping=4.1.1、openapi 里 `latencyProfile` enum 在、limit max=5000。
+   - 产物：`tingkebanlv-4.1.1-setup.exe` 312,166,756 B `4d479c89e1c54e7d`；
+     `win-unpacked-4.1.1.zip` 373,454,076 B `c063fa32a6f65c5e`。
+     **v4.1.0 与张春阳的 online 包均被本版取代，对外只发 4.1.1。**
+7. ✅ GitHub `origin` 已补推至 `53eb0a7`（11/16 网络恢复）；后新增提交照常双推。
+8. 📌 仍未做：fast 档收益属「可感知」级（片段上限 −30%），答辩别吹「延迟减半」；
    真实 LLM、06/07 证据、五文件夹其余四个、F13 加噪 A/B、N=3 WER。
 
 ---
