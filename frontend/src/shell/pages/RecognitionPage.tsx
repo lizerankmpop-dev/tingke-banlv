@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createElement } from 'react'
 import type { DragEvent } from 'react'
 import {
-  ArrowLeft, ArrowRight, Brain, Check, CheckCircle2, ChevronDown, Download,
+  AlertCircle, ArrowLeft, ArrowRight, Brain, Check, CheckCircle2, ChevronDown, Download,
   Globe, GripVertical, Lock, Notebook, Pause, Play, Plus, RefreshCw, Sparkles,
 } from 'lucide-react'
 import { IconButton } from '../../components/ui/IconButton'
@@ -56,7 +56,7 @@ export function RecognitionPage({
 
   const {
     subtitleLines, currentText, asrStatus, asrMessage,
-    connectASR, disconnectASR, hydrateSubtitles,
+    connectASR, disconnectASR, hydrateSubtitles, translationStatus,
   } = useSubtitleStore()
 
   const overlayOpen = useOverlayStore((s) => s.open)
@@ -217,6 +217,19 @@ export function RecognitionPage({
           <RefreshCw size={13} />
           <span style={{ flex: 1 }}>{asrMessage}</span>
           <button type="button" className="text-btn" onClick={startRecognition}>重试</button>
+        </div>
+      ) : null}
+
+      {translationStatus && translationStatus.available === false ? (
+        <div role="status" style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 14px', margin: '0 0 10px', borderRadius: 8,
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--warning-border)',
+          color: 'var(--text-secondary)', fontSize: 13,
+        }}>
+          <AlertCircle size={14} color="var(--warning)" style={{ flexShrink: 0 }} />
+          <span>{translationStatus.reason || 'AI 翻译暂不可用，原文显示不受影响'}</span>
         </div>
       ) : null}
 

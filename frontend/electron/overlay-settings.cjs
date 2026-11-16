@@ -13,10 +13,12 @@
  */
 
 /** 配置结构版本：新增/变更字段时 +1，并在 migrateConfig 里写清迁移规则 */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const DEFAULT_OVERLAY_SETTINGS = {
   schemaVersion: SCHEMA_VERSION,
+  /** 高对比度模式：给主界面/悬浮窗加 data-contrast="high"，默认关闭保持原视觉 */
+  highContrast: false,
   enabled: false,
   fontSize: 24,
   color: '#ffffff',
@@ -118,6 +120,9 @@ function boolOrTrue(value) {
  *   下次拖窗口时自然写上新值，无需回填历史位置。
  * v3 → v4：新增 termAutoDegrade（术语提示词自动降级）。引擎里的默认值一直是
  *   开启（`AUTO_DEGRADE_ENABLED`），所以老配置补 true，升级后行为不变。
+ * v4 → v5：新增 highContrast（高对比度）。这是 4.1.x 才接进设置面的新开关，
+ *   老配置里根本没有这个概念，补 false —— 即「升级后视觉与升级前完全一致」，
+ *   绝不因为升级就突然把对比度拉高。用户显式存过 true 时原样保留。
  */
 function migrateConfig(raw) {
   const src = raw && typeof raw === 'object' ? { ...raw } : {};
@@ -131,6 +136,9 @@ function migrateConfig(raw) {
   if (version < 4 && (src.termAutoDegrade === undefined || src.termAutoDegrade === null)) {
     src.termAutoDegrade = true;
   }
+  if (version < 5 && src.highContrast === undefined) {
+    src.highContrast = false;
+  }
   src.schemaVersion = SCHEMA_VERSION;
   return src;
 }
@@ -141,6 +149,7 @@ function normalizeOverlaySettings(raw) {
   const a = src.anchor && typeof src.anchor === 'object' && !Array.isArray(src.anchor) ? src.anchor : {};
   return {
     schemaVersion: SCHEMA_VERSION,
+    highContrast: !!src.highContrast,
     enabled: !!src.enabled,
     fontSize: Math.round(clampNumber(src.fontSize, 12, 72, DEFAULT_OVERLAY_SETTINGS.fontSize)),
     color:

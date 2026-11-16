@@ -23,7 +23,8 @@ import type {
  * tsc 的类型检查共同约束（此处的类型是 OverlaySettings，缺字段会报错）。
  */
 export const DEFAULT_OVERLAY_SETTINGS: OverlaySettings = {
-  schemaVersion: 4,
+  schemaVersion: 5,
+  highContrast: false,
   enabled: false,
   fontSize: 24,
   color: '#ffffff',

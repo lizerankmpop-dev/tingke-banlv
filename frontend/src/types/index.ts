@@ -124,9 +124,22 @@ export interface VideoSource {
 
 // ============ WebSocket 消息类型 ============
 
+/**
+ * 译文服务状态（LLM 软依赖）
+ *
+ * 后端在 LLM 不可用（Ollama 未启动 / 云 LLM 未配置）时，按课程去重推一条
+ * `translation_status`（available=false + 原因）；收到 `subtitle_translation`
+ * 即表示服务已恢复，前端应清掉提示。原文显示不依赖此状态。
+ */
+export interface TranslationStatus {
+  available: boolean
+  reason?: string
+}
+
 export type WSMessage =
   | { type: 'subtitle'; data: SubtitleLine }
   | { type: 'subtitle_translation'; data: { id: string; translation: string } }
+  | { type: 'translation_status'; data: TranslationStatus }
   | { type: 'term_extracted'; data: VocabularyEntry }
   | { type: 'asr_status'; data: { status: 'listening' | 'processing' | 'loading' | 'idle' | 'error'; message?: string } }
   | { type: 'error'; data: { message: string } }

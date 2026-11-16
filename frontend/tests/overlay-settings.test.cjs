@@ -243,6 +243,53 @@ test('termAutoDegrade 只认布尔语义（脏值一律归为开启，不能误�
   assert.equal(normalizeOverlaySettings({ termAutoDegrade: 0 }).termAutoDegrade, false);
 });
 
+// ============ v4 → v5：高对比度 ============
+
+test('v4 配置迁移到 v5：补上 highContrast 且默认关闭（升级不改变视觉）', () => {
+  const v4 = {
+    schemaVersion: 4,
+    enabled: true,
+    fontSize: 30,
+    backgroundUpdate: false,
+    termAutoDegrade: false,
+    bounds: { x: 404, y: 719, width: 900, height: 220 },
+    anchor: { displayId: 1, relX: 0.236673, relY: 0.705594 },
+  };
+  const migrated = migrateConfig(v4);
+  assert.equal(migrated.schemaVersion, SCHEMA_VERSION);
+  assert.equal(migrated.highContrast, false);
+
+  const s = normalizeOverlaySettings(v4);
+  assert.equal(s.highContrast, false);
+  // 迁移不得动其它字段
+  assert.equal(s.termAutoDegrade, false);
+  assert.equal(s.backgroundUpdate, false);
+  assert.equal(s.enabled, true);
+  assert.equal(s.fontSize, 30);
+  assert.equal(s.bounds.x, 404);
+  assert.equal(s.anchor.displayId, 1);
+});
+
+test('v5 显式开启 highContrast 能往返持久化（重启后保留）', () => {
+  const fs = makeFs();
+  const path = 'overlay.json';
+  const settings = normalizeOverlaySettings({ schemaVersion: 5, highContrast: true });
+  assert.equal(settings.highContrast, true);
+  writeConfigAtomic(fs, path, settings);
+  const read = readConfig(fs, path);
+  assert.equal(read.reason, 'ok');
+  assert.equal(read.settings.highContrast, true, '重启后高对比度必须保留');
+  assert.equal(read.migrated, false);
+});
+
+test('highContrast 脏值一律归为关闭（失败方向：不改变视觉）', () => {
+  assert.equal(normalizeOverlaySettings({ highContrast: undefined }).highContrast, false);
+  assert.equal(normalizeOverlaySettings({ highContrast: null }).highContrast, false);
+  assert.equal(normalizeOverlaySettings({ highContrast: 0 }).highContrast, false);
+  assert.equal(normalizeOverlaySettings({ highContrast: false }).highContrast, false);
+  assert.equal(normalizeOverlaySettings({ highContrast: true }).highContrast, true);
+});
+
 // ============ 显示器 / 位置自愈 ============
 
 test('isOnDisplay 判断与工作区的重叠', () => {

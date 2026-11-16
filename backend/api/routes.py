@@ -447,8 +447,10 @@ async def delete_chapter(course_id: str, chapter_id: str):
 #
 # 「双语对照」的实际译文链路（2026-11-10）：字幕先出原文（实时性第一），
 # 译文由后台单线程 worker 调本地 LLM 逐句翻译，完成后 UPDATE 行 + 推
-# `subtitle_translation` 消息给前端合并显示。LLM 不可用（Ollama 没开）就
-# 静默跳过 —— 「仅原文」显示完全不受影响，这正是软依赖该有的样子。
+# `subtitle_translation` 消息给前端合并显示。LLM 不可用（Ollama 没开）时
+# 字幕原文照常显示（软依赖语义不变），同时按课程**去重**推一条
+# `translation_status`（available=false + 原因）给前端显示「译文暂不可用」，
+# 免得用户以为双语功能坏了。恢复可用后由成功的译文消息让前端清掉提示。
 
 _TRANSLATE_SYSTEM_PROMPT = (
     "你是课堂字幕翻译。把用户给的句子翻译成中文：只输出译文本身，"
@@ -458,6 +460,17 @@ _TRANSLATE_SYSTEM_PROMPT = (
 _translation_queue: "queue_module.Queue[tuple]" = queue_module.Queue()
 _translation_worker_state = {"started": False}
 _translation_worker_lock = threading.Lock()
+
+# 按课程去重的「译文不可用」上报状态（worker 线程写，必须加锁）。
+# 一节课上千条字幕，逐条推 status 会把轮询队列冲爆（MAX_QUEUE_MESSAGES），
+# 所以每门课在「从可用变不可用」时只推一条；成功译文到达时清掉标记，
+# 这样服务恢复后又可以再次提示（状态边沿触发，不是持续刷屏）。
+_translation_status_reported: set[str] = set()
+_translation_status_lock = threading.Lock()
+
+_TRANSLATION_UNAVAILABLE_REASON = (
+    "AI 翻译服务不可用，请确认 Ollama 已启动或云 LLM 已配置，字幕原文不受影响"
+)
 
 
 def _translate_text(text: str) -> str | None:
@@ -482,6 +495,28 @@ def _translate_text(text: str) -> str | None:
     return answer.strip().strip('"“”').strip()
 
 
+def _report_translation_unavailable(course_id: str, enqueue, reason: str = "") -> None:
+    """按课程去重上报「译文不可用」（worker 线程内调用，线程安全）。
+
+    前端据此显示一次性提示；同一门课的后续字幕不再重复推，避免长课把
+    asr_message_queues 冲爆。reason 固定口径，前端直接展示即可。
+    """
+    with _translation_status_lock:
+        if course_id in _translation_status_reported:
+            return
+        _translation_status_reported.add(course_id)
+    enqueue("translation_status", {
+        "available": False,
+        "reason": reason or _TRANSLATION_UNAVAILABLE_REASON,
+    })
+
+
+def _clear_translation_unavailable(course_id: str) -> None:
+    """译文成功回填后清除标记：服务恢复后可再次上报不可用状态。"""
+    with _translation_status_lock:
+        _translation_status_reported.discard(course_id)
+
+
 def _process_translation_item(course_id: str, subtitle_id: str, text: str,
                                enqueue, loop, client_id: str = "") -> None:
     """处理一条翻译任务（worker 线程内执行，也被单测直接调用）。
@@ -491,7 +526,11 @@ def _process_translation_item(course_id: str, subtitle_id: str, text: str,
     """
     translated = _translate_text(text)
     if not translated:
+        # 软依赖：原文照常显示，但推一条去重状态让前端提示「译文暂不可用」
+        _report_translation_unavailable(course_id, enqueue)
         return
+    # 有译文 = 服务可用：清掉「不可用」标记，下次真挂了还能再提示
+    _clear_translation_unavailable(course_id)
     try:
         fut = asyncio.run_coroutine_threadsafe(
             db.update_subtitle_translation(subtitle_id, translated), loop

@@ -261,8 +261,8 @@ def test_process_translation_item_updates_db_and_enqueues(course_id, monkeypatch
     asyncio.run(scenario())
 
 
-def test_process_translation_item_llm_unavailable_noop(course_id, monkeypatch):
-    """LLM 不可用 → 完全静默：不写库、不发消息（软依赖语义）。"""
+def test_process_translation_item_llm_unavailable_emits_status(course_id, monkeypatch):
+    """LLM 不可用 → 不写库，但按课程推一条 translation_status（不再完全静默）。"""
 
     async def scenario():
         from api import routes as R
@@ -271,6 +271,7 @@ def test_process_translation_item_llm_unavailable_noop(course_id, monkeypatch):
         await db.initialize()
         try:
             monkeypatch.setattr(R, "db", db)
+            monkeypatch.setattr(R, "_translation_status_reported", set())
             saved = await db.add_subtitle({
                 "course_id": course_id, "text": "no llm here", "words": [],
                 "start_ms": 0, "end_ms": 100, "is_final": True,
@@ -279,16 +280,40 @@ def test_process_translation_item_llm_unavailable_noop(course_id, monkeypatch):
             monkeypatch.setattr(R, "_translate_text", lambda t: None)
             got = []
             loop = asyncio.get_running_loop()
-            await asyncio.to_thread(
-                R._process_translation_item,
-                course_id, saved["id"], "no llm here",
-                lambda k, p: got.append((k, p)), loop, "sub_10",
-            )
-            await asyncio.sleep(0.05)
+            for _ in range(2):
+                await asyncio.to_thread(
+                    R._process_translation_item,
+                    course_id, saved["id"], "no llm here",
+                    lambda k, p: got.append((k, p)), loop, "sub_10",
+                )
             subs = await db.get_subtitles(course_id, 10)
             assert subs[0].get("translation") in ("", None)
-            assert got == []
+            # 两条字幕只推一条状态：长课不能刷屏、不能冲爆轮询队列
+            assert got == [("translation_status", {
+                "available": False,
+                "reason": R._TRANSLATION_UNAVAILABLE_REASON,
+            })]
         finally:
             await db.close()
 
     asyncio.run(scenario())
+
+
+def test_translation_status_dedup_and_recovery(monkeypatch):
+    """按课程去重；成功译文清标记后，服务再挂可以再次提示。"""
+    from api import routes as R
+    monkeypatch.setattr(R, "_translation_status_reported", set())
+    got = []
+    enqueue = lambda k, p: got.append((k, p))
+
+    R._report_translation_unavailable("course-A", enqueue)
+    R._report_translation_unavailable("course-A", enqueue)  # 同课重复 → 丢弃
+    R._report_translation_unavailable("course-B", enqueue)  # 另一门课 → 独立推
+    assert len(got) == 2
+    assert all(k == "translation_status" for k, _ in got)
+    assert got[0][1]["available"] is False
+    assert "Ollama" in got[0][1]["reason"]
+
+    R._clear_translation_unavailable("course-A")  # 译文成功回填
+    R._report_translation_unavailable("course-A", enqueue)
+    assert len(got) == 3, "服务恢复后再次不可用应能重新提示"

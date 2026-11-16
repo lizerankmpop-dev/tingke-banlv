@@ -1,6 +1,6 @@
 import { fromBackendRow, type SubtitleRow } from '../shell/lib/mapping'
 import { create } from 'zustand'
-import type { SubtitleLine, VocabularyEntry, ASRStatus, TermGuardStats } from '../types'
+import type { SubtitleLine, VocabularyEntry, ASRStatus, TermGuardStats, TranslationStatus } from '../types'
 import { useCourseStore } from './useCourseStore'
 import { overlayBridge } from '../lib/overlayBridge'
 import { useClassroomAudioStore } from './useClassroomAudioStore'
@@ -53,6 +53,12 @@ interface SubtitleState {
    * 控制面板自己不轮询，否则会和白名单里的「单轮询者」原则冲突。
    */
   termGuard: TermGuardStats | null
+  /**
+   * 译文服务状态（来自后端 translation_status 消息）。
+   * null = 文案不显示；{ available:false, reason } = 显示「译文暂不可用」提示。
+   * 收到任意 subtitle_translation 即视为服务恢复，前端自动清掉。
+   */
+  translationStatus: TranslationStatus | null
   /** 本次识别归属的章节 id（'' = 不分章节），start 时随请求传给后端 */
   chapterId: string
 
@@ -111,6 +117,12 @@ function handleMessage(msg: any, get: any, set: any) {
       break
     case 'subtitle_translation':
       get().applyTranslation(msg.data.id, msg.data.translation)
+      // 有译文到达 = 服务已恢复，清掉「译文暂不可用」提示
+      if (get().translationStatus) set({ translationStatus: null })
+      break
+    case 'translation_status':
+      // 后端按课程去重推一次；available=true 或缺失即视为恢复
+      set({ translationStatus: msg.data?.available === false ? msg.data : null })
       break
     case 'interim':
       get().updateInterimResult(msg.data.text, msg.data.words)
@@ -147,6 +159,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   notRunningCount: 0,
   microphoneMeter: null,
   termGuard: null,
+  translationStatus: null,
   // 本次识别归属的章节（'' = 不分章节）。重连时 _startBackendASR 从这里读，
   // 不用把 chapterId 一路穿透进每层重连回调。
   chapterId: '',
@@ -167,6 +180,8 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       microphoneMeter: null,
       // 换课后旧的降级状态不该继续显示（新管道的提示词长度可能完全不同）
       termGuard: null,
+      // 换课/重连后清空上一门课的译文状态提示
+      translationStatus: null,
       // 章节归属：显式传入优先；未传时保留旧值（重连场景不该丢章节）
       ...(chapterId !== undefined ? { chapterId } : {}),
     })
@@ -343,6 +358,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       notRunningCount: 0,
       microphoneMeter: null,
       termGuard: null,
+      translationStatus: null,
     })
     pushOverlay(get)
     const courseId = connectedCourseId ?? useCourseStore.getState().activeCourseId
