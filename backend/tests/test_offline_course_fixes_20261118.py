@@ -80,7 +80,6 @@ def test_export_markdown(client, course_id, monkeypatch):
     assert "**[00:00:02]** 同学们好" in data["markdown"]
     assert "**[00:01:05]** 今天我们讲梯度下降" in data["markdown"]
     assert "> Hello class" in data["markdown"], "译文要作为引用行保留"
-    assert course_id[:8] or True  # 文件名由前端生成，这里只验内容
 
 
 def test_export_markdown_empty(client, course_id, monkeypatch):
