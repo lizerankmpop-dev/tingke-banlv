@@ -3,7 +3,15 @@ import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { InputMeter } from '../src/components/ClassroomMicrophone'
-import { readMicrophoneMeter } from '../src/lib/classroomAudio'
+import { readMicrophoneMeter, defaultClassroomSettings } from '../src/lib/classroomAudio'
+
+test('线下课默认开启 AGC 与 fast 延迟档（2026-11-18 实测）', () => {
+  // 远场教室音量起伏大 → AGC 默认开；实时性敏感 → 默认 fast。
+  // 这两个默认值是线下课识别质量/延迟的基线，回退会让老问题复现。
+  assert.equal(defaultClassroomSettings.agc, true)
+  assert.equal(defaultClassroomSettings.latencyProfile, 'fast')
+  assert.equal(defaultClassroomSettings.vadProfile, 'far-field')
+})
 
 test('没有采集数据时不把未知电平当作静音', () => {
   assert.equal(readMicrophoneMeter(null, {}, 0), null)

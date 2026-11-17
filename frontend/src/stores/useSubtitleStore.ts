@@ -139,6 +139,14 @@ function handleMessage(msg: any, get: any, set: any) {
 let pendingASR: Promise<unknown> = Promise.resolve()
 let connectionRevision = 0
 let connectedCourseId: string | null = null
+/**
+ * 启动宽限期截止时间戳。
+ * 后端 /asr/start 是异步的：模型首次加载可能要十几秒，这期间管道还没进
+ * active_pipelines，/asr/poll 会返回 not_running。若照常按「连续 3 次 = 断线」
+ * 处理，1.5 秒就会误判并重连，把正在加载的管道打断 —— 表现出来就是
+ * 「点了开始，鼠标没动就自己变回开始」。宽限期内 not_running 只计数不重连。
+ */
+let startupGraceUntil = 0
 
 export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   subtitleLines: [],
@@ -208,6 +216,9 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
         }))
 
         if (data.status === 'not_running') {
+          // 启动宽限期内：管道还在构造/加载模型，not_running 是预期的，
+          // 只维持「识别中」状态等待，绝不触发重连（否则把自己刚起的管道停掉）。
+          if (Date.now() < startupGraceUntil) return
           const count = get().notRunningCount + 1
           set({ notRunningCount: count })
           // 连续 3 次 not_running，尝试重启
@@ -293,7 +304,10 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
             throw err
           }
           if (isCurrent()) {
-            set({ reconnectAttempts: 0 })
+            set({ reconnectAttempts: 0, notRunningCount: 0 })
+            // 给模型加载留出宽限期（20s）：这段时间内 poll 若返回 not_running，
+            // 视为「还在启动」而不是断线，避免自动重连打断首次加载。
+            startupGraceUntil = Date.now() + 20_000
             get().setASRStatus('listening', '识别中...')
           }
         })
@@ -340,6 +354,9 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
 
   disconnectASR: () => {
     connectionRevision += 1
+    // 主动暂停：作废启动宽限期，否则暂停后残留的 not_running 也不会重连（本就 intentionalClose），
+    // 这里清掉是为了让「暂停→再开始」走全新的启动流程。
+    startupGraceUntil = 0
     const { pollInterval, reconnectTimer } = get()
     if (pollInterval) {
       window.clearInterval(pollInterval)

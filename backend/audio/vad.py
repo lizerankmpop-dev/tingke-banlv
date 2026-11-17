@@ -81,8 +81,14 @@ class VoiceActivityDetector:
         self._speech_threshold = 0.45 if far_field else SPEECH_THRESHOLD
         self._silence_duration = SILENCE_DURATION + 0.2 if far_field else SILENCE_DURATION
         self._speech_pad = 0.65 if far_field else 0.5
-        # 线下教室的语句更长、语速更慢，最长片段给得更宽（否则切得太碎）。
-        self._max_speech_duration = MAX_SPEECH_DURATION + 2.0 if far_field else MAX_SPEECH_DURATION
+        # 线下教室的语句更长、语速更慢，历史上给 far-field 加了 +2.0s（=8s）。
+        # 2026-11-18 实测反馈「延迟三四句、甚至半分钟」：8s 片段 + 推理会累积到
+        # ~10s 以上，一旦 backlog 堆积还会触发片段合并，延迟滚到半分钟。
+        # 归因文档（docs/competition/延迟归因与优化_2026-11-11.md）用生产引擎扫过：
+        # 6s 是延迟-准确率甜点（中文 CER差 20.17%，优于 8s 的 22.18%），
+        # 5s 有断崖（39.06%）。far-field 不再 +2.0，统一回落到 6s 甜点；
+        # 教室长句由更宽的静音判定（+0.2s）和 padding（0.65s）补偿，无需拉长片段。
+        self._max_speech_duration = MAX_SPEECH_DURATION
 
         self._model = None
         self._backend = "energy"
@@ -110,8 +116,15 @@ class VoiceActivityDetector:
         所以收紧片段上限是收益最大的一刀，静音判定其次。
         """
         if profile == "fast":
+            # 静音判定收紧是安全的（0.8→0.6s，归因文档实测 CER 只差 0.4~0.7pp）。
             self._silence_duration *= 0.75
-            self._max_speech_duration *= 0.7
+            # 🔴 2026-11-18：**不再**把最长片段也 ×0.7。
+            #   原来 far-field=8s，×0.7≈5.6s 还能落在 6s 甜点附近；
+            #   现在 far-field 已回落到 6s 甜点，再 ×0.7=4.2s 会直接掉进
+            #   准确率断崖区（生产引擎实测 5s 档中文 CER差 39%，6s 仅 20%）。
+            #   延迟的收益必须靠「静音判定 + 推理」拿，不能靠切碎片段。
+            #   保留一行缩放但系数为 1.0，便于将来 env 调参时这里语义仍在。
+            self._max_speech_duration *= 1.0
 
     # ---------- 模型加载 ----------
 

@@ -289,10 +289,10 @@ def test_process_translation_item_llm_unavailable_emits_status(course_id, monkey
             subs = await db.get_subtitles(course_id, 10)
             assert subs[0].get("translation") in ("", None)
             # 两条字幕只推一条状态：长课不能刷屏、不能冲爆轮询队列
-            assert got == [("translation_status", {
-                "available": False,
-                "reason": R._TRANSLATION_UNAVAILABLE_REASON,
-            })]
+            assert len(got) == 1
+            assert got[0][0] == "translation_status"
+            assert got[0][1]["available"] is False
+            assert "Ollama" in got[0][1]["reason"], "提示须带可自助操作的模型指引"
         finally:
             await db.close()
 

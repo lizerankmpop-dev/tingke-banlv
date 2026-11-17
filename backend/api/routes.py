@@ -468,9 +468,18 @@ _translation_worker_lock = threading.Lock()
 _translation_status_reported: set[str] = set()
 _translation_status_lock = threading.Lock()
 
-_TRANSLATION_UNAVAILABLE_REASON = (
-    "AI 翻译服务不可用，请确认 Ollama 已启动或云 LLM 已配置，字幕原文不受影响"
-)
+def _translation_unavailable_reason() -> str:
+    """生成可自助操作的翻译不可用提示（带模型名/拉取命令）。"""
+    try:
+        from llm.client import get_provider
+        if get_provider() == "cloud":
+            return "AI 翻译暂不可用：云端 LLM 未配置（缺 TINGKEBANLV_CLOUD_*），原文显示不受影响"
+        import os
+        model = os.environ.get("TINGKEBANLV_OLLAMA_MODEL", "qwen2.5:7b").strip()
+        return (f"AI 翻译暂不可用：请启动 Ollama 并执行 ollama pull {model}，"
+                f"原文显示不受影响")
+    except Exception:  # noqa: BLE001 —— 提示生成失败也要有兜底文案
+        return "AI 翻译暂不可用，请确认 Ollama 已启动或云 LLM 已配置，原文显示不受影响"
 
 
 def _translate_text(text: str) -> str | None:
@@ -507,7 +516,7 @@ def _report_translation_unavailable(course_id: str, enqueue, reason: str = "") -
         _translation_status_reported.add(course_id)
     enqueue("translation_status", {
         "available": False,
-        "reason": reason or _TRANSLATION_UNAVAILABLE_REASON,
+        "reason": reason or _translation_unavailable_reason(),
     })
 
 
@@ -715,6 +724,55 @@ async def export_srt(course_id: str, offsetMs: int = Query(default=0, ge=0),
         lines.append("")
 
     return {"srt": "\n".join(lines), "count": len(subtitles), "offsetMs": offsetMs,
+            "sessionId": sessionId or (subtitles[0].get("session_id") if subtitles else "")}
+
+
+def _ms_to_md_time(ms) -> str:
+    """毫秒 → Markdown 里的 [HH:MM:SS] 时间标记（防御脏值）"""
+    try:
+        ms = max(0, int(ms))
+    except (TypeError, ValueError):
+        ms = 0
+    h, m, s = ms // 3600000, (ms % 3600000) // 60000, (ms % 60000) // 1000
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+@router.get("/courses/{course_id}/export-md")
+async def export_markdown(course_id: str, sessionId: str = Query(default="")):
+    """导出课程字幕为 Markdown（2026-11-18 线下课实测新增）。
+
+    线下课一般不做视频对齐、也不吃 SRT —— 用户要的是能直接读/贴进笔记的
+    Markdown：时间标记 + 原文 + 译文。与 export-srt 共用「只导一个会话」的
+    规则（同一门课多次识别各从 0 起算，全导会时间轴重叠）。
+    与 SRT 不同：**不需要 offsetMs**（MD 是阅读用途，不做视频轨对齐）。
+    """
+    course = await db.get_course(course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    subtitles = list(reversed(await db.get_subtitles(course_id, limit=SUBTITLE_MAX_ROWS)))
+    if sessionId:
+        subtitles = [s for s in subtitles if (s.get("session_id") or "") == sessionId]
+    else:
+        sessions = [s.get("session_id") for s in subtitles if s.get("session_id")]
+        if sessions:
+            latest = max(sessions, key=lambda x: str(x))
+            subtitles = [s for s in subtitles if (s.get("session_id") or "") == latest]
+
+    course_name = course.get("name") or "课堂字幕"
+    lines = [f"# {course_name} · 课堂字幕", ""]
+    for sub in subtitles:
+        start = _ms_to_md_time(sub.get("start_ms", sub.get("start", 0)))
+        text = (sub.get("text") or "").strip()
+        if not text:
+            continue
+        lines.append(f"**[{start}]** {text}")
+        trans = (sub.get("translation") or "").strip()
+        if trans and trans != text:
+            lines.append(f"> {trans}")
+        lines.append("")
+
+    return {"markdown": "\n".join(lines), "count": len(subtitles),
             "sessionId": sessionId or (subtitles[0].get("session_id") if subtitles else "")}
 
 
@@ -1097,9 +1155,19 @@ async def generate_summary(course_id: str):
     )
 
     if result is None:
+        # 2026-11-18：原提示只说「拉取了模型」却不说拉哪个，用户无法自助。
+        # 带上 provider / 默认模型名 / 确切的拉取命令，让界面提示可直接照做。
+        from llm.client import get_provider
+        if get_provider() == "cloud":
+            hint = "云端 LLM 未配置：请设置 TINGKEBANLV_CLOUD_API_BASE / API_KEY / MODEL"
+        else:
+            import os
+            model = os.environ.get("TINGKEBANLV_OLLAMA_MODEL", "qwen2.5:7b").strip()
+            hint = (f"本地 Ollama 未就绪。请安装并启动 Ollama，然后执行 "
+                    f"ollama pull {model} 拉取模型")
         return {
             "available": False,
-            "message": "AI 摘要服务不可用，请确认 Ollama 已启动并拉取了模型",
+            "message": f"AI 摘要服务不可用：{hint}。字幕与点词等主功能不受影响。",
         }
 
     return {

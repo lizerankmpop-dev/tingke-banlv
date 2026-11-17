@@ -76,6 +76,10 @@ export function RecognitionPage({
   }, [subtitleLines.length, loadVocab])
 
   const historyRequest = useRef<AbortController | null>(null)
+  // 归档章节：start 时传给后端，决定本次识别的新字幕挂到哪个章节。
+  // 用 ref（不用 state）——切章节不应触发重渲染/重启；新建章节后由
+  // HistoryPanel 经 onArchiveChapterChange 写入，下一次 start 生效。
+  const archiveChapterRef = useRef('')
   const startRecognition = useCallback(() => {
     historyRequest.current?.abort()
     const request = new AbortController()
@@ -86,7 +90,7 @@ export function RecognitionPage({
     // 大半节课的历史静默截掉（真实课《生成式人工智能（二）》有 715 条）。
     // 一次性拉全量比分页简单，~1500 行 JSON 在本机回环上毫秒级。
     const startedAt = Date.now()
-    connectASR(course.id, '')
+    connectASR(course.id, archiveChapterRef.current)
     fetch(`/api/courses/${course.id}/subtitles?limit=5000`, { signal: request.signal })
       .then(response => response.ok ? response.json() : [])
       .then((rows: SubtitleRow[]) => {
@@ -133,8 +137,14 @@ export function RecognitionPage({
   const hasError = asrStatus === 'error'
 
   function toggleListening() {
-    if (listening) {
-      disconnectASR()
+    // 🔴 2026-11-18：从 store 实时读状态，不用渲染闭包里的 `listening`。
+    // 轮询每 500ms 更新 asrStatus，闭包可能滞后一帧；用户快速连点时
+    // 「暂停」按钮仍拿着上一次的 listening=true，导致点了却重复暂停/重新开始，
+    // 看起来就是「开始一下又变回开始」。实时读取保证每次点击都基于最新状态。
+    const state = useSubtitleStore.getState()
+    const isListening = state.asrStatus === 'listening' || state.asrStatus === 'processing'
+    if (isListening) {
+      void disconnectASR()
       onToast('识别已暂停，字幕会保留在当前句')
     } else {
       startRecognition()
@@ -262,7 +272,8 @@ export function RecognitionPage({
             </SidePanel>
 
             <HistoryPanel key={course.id} courseId={course.id} recent={historyLines}
-              refresh={summaryRequest} />
+              refresh={summaryRequest}
+              onArchiveChapterChange={id => { archiveChapterRef.current = id }} />
             {summaryRequest > 0 && <SummaryPanel courseId={course.id} request={summaryRequest} />}
           </aside>
         </div>
@@ -293,7 +304,8 @@ export function RecognitionPage({
               <WordList entries={vocab} onSelectWord={onSelectWord} />
             </SidePanel>
 
-            <HistoryPanel courseId={course.id} recent={historyLines} refresh={summaryRequest} />
+            <HistoryPanel courseId={course.id} recent={historyLines} refresh={summaryRequest}
+              onArchiveChapterChange={id => { archiveChapterRef.current = id }} />
             <SummaryPanel courseId={course.id} request={summaryRequest} />
 
             <NotebookPanel courseId={course.id} onToast={onToast} />
@@ -311,10 +323,11 @@ interface HistorySession {
   isLatest: boolean
 }
 
-function HistoryPanel({ courseId, recent, refresh }: {
+function HistoryPanel({ courseId, recent, refresh, onArchiveChapterChange }: {
   courseId: string
   recent: DisplayLine[]
   refresh: number
+  onArchiveChapterChange?: (id: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [sessionId, setSessionId] = useState('')
@@ -323,6 +336,39 @@ function HistoryPanel({ courseId, recent, refresh }: {
   const [chapters, setChapters] = useState<{ id: string; name: string }[]>([])
   const [rows, setRows] = useState<SubtitleRow[]>([])
   const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading')
+  // 新建章节（2026-11-18：线下课实测找不到添加入口——原来只在配置页有）
+  const [addingChapter, setAddingChapter] = useState(false)
+  const [newChapterName, setNewChapterName] = useState('')
+  const [chapterNotice, setChapterNotice] = useState('')
+
+  async function addChapter() {
+    const name = newChapterName.trim()
+    if (!name || addingChapter) return
+    setAddingChapter(true)
+    setChapterNotice('')
+    try {
+      const res = await fetch(`/api/courses/${courseId}/chapters`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const created = await res.json()
+      setNewChapterName('')
+      // 重新拉章节列表并自动选中刚建的章节
+      const list = await fetch(`/api/courses/${courseId}/chapters`).then(r => r.ok ? r.json() : [])
+      if (Array.isArray(list)) setChapters(list)
+      if (created?.id) {
+        setChapterId(created.id)
+        onArchiveChapterChange?.(created.id)
+      }
+      setChapterNotice(`已新建章节「${name}」。点顶部「暂停」再「开始」后，新字幕会归档到该章节`)
+    } catch {
+      setChapterNotice('章节创建失败，请检查本地服务后重试')
+    } finally {
+      setAddingChapter(false)
+    }
+  }
 
   useEffect(() => {
     if (!expanded) return
@@ -418,6 +464,21 @@ function HistoryPanel({ courseId, recent, refresh }: {
               {chapters.map(chapter => <option key={chapter.id} value={chapter.id}>{chapter.name}</option>)}
             </select>
           </label>
+          <div className="chapter-inline-add">
+            <input
+              value={newChapterName}
+              onChange={event => setNewChapterName(event.target.value)}
+              onKeyDown={event => { if (event.key === 'Enter') void addChapter() }}
+              placeholder="新章节名，例如「第 2 讲」"
+              disabled={addingChapter}
+              aria-label="新章节名"
+            />
+            <button type="button" className="btn btn-secondary btn-sm"
+              onClick={() => void addChapter()} disabled={addingChapter || !newChapterName.trim()}>
+              <Plus size={12} /> {addingChapter ? '创建中' : '新建章节'}
+            </button>
+          </div>
+          {chapterNotice ? <div className="fineprint" role="status">{chapterNotice}</div> : null}
           {state === 'loading' && <div className="side-empty" role="status">正在加载历史字幕…</div>}
           {state === 'error' && <div className="side-empty" role="alert">历史字幕加载失败，请收起后重试。</div>}
         </div>

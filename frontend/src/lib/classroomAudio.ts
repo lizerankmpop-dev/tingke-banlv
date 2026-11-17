@@ -14,9 +14,13 @@ export interface ClassroomSettings {
 
 export const defaultClassroomSettings: ClassroomSettings = {
   micDeviceIndex: null,
-  agc: false,
+  // 2026-11-18 线下课实测：教室远场音量大、起伏大，AGC 默认开启可显著降低
+  // 音量忽高忽低导致的漏字/误识；用户可在配置页关掉。
+  agc: true,
   vadProfile: 'far-field',
-  latencyProfile: 'balanced',
+  // fast 档按比例收紧 VAD 判定（静音 ×0.75、最长片段 ×0.7），出字更快。
+  // 线下课对实时性最敏感，默认 fast；追求完整可在配置页切回 balanced。
+  latencyProfile: 'fast',
 }
 
 export interface MicrophoneMeter {

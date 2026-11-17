@@ -118,11 +118,19 @@ def test_pure_silence_is_not_submitted():
 
 
 def test_far_field_profile_allows_longer_segments():
-    """✅ 线下教室（far-field）语句更长，最长片段应比线上更宽松。"""
+    """✅ 线下教室（far-field）语句更长：静音判定更宽松，但最长片段与线上一致。
+
+    2026-11-18 修正：原实现给 far-field 的最长片段 +2.0s（=8s），
+    实测延迟到「三四句甚至半分钟」。归因文档证明 6s 才是甜点，
+    故 far-field 不再放宽最长片段，只在**静音判定 / padding** 上更宽松。
+    """
     near = VoiceActivityDetector(on_speech_segment=lambda *_: None)
     far = VoiceActivityDetector(on_speech_segment=lambda *_: None, profile="far-field")
-    assert far._max_speech_duration > near._max_speech_duration
+    # 最长片段统一 6s 甜点——不再因 far-field 放宽
+    assert far._max_speech_duration == near._max_speech_duration
+    # 教室停顿更长：静音判定与 padding 仍保持更宽松
     assert far._silence_duration > near._silence_duration
+    assert far._speech_pad > near._speech_pad
 
 
 def test_min_speech_constant_is_sane():
@@ -143,11 +151,13 @@ def test_apply_latency_profile_scales_proportionally():
     sil_before = det._silence_duration
     max_before = det._max_speech_duration
     det.apply_latency_profile("fast")
+    # 静音判定按比例收紧（0.75），env 可调值不被写死覆盖
     assert det._silence_duration == pytest.approx(sil_before * 0.75)
-    assert det._max_speech_duration == pytest.approx(max_before * 0.7)
-    # fast 档后必须确实比 balanced 严格（出字更快的前提）
     assert det._silence_duration < sil_before
-    assert det._max_speech_duration < max_before
+    # 🔴 2026-11-18：最长片段**不再** ×0.7 —— 片段已回落到 6s 甜点，
+    #    再 ×0.7=4.2s 会掉进准确率断崖区（生产引擎实测 5s 中文 CER差 39%）。
+    #    延迟收益改由「静音判定 + 推理」承担，不靠切碎片段。
+    assert det._max_speech_duration == pytest.approx(max_before)
 
 
 def test_apply_latency_profile_balanced_is_noop():
