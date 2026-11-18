@@ -20,3 +20,66 @@
   aspect-ratio: auto;
   height: max(380px, calc(100dvh - 220px));
 }
+
+/* 线上课窗口画面：等比 contain 居中，音频链路不依赖画面 */
+.recognition-page .capture-frame .web-content.capture-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 380px;
+  overflow: hidden;
+  background: #07070a;
+}
+
+.recognition-page .capture-video {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.recognition-page.web-fill .capture-stage {
+  height: max(380px, calc(100dvh - 220px));
+}
+
+.capture-toolbar {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.capture-source-select {
+  max-width: 320px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.capture-source-thumb {
+  width: 72px;
+  height: 42px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.capture-mode-tag,
+.capture-audio-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.capture-audio-hint {
+  margin-left: auto;
+}
+
+.capture-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--warning);
+}

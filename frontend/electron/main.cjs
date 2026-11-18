@@ -34,7 +34,7 @@
  * 日志：本进程与后端输出统一落盘到 <TINGKEBANLV_HOME>/logs/electron.log
  */
 
-const { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, shell, session, desktopCapturer } = require('electron');
 const { configureCourseWebview, isCourseURL } = require('./course-webview.cjs');
 const path = require('path');
 const fs = require('fs');
@@ -1803,6 +1803,7 @@ if (singleInstanceOwner) {
 
   app.whenReady().then(async () => {
     try {
+      installDisplayMediaHandler();
       const port = await launchBackend();
       createWindow(port);
       restoreOverlayIfEnabled();
@@ -1930,6 +1931,75 @@ ipcMain.handle('course:set-web-link', (event, courseId, url) => {
 ipcMain.handle('course:open-external', async (event, url) => {
   if (!isMainCourseFrame(event) || typeof url !== 'string' || !isCourseURL(url)) return false;
   await shell.openExternal(new URL(url).href);
+  return true;
+});
+
+// ---- 线上课画面捕获 ----
+//
+// 用户要的是「课程网页 / 课程 App 全屏后等比放进应用」，所以这里走窗口/屏幕画面捕获，
+// 不再把网址塞进 webview。音频链路（系统 loopback）保持独立，画面黑屏不影响识别。
+// 只给主窗口主帧用：悬浮窗不需要、也不该拿到桌面画面。
+let selectedCaptureSourceId = null;
+
+function installDisplayMediaHandler() {
+  try {
+    session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+      try {
+        const sources = await desktopCapturer.getSources({
+          types: ['window', 'screen'],
+          thumbnailSize: { width: 0, height: 0 },
+        });
+        const chosen =
+          (selectedCaptureSourceId && sources.find(s => s.id === selectedCaptureSourceId)) ||
+          sources.find(s => s.type === 'window') ||
+          sources[0];
+        if (!chosen) {
+          logWarn('[capture] getDisplayMedia 请求失败：没有可捕获的窗口');
+          callback({});
+          return;
+        }
+        callback({ video: chosen });
+      } catch (error) {
+        logError(`[capture] 选择画面源失败: ${error.message}`);
+        callback({});
+      }
+    });
+    logLine('[capture] 已安装窗口画面捕获处理器');
+  } catch (error) {
+    logError(`[capture] 安装窗口画面捕获处理器失败: ${error.message}`);
+  }
+}
+
+ipcMain.handle('capture:list-sources', async (event) => {
+  if (!isMainCourseFrame(event)) return [];
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 160, height: 90 },
+    });
+    return sources.map(source => ({
+      id: source.id,
+      name: source.name,
+      type: source.type,
+      thumbnail: source.thumbnail && !source.thumbnail.isEmpty()
+        ? source.thumbnail.toDataURL()
+        : '',
+    }));
+  } catch (error) {
+    logError(`[capture] 枚举窗口失败: ${error.message}`);
+    return [];
+  }
+});
+
+ipcMain.handle('capture:set-source', (event, sourceId) => {
+  if (!isMainCourseFrame(event) || typeof sourceId !== 'string' || !sourceId) return false;
+  selectedCaptureSourceId = sourceId;
+  return true;
+});
+
+ipcMain.handle('capture:clear-source', (event) => {
+  if (!isMainCourseFrame(event)) return false;
+  selectedCaptureSourceId = null;
   return true;
 });
 

@@ -61,6 +61,21 @@ export interface ElectronOnboardingAPI {
   reopen: () => Promise<{ open: boolean }>
 }
 
+/** 线上课窗口画面捕获：源由主进程枚举，渲染层只拿到 id / 名称 / 缩略图 */
+export interface CaptureSource {
+  id: string
+  name: string
+  type: 'window' | 'screen'
+  thumbnail?: string
+}
+
+export interface ElectronCaptureAPI {
+  listSources: () => Promise<CaptureSource[]>
+  /** 选定 getDisplayMedia 要用的源；返回是否设置成功 */
+  selectSource: (sourceId: string) => Promise<boolean>
+  clearSource: () => Promise<boolean>
+}
+
 /** 新增：诊断 / 帮助（V6-2）。**只读** —— 渲染层不做任何持久化 */
 export interface ElectronDiagAPI {
   getInfo: () => Promise<DiagInfo>
@@ -73,6 +88,7 @@ export type ElectronAPI = ElectronHostAPI & {
   getCourseWebLink?: (courseId: string) => Promise<string>
   setCourseWebLink?: (courseId: string, url: string) => Promise<boolean>
   openCourseExternal?: (url: string) => Promise<boolean>
+  capture?: ElectronCaptureAPI
   getAppVersion: () => Promise<string>
   getBackendPort: () => Promise<number | null>
   overlay?: ElectronOverlayAPI

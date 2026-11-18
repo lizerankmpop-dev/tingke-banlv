@@ -9,6 +9,7 @@ import { IconButton } from '../../components/ui/IconButton'
 import { StatusDot } from '../../components/ui/StatusDot'
 import { HighlightedText } from '../components/HighlightedText'
 import { SubtitleExportPanel } from '../components/SubtitleExportPanel'
+import { CourseScreenCapture } from '../components/CourseScreenCapture'
 import { readCourseURL } from '../../lib/courseDrop'
 import { useSubtitleStore } from '../../stores/useSubtitleStore'
 import { useCourseStore } from '../../stores/useCourseStore'
@@ -112,6 +113,7 @@ export function RecognitionPage({
 
   const [showExport, setShowExport] = useState(false)
   const [webFill, setWebFill] = useState(false)
+  const [showLegacyWeb, setShowLegacyWeb] = useState(false)
   const [ending, setEnding] = useState(false)
   const [summaryRequest, setSummaryRequest] = useState(0)
   const pageActive = useRef(false)
@@ -194,6 +196,13 @@ export function RecognitionPage({
             悬浮设置
           </button>
           {online && (
+            <button type="button" className="btn btn-ghost btn-sm" aria-pressed={showLegacyWeb}
+              onClick={() => setShowLegacyWeb(value => !value)}
+              title="备用兼容入口；默认使用窗口画面捕获">
+              {showLegacyWeb ? '收起网址' : '备用网址'}
+            </button>
+          )}
+          {online && (
             <button type="button" className="btn btn-ghost btn-sm" aria-pressed={webFill}
               onClick={() => setWebFill(value => !value)}>
               {webFill ? '分栏' : '填满视频'}
@@ -246,7 +255,10 @@ export function RecognitionPage({
       {online ? (
         <div className="recognition-grid">
           <div className="recognition-main">
-            <WebFrame key={course.id} courseId={course.id} courseName={course.name} onToast={onToast} />
+            <CourseScreenCapture key={`capture-${course.id}`} courseName={course.name} onToast={onToast} />
+            {showLegacyWeb ? (
+              <WebFrame key={course.id} courseId={course.id} courseName={course.name} onToast={onToast} />
+            ) : null}
             <CurrentSubtitle
               label="实时字幕"
               courseTypeHint={course.language === 'zh' ? '中文识别 · 系统音频' : '双语 · 原文识别'}

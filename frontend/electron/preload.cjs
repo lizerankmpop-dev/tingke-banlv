@@ -23,6 +23,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setCourseWebLink: (courseId, url) => ipcRenderer.invoke('course:set-web-link', courseId, url),
   openCourseExternal: (url) => ipcRenderer.invoke('course:open-external', url),
   courseWebviewEnabled: process.argv.includes('--tingke-course-webview'),
+
+  // 线上课画面捕获：只给主窗口主帧用，渲染层拿不到 desktopCapturer 本体。
+  capture: {
+    listSources: () => ipcRenderer.invoke('capture:list-sources'),
+    selectSource: (sourceId) => ipcRenderer.invoke('capture:set-source', sourceId),
+    clearSource: () => ipcRenderer.invoke('capture:clear-source'),
+  },
+
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   // 后端实际监听端口（自动分配），调试时可在控制台查看
   getBackendPort: () => ipcRenderer.invoke('get-backend-port'),
