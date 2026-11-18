@@ -1977,10 +1977,14 @@ ipcMain.handle('capture:list-sources', async (event) => {
       types: ['window', 'screen'],
       thumbnailSize: { width: 160, height: 90 },
     });
+    // 注意：Electron 的 DesktopCapturerSource 在本版本里没有可靠的 `type` 字段
+    // （实测为 undefined），必须按 id 前缀判定。直接透传 source.type 会让前端
+    // normalizeCaptureSource 的 type 校验全部失败 → 窗口列表显示为空。
+    const inferType = (id) => String(id || '').startsWith('screen:') ? 'screen' : 'window';
     return sources.map(source => ({
       id: source.id,
       name: source.name,
-      type: source.type,
+      type: inferType(source.id),
       thumbnail: source.thumbnail && !source.thumbnail.isEmpty()
         ? source.thumbnail.toDataURL()
         : '',
