@@ -1345,19 +1345,69 @@ async def set_course_note(course_id: str, req: NoteRequest):
 class MicTestRequest(BaseModel):
     deviceIndex: Optional[int] = None
     seconds: float = Field(default=3.0, ge=0.5, le=10.0)
+    # v4.2.0（合并张春阳 4.1.3 update）：按需返回转写预览，不写库、不留录音。
+    preview: bool = False
+    language: Literal["auto", "en", "zh", "ja", "ko", "fr"] = "auto"
 
 
 @router.post("/audio/mic-test")
 async def mic_test(req: MicTestRequest):
-    """短时试采测电平：不识别、不写库、不留录音文件（界面承诺的三不）。
+    """短时试采测电平，按需返回转写预览，不写库或留录音文件（界面承诺的三不）。
 
-    开流 3 秒 + 与采集/枚举共用 PortAudio 锁 ⇒ 必须 to_thread 离开事件循环。
+    开流 3 秒 + 与采集/枚举共用 PortAudio 锁 ⇒ 必须 to_thread 离开事件循环；
+    预览转写同样阻塞（加载 WhisperModel）⇒ 一并放进工作线程。
     """
+    return await asyncio.to_thread(_run_mic_test, req)
+
+
+def _run_mic_test(req: MicTestRequest) -> dict:
     from audio.capture import AudioCapture
 
-    return await asyncio.to_thread(
-        AudioCapture.mic_test_burst, req.deviceIndex, req.seconds
+    result = AudioCapture.mic_test_burst(
+        req.deviceIndex, req.seconds, include_pcm=req.preview
     )
+    # PCM 只在内存里流转，绝不随 HTTP 响应返回给前端。
+    pcm = result.pop("_pcm", None)
+    if not req.preview or not result["ok"]:
+        return result
+
+    result["transcript"] = ""
+    if not pcm or result["level"] < 0.02:
+        result["previewMessage"] = "没采到足够的声音，请检查麦克风后重试。"
+        return result
+
+    try:
+        import numpy as np
+        from faster_whisper import WhisperModel
+        from asr.model_bootstrap import ensure_model
+        from asr.text_norm import normalize_cjk_spacing
+        from asr.whisper_engine import _MODEL_DIR, get_simp_hint
+
+        if not ensure_model("base")["ok"]:
+            result["previewMessage"] = "本地 base 识别模型未就绪，请在模型设置中完成准备后重试。"
+            return result
+
+        # 仅转写这段内存录音，麦克风已经释放。试音不启动课程管道。
+        audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        model = WhisperModel(
+            "base", device="cpu", compute_type="int8",
+            download_root=_MODEL_DIR, local_files_only=True,
+        )
+        segments, _ = model.transcribe(
+            audio, language=None if req.language == "auto" else req.language,
+            beam_size=1, condition_on_previous_text=False,
+            initial_prompt=get_simp_hint() if req.language == "zh" else None,
+        )
+        result["transcript"] = normalize_cjk_spacing(
+            " ".join(segment.text.strip() for segment in segments).strip()
+        ) or ""
+        if not result["transcript"]:
+            result["previewMessage"] = "没有识别到清晰语音，请靠近麦克风说一句完整的话。"
+    except Exception:
+        logger.exception("麦克风试音转写失败")
+        result["previewMessage"] = "字幕预览失败，请确认本地识别模型可用后重试。"
+
+    return result
 
 
 @router.get("/audio/check-loopback")

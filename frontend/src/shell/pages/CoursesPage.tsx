@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Plus, Search, Settings, Trash2, X, Monitor, Mic, Check, Link2, Lock } from 'lucide-react'
+import { Plus, Search, Settings, Trash2, X, Monitor, Mic, Check, Link2, Lock, HelpCircle } from 'lucide-react'
 import { IconButton } from '../../components/ui/IconButton'
+import { WIZARD_COPY } from '../../lib/onboarding'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { LevelMeter } from '../../components/ui/LevelMeter'
 import { useCourseStore } from '../../stores/useCourseStore'
@@ -44,10 +45,11 @@ interface CoursesPageProps {
   onOpenConfig: (course: Course) => void
   onNewCourse: () => void
   dueCount: number
+  onOpenGuide: () => void
   onToast: (message: string) => void
 }
 
-export function CoursesPage({ filter, onOpenCourse, onOpenConfig, onNewCourse, dueCount, onToast }: CoursesPageProps) {
+export function CoursesPage({ filter, onOpenCourse, onOpenConfig, onNewCourse, dueCount, onOpenGuide, onToast }: CoursesPageProps) {
   const { courses, isLoading, loadCourses, deleteCourse } = useCourseStore()
   const [query, setQuery] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<Course | null>(null)
@@ -100,6 +102,17 @@ export function CoursesPage({ filter, onOpenCourse, onOpenConfig, onNewCourse, d
           </p>
         </div>
         <div className="head-actions">
+          {/* #154 找回入口：向导跳过后仍可回看，文案只取 WIZARD_COPY，不写第二份字面量 */}
+          <button
+            type="button"
+            className="icon-btn"
+            data-testid="onboarding-reopen"
+            onClick={onOpenGuide}
+            title={WIZARD_COPY.reopenHint}
+            aria-label={WIZARD_COPY.reopen}
+          >
+            <HelpCircle size={16} />
+          </button>
           <label className="search-box">
             <Search size={15} />
             <input

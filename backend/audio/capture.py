@@ -351,8 +351,10 @@ class AudioCapture:
     # ---------- 麦克风试采（建课/配置页「试采 3 秒」） ----------
 
     @staticmethod
-    def mic_test_burst(device_index: Optional[int] = None, seconds: float = 3.0) -> dict:
-        """短时试采：开 N 秒输入流测 RMS 电平，不识别、不入库、不留录音。
+    def mic_test_burst(
+        device_index: Optional[int] = None, seconds: float = 3.0, *, include_pcm: bool = False,
+    ) -> dict:
+        """短时试采测 RMS 电平，可将内存 PCM 交给调用方做转写预览。
 
         与 list_devices 同样必须拿 _CrossProcessGuard（碰 PortAudio 开流的
         地方都要与采集线程/其它枚举方串行，防 hostApi 断言 abort）。
@@ -363,6 +365,7 @@ class AudioCapture:
             peak: float         0~1 峰值
             deviceIndex: int|None 实际使用的设备（None = 系统默认）
             message: str        给前端直接展示的判定文案
+            _pcm: bytearray     仅 include_pcm=True 时返回，调用方必须 pop 掉，不落盘
         """
         if pyaudio is None:
             return {"ok": False, "level": 0.0, "peak": 0.0,
@@ -384,11 +387,14 @@ class AudioCapture:
                     )
                     try:
                         frames = int(seconds * 10)
+                        pcm = bytearray() if include_pcm else None
                         squares = 0.0
                         count = 0
                         peak = 0
                         for _ in range(frames):
                             data = stream.read(1600, exception_on_overflow=False)
+                            if pcm is not None:
+                                pcm.extend(data)
                             arr = np.frombuffer(data, dtype=np.int16)
                             absarr = np.abs(arr.astype(np.int32))
                             squares += float((absarr * absarr).sum())
@@ -406,12 +412,15 @@ class AudioCapture:
                             verdict = "电平过高：可能出现削波，建议调低增益"
                         else:
                             verdict = "电平良好"
-                        return {
+                        result = {
                             "ok": True, "level": round(level, 4),
                             "peak": round(peak_level, 4),
                             "deviceIndex": device_index,
                             "message": verdict,
                         }
+                        if pcm is not None:
+                            result["_pcm"] = pcm
+                        return result
                     finally:
                         stream.stop_stream()
                         stream.close()

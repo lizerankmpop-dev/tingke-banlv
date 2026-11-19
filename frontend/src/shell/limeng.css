@@ -896,6 +896,31 @@
   color: var(--text-2);
 }
 
+/* v4.2.0 试音字幕预览：只展示转写结果，不写课程、不留文件 */
+.field.mic-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.field.mic-transcript > strong {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.field.mic-transcript > span {
+  font-size: var(--fs-ui);
+  line-height: 1.6;
+  color: var(--text);
+  word-break: break-word;
+}
+
 .field input,
 .field select,
 .field textarea {

@@ -147,7 +147,7 @@ export default function Shell() {
         counts={counts}
         dueCount={dueCount}
         wordCount={wordCount}
-        version={version || '4.1.4'}
+        version={version || '4.2.0'}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         coursesExpanded={coursesExpanded}
@@ -168,6 +168,7 @@ export default function Shell() {
             onOpenCourse={(course) => openCourse(course.id)}
             onOpenConfig={(course) => openConfig(course.id)}
             onNewCourse={() => openNewCourse(filter === 'offline' ? 'offline' : 'online')}
+            onOpenGuide={() => void onboardingBridge.reopen()}
             onToast={setToast}
           />
         )}

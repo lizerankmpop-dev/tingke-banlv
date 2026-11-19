@@ -155,7 +155,9 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
   }, [online, devices.length, loadDevices])
 
   const [micTesting, setMicTesting] = useState(false)
-  const [micResult, setMicResult] = useState<{ ok: boolean; level: number; message: string } | null>(null)
+  const [micResult, setMicResult] = useState<{
+    ok: boolean; level: number; message: string; transcript?: string; previewMessage?: string
+  } | null>(null)
 
   const runMicTest = async () => {
     if (micTesting) return
@@ -165,16 +167,24 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
       const res = await fetch('/api/audio/mic-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceIndex: settings.micDeviceIndex, seconds: 3 }),
+        // v4.2.0（合并张春阳 4.1.3 update）：试音同时生成字幕预览。
+        body: JSON.stringify({ deviceIndex: settings.micDeviceIndex, seconds: 3, preview: true, language }),
       })
       const data = await res.json()
+      if (!res.ok || typeof data.ok !== 'boolean') {
+        throw new Error(typeof data.detail === 'string' ? data.detail : '试音请求失败，请重试。')
+      }
       setMicResult(data)
       onToast(data.ok ? `试采完成：${data.message}` : data.message)
-    } catch {
-      setMicResult({ ok: false, level: 0, message: '试采失败：后端服务未运行' })
-      onToast('试采失败：后端服务未运行')
+    } catch (error) {
+      const message = error instanceof TypeError
+        ? '无法连接识别服务，请重试。'
+        : error instanceof Error ? error.message : '试音失败，请重试。'
+      setMicResult({ ok: false, level: 0, message })
+      onToast(message)
+    } finally {
+      setMicTesting(false)
     }
-    setMicTesting(false)
   }
 
   // 保存配置（domain/description/language/subtitleLang/customTerms → PUT）
@@ -315,7 +325,7 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
                 <button type="button" className="btn btn-cyan btn-sm" onClick={() => void runMicTest()} disabled={micTesting}>
                   {micTesting ? (
                     <>
-                      <RefreshCw size={14} className="spin" /> 正在试采 3 秒…
+                      <RefreshCw size={14} className="spin" /> 正在试音并生成字幕…
                     </>
                   ) : (
                     <>
@@ -343,8 +353,15 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
                 </div>
               )}
 
+              {micResult?.transcript || micResult?.previewMessage ? (
+                <div className="field mic-transcript" role="status">
+                  <strong>试音字幕</strong>
+                  <span>{micResult.transcript || micResult.previewMessage}</span>
+                </div>
+              ) : null}
+
               <p className="fineprint">
-                <Lock size={12} /> 试采不写入课程、不启动识别、不留录音文件。
+                <Lock size={12} /> 试音只显示字幕预览，不写入课程，也不保存录音。
               </p>
             </>
           )}
