@@ -261,3 +261,51 @@ def detect(
     else:
         verdict.reason = "两个信号均未超阈"
     return verdict
+
+
+# ---------------------------------------------------------------------------
+# 单条字幕的「静音幻觉」过滤（v4.3.2）
+#
+# 上面的 detect() 抓的是「成句长片段循环」（≥35 字符），对下面这种输出无能为力：
+#     进行轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻轻
+# 这是 Whisper 在近静音音频上的典型幻觉：把某个字/短词循环到 30 秒窗口填满。
+# 视频暂停时系统音频没内容，VAD 仍可能提交一个短段，于是屏幕上一直刷这种字串。
+#
+# 判据（满足任一即丢弃该条字幕）：
+#   1. 归一化后长度 ≥ 20 且「不同字符种类 ≤ 4」——正常中文句子不会有这么低的字种数；
+#   2. 同一 1~3 字短 pattern 连续重复 ≥ 8 次且覆盖率 ≥ 0.8。
+# 两条都刻意保守：叠词「轻轻」说两三遍、口头禅、拟声词都不会被误杀。
+# ---------------------------------------------------------------------------
+
+MIN_HALLUCINATION_CHARS = 16
+MIN_DISTINCT_CHARS = 5
+MIN_SHORT_REPEAT = 8
+SHORT_PATTERN_MAX = 3
+
+
+def is_silence_hallucination(text: str) -> bool:
+    """判断一条字幕是否是静音段的短循环幻觉（应整条丢弃）。"""
+    clean = normalize(text)
+    if len(clean) < MIN_HALLUCINATION_CHARS:
+        return False
+
+    # 信号 1：字种极少（「轻轻轻轻…」「啊啊啊啊…」）
+    if len(set(clean)) < MIN_DISTINCT_CHARS:
+        return True
+
+    # 信号 2：某个 1~3 字短 pattern 高频重复覆盖整句
+    for size in range(1, SHORT_PATTERN_MAX + 1):
+        if len(clean) < size * MIN_SHORT_REPEAT:
+            continue
+        for start in range(min(size, len(clean) - size + 1)):
+            pattern = clean[start:start + size]
+            if len(pattern) < size:
+                continue
+            count = 0
+            pos = start
+            while pos + size <= len(clean) and clean[pos:pos + size] == pattern:
+                count += 1
+                pos += size
+            if count >= MIN_SHORT_REPEAT and (count * size) / len(clean) >= 0.8:
+                return True
+    return False

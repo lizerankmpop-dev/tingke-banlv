@@ -40,6 +40,7 @@ export function WordPanelDrawer({
   const [collected, setCollected] = useState(false)
   const [aiState, setAiState] = useState<'idle' | 'loading' | 'done' | 'unavailable'>('idle')
   const [aiData, setAiData] = useState<AiExplain | null>(null)
+  const [aiMessage, setAiMessage] = useState('')
 
   useEffect(() => {
     if (!word || !course) return
@@ -48,6 +49,7 @@ export function WordPanelDrawer({
     setCollected(false)
     setAiState('idle')
     setAiData(null)
+    setAiMessage('')
 
     let cancelled = false
     fetch(`/api/courses/${course.id}/vocabulary/${encodeURIComponent(word)}`)
@@ -76,10 +78,12 @@ export function WordPanelDrawer({
           setAiData(data.explanation)
           setAiState('done')
         } else {
+          // v4.4.0：显示后端真实原因，不再硬编码「Ollama 未启动」误导用户
+          setAiMessage(typeof data.message === 'string' ? data.message : '')
           setAiState('unavailable')
         }
       })
-      .catch(() => { if (!cancelled) setAiState('unavailable') })
+      .catch(() => { if (!cancelled) { setAiMessage('无法连接 AI 服务'); setAiState('unavailable') } })
 
     return () => { cancelled = true }
   }, [word, course])
@@ -156,7 +160,7 @@ export function WordPanelDrawer({
           {aiState === 'loading' ? (
             <p className="wp-ai-status">AI 正在结合本课上下文讲解…</p>
           ) : aiState === 'unavailable' ? (
-            <p className="wp-ai-status">AI 讲解服务不可用：请确认 Ollama 已启动并拉取了模型</p>
+            <p className="wp-ai-status">AI 讲解暂不可用：{aiMessage || '请确认模型已就绪'}</p>
           ) : aiData ? (
             <>
               <p>{aiData.meaning_in_context || aiData.translation}</p>

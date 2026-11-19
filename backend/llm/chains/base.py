@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -168,17 +169,63 @@ def cloud_configured() -> bool:
     return bool(base.strip() and key.strip() and model.strip())
 
 
+def _ollama_model_name() -> str:
+    """当前 Ollama 模型名（运行时配置优先，env 回退），供可用性探测复用。"""
+    return (_cfg("ollamaModel") or os.environ.get("TINGKEBANLV_OLLAMA_MODEL", "qwen2.5:7b")).strip()
+
+
 def is_available() -> bool:
-    """探测当前 provider 是否可用（结果不缓存，由调用方自行缓存）"""
+    """探测当前 provider 是否可用（结果不缓存，由调用方自行缓存）
+
+    v4.4.0：Ollama 分支不再只看「服务活着」，而是确认**当前配置的模型已拉取**。
+    `ollama.list()` 即使一个模型都没有也返回成功，旧实现会把「服务在跑但没模型」
+    误报成可用 ⇒ UI 显示「AI 就绪」，真一点词就降级成「服务不可用」，最难排查。
+    """
     if get_provider() == "cloud":
         return cloud_configured()
     try:
         import ollama
 
-        ollama.list()
-        return True
+        models = ollama.list()
+        # ollama 库版本差异：新版 models 是 list[Model]，旧版是 list[dict]
+        raw = getattr(models, "models", models) or []
+        names = set()
+        for m in raw:
+            name = getattr(m, "model", None) or getattr(m, "name", None)
+            if isinstance(m, dict):
+                name = m.get("model") or m.get("name")
+            if name:
+                names.add(str(name))
+        if not names:
+            return False
+        wanted = _ollama_model_name()
+        # 精确名优先；容忍省略 tag（qwen2.5:7b ↔ qwen2.5）与完整 tag 匹配
+        if wanted in names:
+            return True
+        base = wanted.split(":")[0]
+        return any(n == base or n.startswith(base + ":") for n in names)
     except Exception:
         return False
+
+
+def is_available_ttl(state: dict, ttl: float = 20.0) -> bool:
+    """带 TTL 的可用性缓存判定：失败后在 ttl 秒内不重复探测，之后自动重试。
+
+    解决「用户先打开软件、后才启动 Ollama」时旧实现永久缓存 False 的死锁：
+    把缓存状态放在调用方持有的 dict 里（如 self._avail_state），
+    成功即长久缓存；失败则 ttl 秒后自动重试，无需重启后端。
+    """
+    now = time.monotonic()
+    cached = state.get("value")
+    checked_at = state.get("at", 0.0)
+    if cached is True:
+        return True
+    if cached is False and now - checked_at < ttl:
+        return False
+    value = is_available()
+    state["value"] = value
+    state["at"] = now
+    return value
 
 
 # =============================================================================

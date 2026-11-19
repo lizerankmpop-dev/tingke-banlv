@@ -3601,3 +3601,93 @@ html[data-contrast="high"] .term {
   background: var(--accent-light); color: var(--text-primary);
   font-size: var(--fs-caption); line-height: 1.6;
 }
+
+/* ===== AI 答疑抽屉（v4.4.0）=====
+   把后端早已就绪的 /api/ai/ask 接回主骨架。右侧滑入，不遮挡工具栏。 */
+.ai-chat-overlay {
+  position: fixed; inset: 0; z-index: 120;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex; justify-content: flex-end;
+}
+.ai-chat-drawer {
+  width: min(460px, 92vw); height: 100%;
+  display: flex; flex-direction: column;
+  background: var(--bg-secondary); color: var(--text-primary);
+  border-left: 1px solid var(--border-soft);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.18);
+  animation: ai-chat-in 0.18s ease-out;
+}
+@keyframes ai-chat-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.ai-chat-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px; border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-card);
+}
+.ai-chat-title { display: flex; align-items: center; gap: 8px; font-size: var(--fs-body); }
+.ai-chat-title svg { color: var(--accent); }
+.ai-chat-hint { font-size: var(--fs-caption); color: var(--text-3); font-weight: 400; }
+.ai-chat-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-secondary); cursor: pointer;
+}
+.ai-chat-close:hover { background: var(--bg-tertiary); }
+.ai-chat-status {
+  display: flex; align-items: flex-start; gap: 9px;
+  margin: 14px 16px 0; padding: 11px 13px;
+  border: 1px solid var(--danger); border-radius: var(--radius-sm);
+  background: var(--accent-light); font-size: var(--fs-caption); line-height: 1.6;
+}
+.ai-chat-status svg { color: var(--danger); flex-shrink: 0; margin-top: 2px; }
+.ai-chat-status strong { display: block; color: var(--text-primary); }
+.ai-chat-status p { margin: 3px 0 0; color: var(--text-secondary); }
+.ai-chat-status-note { color: var(--text-3) !important; }
+.ai-chat-body {
+  flex: 1; overflow-y: auto; padding: 18px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.ai-chat-empty {
+  margin: auto; text-align: center; color: var(--text-3);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.ai-chat-empty svg { color: var(--accent); opacity: 0.6; }
+.ai-chat-empty p { margin: 0; color: var(--text-secondary); font-size: var(--fs-body); }
+.ai-chat-empty span { font-size: var(--fs-caption); }
+.ai-chat-msg { display: flex; flex-direction: column; gap: 6px; }
+.ai-chat-q {
+  align-self: flex-end; max-width: 88%;
+  padding: 8px 12px; border-radius: 12px 12px 2px 12px;
+  background: var(--accent); color: var(--bg-primary);
+  font-size: var(--fs-caption); line-height: 1.6;
+}
+.ai-chat-a {
+  align-self: flex-start; max-width: 94%;
+  padding: 10px 13px; border-radius: 12px 12px 12px 2px;
+  background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border-soft);
+  font-size: var(--fs-caption); line-height: 1.75; white-space: pre-wrap;
+}
+.ai-chat-thinking, .ai-chat-error {
+  align-self: flex-start; padding: 8px 12px; border-radius: var(--radius-sm);
+  font-size: var(--fs-caption);
+}
+.ai-chat-thinking { color: var(--text-3); background: var(--bg-tertiary); }
+.ai-chat-error { color: var(--danger); background: var(--accent-light); }
+.ai-chat-input-row {
+  display: flex; gap: 8px; padding: 12px 16px;
+  border-top: 1px solid var(--border-soft); background: var(--bg-card);
+}
+.ai-chat-input-row input {
+  flex: 1; min-width: 0; padding: 9px 12px;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  background: var(--bg-secondary); color: var(--text-primary);
+  font: inherit; font-size: var(--fs-caption);
+}
+.ai-chat-input-row input:focus { outline: none; border-color: var(--accent); }
+.ai-chat-input-row input:disabled { opacity: 0.6; cursor: not-allowed; }
+.ai-chat-input-row button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; border: none; border-radius: var(--radius-sm);
+  background: var(--accent); color: var(--bg-primary); cursor: pointer;
+}
+.ai-chat-input-row button:disabled { opacity: 0.45; cursor: not-allowed; }

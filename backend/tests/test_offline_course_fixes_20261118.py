@@ -107,6 +107,13 @@ def test_summary_unavailable_hint_has_model(client, course_id, monkeypatch):
 
     monkeypatch.setattr(routes.db, "get_subtitles", fake_get_subtitles)
     monkeypatch.setattr(routes.db, "get_vocabulary", fake_get_vocabulary)
+    # 隔离运行时 LLM 配置：其它测试（D4）可能把 provider 设成 cloud 未清理，
+    # 导致本用例的降级提示走错分支；这里显式清零，保证确定性走 ollama 分支。
+    from llm.chains import base as _base
+    _base.set_runtime_llm_config({
+        "provider": "", "cloudApiBase": "", "cloudApiKey": "", "cloudModel": "",
+        "ollamaModel": "",
+    })
     monkeypatch.setattr(routes, "_llm_call", lambda *a, **k: lambda *x: None)
     resp = client.post(f"/api/courses/{course_id}/summary")
     assert resp.status_code == 200

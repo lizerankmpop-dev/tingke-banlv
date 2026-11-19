@@ -424,6 +424,18 @@ class ASRPipeline:
         if not text.strip():
             return
 
+        # v4.3.2：静音段幻觉过滤 —— 视频暂停后 Whisper 常把某个字循环到整窗
+        # （「轻轻轻轻…」），现有重复检测的 35 字符成句阈值抓不到。这类字幕
+        # 直接整条丢弃，避免用户看到「暂停了还在刷字幕」。
+        try:
+            from asr.repetition import is_silence_hallucination
+            if is_silence_hallucination(text):
+                logger.info(f"丢弃静音幻觉字幕: {text[:40]!r}")
+                self.on_status("listening", "已忽略一段静音误识别")
+                return
+        except Exception as exc:
+            logger.debug(f"静音幻觉检测跳过: {exc}")
+
         self._subtitle_counter += 1
         now_ms = int(time.time() * 1000)
 

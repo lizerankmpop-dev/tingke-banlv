@@ -34,6 +34,20 @@ import sys
 
 import pytest
 
+# 本文件的用例会 `sys.modules.pop("api.routes")` 再重新 import 来模拟缺依赖，
+# 这会留下一个**新的模块对象**。而 main.app 与别的测试文件持有的是旧对象，
+# 后续 monkeypatch 打在新对象上就对 app 无效（曾导致 summary 降级测试拿到真实
+# LLM 结果而失败）。用 autouse fixture 在用例结束后恢复原始模块对象。
+_ORIGINAL_ROUTES = importlib.import_module("api.routes")
+
+
+@pytest.fixture(autouse=True)
+def _restore_routes_module():
+    yield
+    sys.modules["api.routes"] = _ORIGINAL_ROUTES
+    import api
+    api.routes = _ORIGINAL_ROUTES
+
 
 @pytest.fixture()
 def without_langchain(monkeypatch):

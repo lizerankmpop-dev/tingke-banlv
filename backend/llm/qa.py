@@ -52,6 +52,7 @@ class ChatQA:
         self._chain = None
         self._checkpointer = None
         self._available: bool | None = None
+        self._avail_state: dict = {}  # v4.4.0：TTL 缓存，Ollama 后启动可自愈
         self._kb = None
 
     # ---- 懒加载：避免构造期就实例化真实模型 ----
@@ -156,12 +157,10 @@ class ChatQA:
         if not question:
             return None
 
-        # LLM 可用性检查（结果缓存，与迁移前一致）
-        from llm.chains.base import is_available
+        # LLM 可用性检查（带 TTL 缓存：失败 20s 后自动重试，Ollama 后启动可自愈）
+        from llm.chains.base import is_available_ttl
 
-        if self._available is None:
-            self._available = is_available()
-        if not self._available:
+        if not is_available_ttl(self._avail_state):
             logger.warning("LLM 不可用，无法答疑")
             return None
 

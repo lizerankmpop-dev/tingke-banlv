@@ -19,6 +19,7 @@ import { ReviewPage } from './pages/ReviewPage'
 import { VocabPage } from './pages/VocabPage'
 import type { SummaryDraft } from '../lib/chapterApi'
 import { WordPanelDrawer } from './components/WordPanelDrawer'
+import { AIChatDrawer } from './components/AIChatDrawer'
 import './limeng.css'
 
 /** 帮助/关于：主线既有面板（版本、FAQ、日志目录），惰性加载避免拖慢首屏 */
@@ -60,6 +61,7 @@ export default function Shell() {
   const [version, setVersion] = useState('')
   const [showHelp, setShowHelp] = useState(false)
   const [showOverlayPanel, setShowOverlayPanel] = useState(false)
+  const [showAIChat, setShowAIChat] = useState(false)
   const [summaryDraft, setSummaryDraft] = useState<SummaryDraft | null>(null)
   const initializeOverlay = useOverlayStore(state => state.init)
   const highContrast = useOverlayStore(state => state.settings.highContrast)
@@ -177,7 +179,7 @@ export default function Shell() {
         counts={counts}
         dueCount={dueCount}
         wordCount={wordCount}
-        version={version || '4.3.1'}
+        version={version || '4.4.0'}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         coursesExpanded={coursesExpanded}
@@ -213,6 +215,7 @@ export default function Shell() {
             onGoReview={() => navigate('review')}
             onOpenChapterSummary={(draft) => openChapterSummary(selectedCourse.id, draft)}
             onSelectWord={(word) => void selectWord(word)}
+            onOpenAIChat={() => setShowAIChat(true)}
             onToast={setToast}
           />
         )}
@@ -291,6 +294,13 @@ export default function Shell() {
         }}
         onToast={setToast}
       />
+
+      {showAIChat && (
+        <AIChatDrawer
+          course={selectedCourse}
+          onClose={() => setShowAIChat(false)}
+        />
+      )}
 
       <Toast message={toast} />
 

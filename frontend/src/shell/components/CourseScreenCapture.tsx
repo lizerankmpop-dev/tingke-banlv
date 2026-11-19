@@ -30,10 +30,11 @@ export function CourseScreenCapture({ courseName, onToast }: CourseScreenCapture
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const blackTimerRef = useRef<number | null>(null)
+  const blackCountRef = useRef(0)
 
   const clearBlackTimer = useCallback(() => {
     if (blackTimerRef.current != null) {
-      window.clearTimeout(blackTimerRef.current)
+      window.clearInterval(blackTimerRef.current)
       blackTimerRef.current = null
     }
   }, [])
@@ -46,6 +47,7 @@ export function CourseScreenCapture({ courseName, onToast }: CourseScreenCapture
     if (videoRef.current) videoRef.current.srcObject = null
     setCapturing(false)
     setBlackFrameWarning(false)
+    blackCountRef.current = 0
     void window.electronAPI?.capture?.clearSource?.()
   }, [clearBlackTimer])
 
@@ -96,6 +98,7 @@ export function CourseScreenCapture({ courseName, onToast }: CourseScreenCapture
 
   useEffect(() => { void refreshSources() }, [refreshSources])
 
+
   const detectBlackFrame = useCallback(() => {
     const video = videoRef.current
     if (!video || !streamRef.current || video.readyState < 2) return
@@ -112,11 +115,25 @@ export function CourseScreenCapture({ courseName, onToast }: CourseScreenCapture
         if (data[i] + data[i + 1] + data[i + 2] < 36) dark += 1
       }
       const ratio = dark / (data.length / 4)
-      setBlackFrameWarning(ratio > 0.92)
+      const isBlack = ratio > 0.92
+      setBlackFrameWarning(isBlack)
+
+      // v4.3.2：切换课程界面后源变黑屏（DRM/最小化/窗口销毁）时，
+      // 原来只留一条警告，画面区还挂着一个黑框。连续黑屏 3 次（≈7.5s）
+      // 就自动停止，让用户回到「重新选窗口」的干净状态。
+      if (isBlack) {
+        blackCountRef.current += 1
+        if (blackCountRef.current >= 3) {
+          stopCapture()
+          onToast('课程窗口已黑屏或无画面，已自动停止捕获，请重新选择窗口')
+        }
+      } else {
+        blackCountRef.current = 0
+      }
     } catch {
       // 黑屏检测失败（例如受保护画面禁止采样）不影响捕获本身
     }
-  }, [])
+  }, [onToast, stopCapture])
 
   const startCapture = useCallback(async () => {
     const candidate = preferCourseSource(sources, selectedId)
@@ -150,7 +167,9 @@ export function CourseScreenCapture({ courseName, onToast }: CourseScreenCapture
       setMessage('')
       setBlackFrameWarning(false)
       clearBlackTimer()
-      blackTimerRef.current = window.setTimeout(detectBlackFrame, 2500)
+      // 每 2.5 秒检测一次，连续 3 次黑屏（约 7.5s）才自动停止，
+      // 避免切窗口瞬间的正常黑帧误触发。
+      blackTimerRef.current = window.setInterval(() => { void detectBlackFrame() }, 2500)
     } catch (error) {
       stopCapture()
       const text = captureErrorMessage(error)

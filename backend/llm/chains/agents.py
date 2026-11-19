@@ -42,6 +42,7 @@ from llm.chains.base import (
     build_structured_chain,
     get_chat_model,
     is_available,
+    is_available_ttl,
     safe_invoke,
 )
 from llm.chains.prompts import (
@@ -123,13 +124,12 @@ class TermExtractionAgent:
     def __init__(self, model: str | None = None):
         self.model = model
         self._available: bool | None = None
+        self._avail_state: dict = {}  # v4.4.0：TTL 缓存，Ollama 后启动可自愈
         self._chain = build_term_extraction_chain(model=model)
 
     def is_available_cached(self) -> bool:
-        """查 LLM 是否可用（结果缓存，避免每条字幕都探测一次）"""
-        if self._available is None:
-            self._available = is_available()
-        return self._available
+        """查 LLM 是否可用（TTL 缓存：失败 20s 后重试，避免永久锁死）"""
+        return is_available_ttl(self._avail_state)
 
     def extract_terms(
         self,
@@ -168,7 +168,10 @@ class TermExtractionAgent:
             self._chain["structured"], payload, default=None, label="术语提取"
         )
         if result is None:
-            self._available = False
+            # 调用失败也记入 TTL 缓存，20s 后可自动重试（不永久锁死）
+            import time as _time
+            self._avail_state["value"] = False
+            self._avail_state["at"] = _time.monotonic()
             return []
 
         terms = safe_invoke(
@@ -351,6 +354,7 @@ class LectureSummaryAgent:
     def __init__(self, model: str | None = None):
         self.model = model
         self._available: bool | None = None
+        self._avail_state: dict = {}  # v4.4.0：TTL 缓存，Ollama 后启动可自愈
         self._chain = build_summary_chain(model=model)
 
     def summarize(
@@ -375,9 +379,7 @@ class LectureSummaryAgent:
         if not text.strip():
             return None
 
-        if self._available is None:
-            self._available = is_available()
-        if not self._available:
+        if not is_available_ttl(self._avail_state):
             logger.warning("LLM 不可用，跳过摘要生成")
             return None
 
@@ -400,7 +402,10 @@ class LectureSummaryAgent:
             label="摘要生成",
         )
         if result is None:
-            self._available = False
+            # 调用失败也记入 TTL 缓存，20s 后可自动重试（不永久锁死）
+            import time as _time
+            self._avail_state["value"] = False
+            self._avail_state["at"] = _time.monotonic()
             return None
 
         return result.to_dict()
@@ -417,6 +422,7 @@ class ChatQAAgent:
     def __init__(self, model: str | None = None):
         self.model = model
         self._available: bool | None = None
+        self._avail_state: dict = {}  # v4.4.0：TTL 缓存，Ollama 后启动可自愈
         self._chain = build_qa_chain(model=model)
 
     def answer(
@@ -444,9 +450,7 @@ class ChatQAAgent:
         if not question:
             return None
 
-        if self._available is None:
-            self._available = is_available()
-        if not self._available:
+        if not is_available_ttl(self._avail_state):
             logger.warning("LLM 不可用，无法答疑")
             return None
 
@@ -467,7 +471,10 @@ class ChatQAAgent:
             label="答疑",
         )
         if result is None:
-            self._available = False
+            # 调用失败也记入 TTL 缓存，20s 后可自动重试（不永久锁死）
+            import time as _time
+            self._avail_state["value"] = False
+            self._avail_state["at"] = _time.monotonic()
             return None
         return result
 

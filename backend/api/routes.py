@@ -214,6 +214,9 @@ class ExplainRequest(BaseModel):
 class AskRequest(BaseModel):
     question: str
     courseId: str
+    # 多轮记忆：同一 sessionId 下 ChatQA 复用 LangGraph checkpointer，
+    # 让「它刚才说的那个词」这类追问能接上前文；不传则单轮问答。
+    sessionId: str = ""
 
 
 class PreviewTerminologyRequest(BaseModel):
@@ -533,8 +536,12 @@ def _translation_unavailable_reason() -> str:
         from llm.client import get_provider
         if get_provider() == "cloud":
             return "AI 翻译暂不可用：云端 LLM 未配置（缺 TINGKEBANLV_CLOUD_*），原文显示不受影响"
-        import os
-        model = os.environ.get("TINGKEBANLV_OLLAMA_MODEL", "qwen2.5:7b").strip()
+        try:
+            from llm.chains.base import _ollama_model_name
+            model = _ollama_model_name()
+        except Exception:  # noqa: BLE001
+            import os
+            model = os.environ.get("TINGKEBANLV_OLLAMA_MODEL", "qwen2.5:7b").strip()
         return (f"AI 翻译暂不可用：请启动 Ollama 并执行 ollama pull {model}，"
                 f"原文显示不受影响")
     except Exception:  # noqa: BLE001 —— 提示生成失败也要有兜底文案
@@ -1220,8 +1227,12 @@ async def generate_summary(course_id: str):
         if get_provider() == "cloud":
             hint = "云端 LLM 未配置：请设置 TINGKEBANLV_CLOUD_API_BASE / API_KEY / MODEL"
         else:
-            import os
-            model = os.environ.get("TINGKEBANLV_OLLAMA_MODEL", "qwen2.5:7b").strip()
+            try:
+                from llm.chains.base import _ollama_model_name
+                model = _ollama_model_name()
+            except Exception:  # noqa: BLE001
+                import os
+                model = os.environ.get("TINGKEBANLV_OLLAMA_MODEL", "qwen2.5:7b").strip()
             hint = (f"本地 Ollama 未就绪。请安装并启动 Ollama，然后执行 "
                     f"ollama pull {model} 拉取模型")
         return {
@@ -1271,6 +1282,7 @@ async def ai_ask(req: AskRequest):
         course.get("domain", ""),
         course.get("name", ""),
         custom_terms,
+        req.sessionId,
     )
 
     if answer is None:

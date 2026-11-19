@@ -52,8 +52,10 @@ logger = logging.getLogger(__name__)
 # 一次生成的目标条数 / 上限。模型多吐时截断，少吐时按实际数量返回。
 MAX_TERMS = 15
 
-# 总超时（秒）。云端与本地降级共享同一 deadline，不是每通道各 8 秒。
-TOTAL_TIMEOUT_SECONDS = 8.0
+# 总预算（秒）：本地 Ollama 通道使用。云端仍走 5 秒子预算后快速降级。
+# v4.4.0：由 8 秒放宽到 60 秒 —— 纯 CPU 推理 qwen2.5:7b 的结构化输出要
+# 13~30 秒，旧 8 秒预算让无 GPU 机型的「AI 生成术语」永远超时 503。
+TOTAL_TIMEOUT_SECONDS = 60.0
 
 # 云端子预算（秒）。必须小于总预算，否则云端一超时就没有时间降级 Ollama。
 CLOUD_TIMEOUT_SECONDS = 5.0
@@ -263,7 +265,7 @@ async def generate_course_terms(
         failures.append("云端未配置")
         logger.info("云端 LLM 未配置，专业词汇生成直接走本地 Ollama")
 
-    # ---- 降级通道：本地 Ollama（共享同一 deadline）----
+    # ---- 降级通道：本地 Ollama（共享同一 deadline；总预算已放宽到 60s）----
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TermGenerationUnavailable(

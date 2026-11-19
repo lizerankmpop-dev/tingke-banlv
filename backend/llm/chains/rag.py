@@ -253,25 +253,28 @@ def get_embeddings():
     Returns:
         LangChain Embeddings 实例
     """
-    provider = os.environ.get("TINGKEBANLV_LLM_PROVIDER", "ollama").strip().lower()
+    # v4.4.0：与 base.py 统一运行时配置源（用户在 UI 切换 provider/模型后即时生效，
+    # 不再只读启动期 env）。base 在本函数内惰性导入，避免模块顶层循环依赖。
+    from llm.chains import base as _base
+
+    provider = _base.get_provider().strip().lower()
 
     if provider == "cloud":
-        base = os.environ.get("TINGKEBANLV_CLOUD_API_BASE", "").strip().rstrip("/")
-        key = os.environ.get("TINGKEBANLV_CLOUD_API_KEY", "").strip()
+        base = _base._cfg("cloudApiBase") or os.environ.get("TINGKEBANLV_CLOUD_API_BASE", "")
+        key = _base._cfg("cloudApiKey") or os.environ.get("TINGKEBANLV_CLOUD_API_KEY", "")
         model = os.environ.get("TINGKEBANLV_CLOUD_EMBED_MODEL", "text-embedding-3-small").strip()
-        if base and key:
+        if base.strip() and key.strip():
             try:
                 from langchain_openai import OpenAIEmbeddings
 
-                return OpenAIEmbeddings(base_url=base, api_key=key, model=model)
+                return OpenAIEmbeddings(base_url=base.strip().rstrip("/"), api_key=key.strip(), model=model)
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"云端嵌入模型不可用，回退本地: {e}")
 
     from langchain_ollama import OllamaEmbeddings
 
-    return OllamaEmbeddings(
-        model=os.environ.get("TINGKEBANLV_OLLAMA_EMBED_MODEL", "nomic-embed-text")
-    )
+    embed_model = os.environ.get("TINGKEBANLV_OLLAMA_EMBED_MODEL", "nomic-embed-text").strip()
+    return OllamaEmbeddings(model=embed_model)
 
 
 # =============================================================================

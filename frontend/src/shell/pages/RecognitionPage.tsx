@@ -42,6 +42,7 @@ interface RecognitionPageProps {
   onGoReview: () => void
   onSelectWord: (word: string) => void
   onOpenChapterSummary: (draft: SummaryDraft) => void
+  onOpenAIChat: () => void
   onToast: (message: string) => void
 }
 
@@ -53,6 +54,7 @@ export function RecognitionPage({
   onGoReview,
   onSelectWord,
   onOpenChapterSummary,
+  onOpenAIChat,
   onToast,
 }: RecognitionPageProps) {
   const online = isOnline(course)
@@ -196,8 +198,15 @@ export function RecognitionPage({
     const state = useSubtitleStore.getState()
     const isListening = state.asrStatus === 'listening' || state.asrStatus === 'processing'
     if (isListening) {
+      // v4.3.2：暂停 ≠ 只改按钮状态。同步清掉「当前句」并收起悬浮窗，
+      // 否则实时字幕/悬浮窗会停在上一句；若后端停流前又吐出幻觉文本，
+      // 用户看到的就是「暂停了还在刷字幕」。历史字幕仍保留在侧栏。
+      useSubtitleStore.getState().clearCurrentUtterance()
+      if (overlayOpen && useOverlayStore.getState().open) {
+        void overlayToggle()
+      }
       void disconnectASR()
-      onToast('识别已暂停，字幕会保留在当前句')
+      onToast('识别已暂停，历史字幕已保留，悬浮窗已收起')
     } else {
       startRecognition()
       onToast('识别已继续，字幕会实时更新')
@@ -245,13 +254,23 @@ export function RecognitionPage({
           <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenOverlaySettings}>
             悬浮设置
           </button>
-          {online && (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenAIChat} title="基于本节字幕与课件向 AI 提问">
+            <Brain size={14} /> AI 答疑
+          </button>
+          {online ? (
             <button type="button" className="btn btn-ghost btn-sm" aria-pressed={showLegacyWeb}
-              onClick={() => setShowLegacyWeb(value => !value)}
-              title="备用兼容入口；默认使用窗口画面捕获">
+              onClick={() => {
+                // v4.3.2：备用网址与窗口捕获互斥 —— 打开网址时把捕获清掉，
+                // 否则捕来的课程画面边框会和 webview 叠在一起。
+                if (!showLegacyWeb) {
+                  void window.electronAPI?.capture?.clearSource?.()
+                }
+                setShowLegacyWeb(value => !value)
+              }}
+              title="备用兼容入口；与窗口画面捕获互斥">
               {showLegacyWeb ? '收起网址' : '备用网址'}
             </button>
-          )}
+          ) : null}
           {online && (
             <button type="button" className="btn btn-ghost btn-sm" aria-pressed={webFill}
               onClick={() => setWebFill(value => !value)}>
@@ -333,10 +352,13 @@ export function RecognitionPage({
       {online ? (
         <div className="recognition-grid">
           <div className="recognition-main">
-            <CourseScreenCapture key={`capture-${course.id}`} courseName={course.name} onToast={onToast} />
-            {showLegacyWeb ? (
+            {/* v4.3.2：备用网址与窗口捕获互斥。切到网址时卸载捕获组件，
+                它的 cleanup 会停止 MediaStream 并 clearSource，避免老画面残留。 */}
+            {!showLegacyWeb ? (
+              <CourseScreenCapture key={`capture-${course.id}`} courseName={course.name} onToast={onToast} />
+            ) : (
               <WebFrame key={course.id} courseId={course.id} courseName={course.name} onToast={onToast} />
-            ) : null}
+            )}
             <CurrentSubtitle
               label="实时字幕"
               courseTypeHint={course.language === 'zh' ? '中文识别 · 系统音频' : '双语 · 原文识别'}

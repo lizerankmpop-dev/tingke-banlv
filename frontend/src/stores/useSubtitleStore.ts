@@ -76,6 +76,8 @@ interface SubtitleState {
   selectWord: (word: string) => Promise<void>
   closeWordPanel: () => void
   clearSubtitles: () => void
+  /** 暂停识别时清掉未成句的当前字幕，历史字幕保留 */
+  clearCurrentUtterance: () => void
 }
 
 /**
@@ -499,6 +501,18 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
 
   clearSubtitles: () => {
     set({ subtitleLines: [], currentText: '', currentWords: [] })
+    pushOverlay(get)
+  },
+
+  /**
+   * v4.3.2：暂停识别时只清「当前句」，保留已确认的历史字幕。
+   *
+   * 此前暂停只清 asrStatus，currentText 里残留的半句仍然挂在「实时字幕」
+   * 面板和悬浮窗上；若后端在停流前又吐出一段幻觉（静音段复读），用户就会
+   * 看到「明明暂停了还在刷字幕」。清当前句 + 推空快照即可让两处同步静止。
+   */
+  clearCurrentUtterance: () => {
+    set({ currentText: '', currentWords: [] })
     pushOverlay(get)
   },
 }))

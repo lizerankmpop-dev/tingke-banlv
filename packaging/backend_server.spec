@@ -128,6 +128,22 @@ hiddenimports += [
     "llm.term_generator",
     "asr.backend_factory",
     "asr.huawei_asr",
+    # v4.4.0：AI 全功能打通 —— LangChain 栈以动态导入著称，
+    # （create_agent / langgraph checkpointer / langchain_ollama 都是运行时按字符串加载）
+    # 冻结包漏这些模块的症状是「包能启动、AI 却全报不可用」，最难排查。
+    # 显式列出确保 AI 讲解/答疑/总结/翻译/术语在安装包里真实可用。
+    "llm.client", "llm.qa", "llm.explainer", "llm.summarizer", "llm.extractor",
+    "llm.term_generator", "llm.chains", "llm.chains.base", "llm.chains.agents",
+    "llm.chains.agent_tools", "llm.chains.prompts", "llm.chains.schemas",
+    "llm.chains.rag", "llm.chains.memory", "llm.chains.workflow",
+    "langchain_core", "langchain_core.messages", "langchain_core.prompts",
+    "langchain_core.output_parsers", "langchain_core.runnables",
+    "langchain", "langchain.agents", "langchain.agents.middleware",
+    "langchain_ollama", "langchain_openai", "langchain_text_splitters",
+    "langgraph", "langgraph.checkpoint", "langgraph.checkpoint.memory",
+    "langgraph.graph", "ollama",
+    # v4.3.2：静音幻觉过滤由 asr.pipeline 惰性导入，显式列出防止冻结包漏模块
+    "asr.repetition",
     # v4.3.0：课程资料转 Markdown。materials.service 里是函数内惰性导入
     # （可选依赖，未安装时降级），PyInstaller 静态分析抓不到，须显式列出。
     "markitdown",
