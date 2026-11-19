@@ -284,7 +284,18 @@ SHORT_PATTERN_MAX = 3
 
 
 def is_silence_hallucination(text: str) -> bool:
-    """判断一条字幕是否是静音段的短循环幻觉（应整条丢弃）。"""
+    """判断一条字幕是否是静音段的短循环幻觉（应整条丢弃）。
+
+    v4.4.2：新增「纯标点」判据。Whisper 在近静音/低信噪比输入上（远场老师讲课
+    被压得很弱、或噪声段）偶尔只输出一串标点，如 `. . . . . .`。这类文本
+    normalize() 后是空串，旧实现因 `len(clean) < 16` 直接放行，导致满屏
+    `......` 字幕落库。判据：原文去掉空白后非空、但去掉标点后为空 ⇒ 纯标点，
+    丢弃。正常句子（哪怕以省略号结尾）normalize 后仍有内容字符，不受影响。
+    """
+    # 纯标点/纯符号幻觉：原文有内容（非空白），但去掉标点后什么都不剩。
+    if normalize(text) == "" and text.strip() != "":
+        return True
+
     clean = normalize(text)
     if len(clean) < MIN_HALLUCINATION_CHARS:
         return False

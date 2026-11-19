@@ -10,6 +10,7 @@ export interface Course {
   language: string      // 识别语言：auto / en / zh / ja / ...
   simpMode: string      // V5-4 简繁输出：auto-simplified（简体优先）/ raw（保留原始字形）
   subtitleLang: string  // 字幕显示语言：both（双语对照）/ orig（仅原文）/ zh（仅中文）
+  modelSize?: string    // v4.4.1 识别模型规格：tiny/base/small/medium/large-v3（课程级覆盖全局默认）
   createdAt: number
   updatedAt: number
   videoCount: number

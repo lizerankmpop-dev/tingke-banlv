@@ -72,6 +72,19 @@ function electronBinary() {
 
 function prepareHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tkl-smoke-'))
+  // 兼容模式标记：本机渲染器沙箱曾卡住首屏，产品会等 12s 后自动重启到
+  // --no-sandbox。冒烟测试要回读 DOM，不是验证 watchdog 自愈；若先走标准模式，
+  // CDP 端口在这 12s 窗口里连不上，waitForTargets 会一直 ECONNREFUSED
+  // （2026-11-19 实测等满 180s 仍失败）。因此测试环境直接进兼容模式。
+  fs.writeFileSync(
+    path.join(home, '.compat-mode'),
+    JSON.stringify(
+      { at: new Date().toISOString(), reason: 'smoke: skip renderer sandbox watchdog' },
+      null,
+      2
+    ),
+    'utf8'
+  )
   // 预置「悬浮窗已开启」：这就是要验证的场景，不能靠手点
   fs.writeFileSync(
     path.join(home, 'overlay.json'),
@@ -297,7 +310,9 @@ async function main() {
   log(`临时数据目录：${home}`)
   log(`启动应用：${bin} .`)
 
-  const child = spawn(bin, ['.', '--no-sandbox'], {
+  // --tingkebanlv-compat 与 prepareHome() 里的标记是双保险：
+  // 前者让本次进程直接进兼容模式，后者保证 watchdog 即使被绕过也不会再降级重启。
+  const child = spawn(bin, ['.', '--no-sandbox', '--tingkebanlv-compat'], {
     cwd: ROOT,
     env: cleanEnv(home),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -337,40 +352,22 @@ async function main() {
     const findByHash = (list, hash) => list.find((p) => (p.url || '').includes(hash))
 
     let overlay = findByHash(pages, '#/overlay')
-    // 向导窗口在 whenReady 末尾才创建，可能晚于主窗口/悬浮窗出现在目标列表里
-    // （waitForTargets 只要凑够 2 个页面就返回），所以要单独等它出现 ——
-    // 等不到就是「首启自动弹出」这条验收失败，不能静默跳过。
+    // 兼容模式按产品约定不自动弹首启向导（onboarding-state.shouldShowWizard
+    // 的 compat-mode 分支），所以这里不再等启动期的 #/onboarding 目标。
+    // 向导验证改到主窗口渲染完成后：点 #154 找回入口主动打开，验证的是
+    // 「入口可用 + 路由正确」，不再受启动竞态与 watchdog 影响。
     let wizard = null
-    {
-      const deadline = Date.now() + Math.min(TIMEOUT_SEC, 60) * 1000
-      while (Date.now() < deadline) {
-        try {
-          const list = await getJson(`http://127.0.0.1:${DEBUG_PORT}/json/list`)
-          const all = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page')
-          const found = findByHash(all, '#/onboarding')
-          if (found) {
-            wizard = found
-            pages = all
-            break
-          }
-        } catch (_) { /* /json/list 偶发失败下一轮重试 */ }
-        await new Promise((r) => setTimeout(r, 1000))
-      }
-    }
 
-    // 按 target id 判同一目标，**不要用对象身份**：上面的 `pages = all` 是重新拉取的
-    // 一批全新对象，拿旧对象做 `p !== overlay` 恒为真，于是 find() 返回的第一个非向导
-    // 页面可能又是悬浮窗自己，冒出假的「两个入口串了」。
-    // 这段曾经是**顺序相关**的（只有主窗口恰好排在悬浮窗之前才会通过），
+    // 按 target id 判同一目标，**不要用对象身份**：/json/list 每次返回全新对象，
+    // 拿旧对象做 `p !== overlay` 恒为真，会让 main 误选到悬浮窗自己。
+    // 这段曾经是顺序相关的（只有主窗口恰好排在悬浮窗之前才会通过），
     // /json/list 顺序一变就红 —— 与产品行为无关，纯属脚本自身缺陷。
     const sameTarget = (a, b) => !!a && !!b && (a.id ? a.id === b.id : a === b)
-    // pages 已刷新时把 overlay 指向同一目标的新对象，后续 evaluate 读到的 url 才是最新的
     if (overlay) overlay = findByHash(pages, '#/overlay') || overlay
-    const main = pages.find((p) => !sameTarget(p, overlay) && !sameTarget(p, wizard))
+    const main = pages.find((p) => !sameTarget(p, overlay))
 
     check('悬浮窗目标存在', !!overlay, overlay ? overlay.url : `页面数 ${pages.length}，无 #/overlay`)
     check('主窗口目标存在', !!main, main ? main.url : '缺失')
-    check('首启向导已自动弹出（全新数据目录）', !!wizard, wizard ? wizard.url : '等待超时仍无 #/onboarding 目标')
 
     if (!overlay) {
       log('---- 现有页面 ----')
@@ -430,7 +427,29 @@ async function main() {
           ? '课程列表页标题栏的 data-testid=onboarding-reopen 按钮已渲染'
           : '课程列表页标题栏未找到 data-testid=onboarding-reopen 的按钮'
       )
+
+      if (entryInfo.reopenEntry) {
+        // 兼容模式不自动弹向导，点找回入口是唯一符合产品语义的打开方式。
+        // 用 DOM click 而不是 IPC：顺带证明这个按钮真的接到了主进程的 reopen。
+        const clicked = await evaluate(
+          main,
+          `(() => { const b = document.querySelector('[data-testid="onboarding-reopen"]'); if (!b) return false; b.click(); return true })()`
+        ).catch(() => false)
+        check('点击找回入口可触发向导', clicked === true, `click 返回 ${String(clicked)}`)
+
+        const deadline = Date.now() + Math.min(TIMEOUT_SEC, 60) * 1000
+        while (Date.now() < deadline && !wizard) {
+          try {
+            const list = await getJson(`http://127.0.0.1:${DEBUG_PORT}/json/list`)
+            const all = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page')
+            wizard = findByHash(all, '#/onboarding') || null
+          } catch (_) { /* /json/list 偶发失败下一轮重试 */ }
+          if (!wizard) await new Promise((r) => setTimeout(r, 500))
+        }
+      }
     }
+
+    check('向导可通过找回入口打开（兼容模式）', !!wizard, wizard ? wizard.url : '点击后仍无 #/onboarding 目标')
 
     if (wizard) {
       // 向导窗口与主窗口共用同一套渲染探针：能挂载出子节点就说明

@@ -59,6 +59,47 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
   const [language, setLanguage] = useState(course.language || 'auto')
   const [subtitleLang, setSubtitleLang] = useState(course.subtitleLang || 'both')
   const [customTerms, setCustomTerms] = useState((course.customTerms || []).join(', '))
+
+  // v4.4.1：识别模型（全局默认，可课程级覆盖）。base 快但中文课质量差，
+  // medium 明显更准但更慢。本地已就绪的模型才能选，避免选中后卡在下载。
+  interface AsrModelOption { size: string; installed: boolean; isDefault: boolean }
+  const [asrModels, setAsrModels] = useState<AsrModelOption[]>([])
+  const [asrModel, setAsrModel] = useState(course.modelSize || 'base')
+  const [modelNotice, setModelNotice] = useState('')
+  useEffect(() => {
+    fetch('/api/asr/config')
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then((data) => {
+        const list: AsrModelOption[] = Array.isArray(data.models) ? data.models : []
+        setAsrModels(list)
+        const def = typeof data.modelSize === 'string' ? data.modelSize : null
+        // 课程级 modelSize 优先；否则用后端全局默认
+        setAsrModel(prev => (course.modelSize ? prev : (def || prev)))
+      })
+      .catch(() => { /* 后端未就绪时保留本地默认值，不打扰用户 */ })
+  }, [course.modelSize])
+
+  const changeModel = async (size: string) => {
+    setAsrModel(size)
+    setModelNotice('')
+    try {
+      const res = await fetch('/api/asr/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelSize: size }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(typeof data.detail === 'string' ? data.detail : '切换失败')
+      }
+      setModelNotice(data.modelTakesEffectOnNextStart
+        ? '已切换，下次开始识别时生效（当前课程不受影响）'
+        : '已切换识别模型')
+      setAsrModels(prev => prev.map(m => ({ ...m, isDefault: m.size === size })))
+    } catch (err) {
+      setModelNotice(err instanceof Error ? err.message : '切换失败')
+    }
+  }
   // ADR-001 AI 术语生成（v4.0.0 从旧 CourseConfig 移植到新骨架，否则按钮在主路由里看不见）
   const [generatingTerms, setGeneratingTerms] = useState(false)
   const [termGenNotice, setTermGenNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
@@ -507,6 +548,24 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
               <option value="balanced">均衡</option>
               <option value="fast">快速</option>
             </select>
+          </label>
+          <label className="field">
+            <span>识别模型</span>
+            <select value={asrModel} onChange={(event) => void changeModel(event.target.value)}>
+              {asrModels.length > 0
+                ? asrModels.map(m => (
+                    <option key={m.size} value={m.size}>
+                      {m.size}{m.installed ? '' : '（未下载）'}{m.size === 'medium' ? ' · 更准' : ''}{m.size === 'base' ? ' · 更快' : ''}
+                    </option>
+                  ))
+                : <option value={asrModel}>{asrModel}</option>}
+            </select>
+          </label>
+          <label className="field field-full">
+            <span className="asr-model-hint">
+              中文课用 <strong>medium</strong> 字幕更准（繁体/复读更少）；实时性优先用 base。
+              {modelNotice ? <em>{modelNotice}</em> : null}
+            </span>
           </label>
           <label className="field">
             <span>所属领域</span>

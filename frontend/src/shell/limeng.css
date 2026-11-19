@@ -2179,6 +2179,20 @@
   color: var(--text-3);
 }
 
+.asr-model-hint {
+  display: block;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.asr-model-hint strong { color: var(--text-2); font-weight: 600; }
+.asr-model-hint em {
+  display: block;
+  margin-top: 2px;
+  color: var(--accent);
+  font-style: normal;
+}
+
 .dropzone {
   width: 100%;
   display: flex;

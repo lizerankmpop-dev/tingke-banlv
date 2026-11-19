@@ -43,6 +43,17 @@ _starting_courses: set[str] = set()
 # 再开始听课，开关又变回开启了。
 term_auto_degrade_default: bool = True
 
+# Whisper 识别模型的全局默认值（v4.4.1）
+#
+# 真实线下课录音实测：base 模型在中文课堂上繁体夹杂/复读/错字严重，
+# medium 语义明显连贯，但 CPU 上更慢（RTF 更高）。模型选择必须让用户
+# 能在界面上切换，而不是写死。与 term_auto_degrade 同理：真理源在桌面端
+# overlay.json，经 POST /api/asr/config 推过来，进程内缓存给「后启动的管道」
+# 与「试采预览」共用。课程级 course.modelSize 优先级更高。
+from asr.whisper_engine import DEFAULT_MODEL as _FALLBACK_WHISPER_MODEL
+SUPPORTED_WHISPER_MODELS = ("tiny", "base", "small", "medium", "large-v3")
+whisper_model_default: str = _FALLBACK_WHISPER_MODEL
+
 # 🔴 字幕读取上限（2026-11-15 真实线下课实测修复）
 # 原状：/subtitles 的 Query(le=500)，/export-srt 与 /sessions 内部又各写死 500/1000。
 # 29 分 47 秒真实课产生 715 条字幕 ⇒ 导出只拿到最新的 500 条，且 DB 按
@@ -265,6 +276,11 @@ def _course_config_for_asr(course: dict) -> dict:
         "micDeviceIndex": course.get("micDeviceIndex"),
         "agc": course.get("agc", False),
         "vadProfile": course.get("vadProfile", "far-field"),
+        # v4.4.3：模型规格必须透传给管道。此前 /asr/start 虽把
+        # whisper_model_default 注入了 course，但本函数重建字典时丢掉该键，
+        # 导致管道永远回退 DEFAULT_MODEL(base)——全局切 medium 对正式听课无效，
+        # 只有试采生效。中文字幕质量因此长期停在 base 的乱码水平。
+        "modelSize": course.get("modelSize"),
     }
 
 
@@ -1419,6 +1435,8 @@ class MicTestRequest(BaseModel):
     # v4.2.0（合并张春阳 4.1.3 update）：按需返回转写预览，不写库、不留录音。
     preview: bool = False
     language: Literal["auto", "en", "zh", "ja", "ko", "fr"] = "auto"
+    # v4.4.1：试采预览使用的模型规格，缺省跟随运行时默认值。
+    modelSize: Optional[str] = None
 
 
 @router.post("/audio/mic-test")
@@ -1454,14 +1472,22 @@ def _run_mic_test(req: MicTestRequest) -> dict:
         from asr.text_norm import normalize_cjk_spacing
         from asr.whisper_engine import _MODEL_DIR, get_simp_hint
 
-        if not ensure_model("base")["ok"]:
-            result["previewMessage"] = "本地 base 识别模型未就绪，请在模型设置中完成准备后重试。"
+        # v4.4.1：试采预览跟随运行时配置的模型，与正式听课保持一致。
+        # 以前写死 base —— 用户即便在界面切到 medium，试采预览仍用 base，
+        # 出现「试采字幕差、正式课却用 medium」的错觉。
+        preview_model = req.modelSize or whisper_model_default
+        if preview_model not in SUPPORTED_WHISPER_MODELS:
+            preview_model = _FALLBACK_WHISPER_MODEL
+        if not ensure_model(preview_model)["ok"]:
+            result["previewMessage"] = (
+                f"本地 {preview_model} 识别模型未就绪，请在模型设置中完成准备后重试。"
+            )
             return result
 
         # 仅转写这段内存录音，麦克风已经释放。试音不启动课程管道。
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         model = WhisperModel(
-            "base", device="cpu", compute_type="int8",
+            preview_model, device="cpu", compute_type="int8",
             download_root=_MODEL_DIR, local_files_only=True,
         )
         segments, _ = model.transcribe(
@@ -1860,6 +1886,13 @@ async def start_asr(
             extra = {"latencyProfile": extra.get("latencyProfile", "balanced")}
         course = {**course, **extra}
 
+    # v4.4.1：模型规格兜底。课程级 modelSize（用户在该课配置页选的）优先；
+    # 没设过则套用运行时全局默认（UI 上「全局识别模型」切换的结果）。
+    # pipeline 内部仍会以 course.modelSize > env > DEFAULT_MODEL 的顺序再取一次，
+    # 这里注入保证全局默认能被 pipeline 看见。
+    if not course.get("modelSize"):
+        course = {**course, "modelSize": whisper_model_default}
+
     # 🔴 **音频设备是独占的**（2026-10-29 加）
     #
     # 一个音频输出设备同一时刻只能被**一个** WASAPI 回环流使用。
@@ -1951,6 +1984,8 @@ class AsrConfigRequest(BaseModel):
     缺的字段按「不动」处理，避免把用户已经关掉的开关又冲回默认值。
     """
     termAutoDegrade: Optional[bool] = None
+    # v4.4.1：Whisper 模型规格（tiny/base/small/medium/large-v3）。
+    modelSize: Optional[str] = None
 
 
 @router.post("/asr/config")
@@ -1960,9 +1995,14 @@ async def config_asr(req: AsrConfigRequest):
 
     同时写进全局默认值：当前没有管道在跑时也要记住，否则用户「先改设置、
     后开始听课」这条最自然的操作路径会失效（改动被丢掉，开关看着没反应）。
+
+    模型规格（modelSize）只影响「之后启动的管道」与「试采预览」——已运行的
+    管道不会热切换模型（重建 Whisper 引擎代价大且会打断当前课），返回体里
+    用 modelTakesEffectOnNextStart 明确告知前端。
     """
-    global term_auto_degrade_default
-    applied: dict[str, bool] = {}
+    global term_auto_degrade_default, whisper_model_default
+    applied: dict = {}
+    model_takes_effect_next = False
 
     if req.termAutoDegrade is not None:
         term_auto_degrade_default = bool(req.termAutoDegrade)
@@ -1975,7 +2015,50 @@ async def config_asr(req: AsrConfigRequest):
         applied["termAutoDegrade"] = term_auto_degrade_default
         logger.info(f"术语提示词自动降级 = {'开启' if term_auto_degrade_default else '关闭'}")
 
-    return {"status": "ok", "applied": applied, "activePipelines": len(active_pipelines)}
+    if req.modelSize is not None:
+        wanted = str(req.modelSize).strip()
+        if wanted not in SUPPORTED_WHISPER_MODELS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"不支持的识别模型 {wanted!r}，可选：{', '.join(SUPPORTED_WHISPER_MODELS)}",
+            )
+        whisper_model_default = wanted
+        applied["modelSize"] = wanted
+        # 有管道在跑时，模型切换只能等下次启动；明确告知前端
+        model_takes_effect_next = len(active_pipelines) > 0
+        logger.info(f"Whisper 默认模型 = {wanted}（下次启动的管道与试采生效）")
+
+    return {
+        "status": "ok",
+        "applied": applied,
+        "activePipelines": len(active_pipelines),
+        "modelSize": whisper_model_default,
+        "modelTakesEffectOnNextStart": model_takes_effect_next,
+    }
+
+
+@router.get("/asr/config")
+async def get_asr_config():
+    """读取当前 ASR 配置：默认模型 + 每个候选模型的本地就绪状态（设置页展示用）。
+
+    deep=False 只比文件大小，毫秒级，不会阻塞 UI。
+    """
+    from asr.model_bootstrap import check_installed
+
+    models = []
+    for size in SUPPORTED_WHISPER_MODELS:
+        detail = check_installed(size, deep=False)
+        models.append({
+            "size": size,
+            "installed": bool(detail["ok"]),
+            "isDefault": size == whisper_model_default,
+        })
+    return {
+        "status": "ok",
+        "modelSize": whisper_model_default,
+        "models": models,
+        "activePipelines": len(active_pipelines),
+    }
 
 
 # ---------- LLM 运行时配置（云端模型 UI，v4.3.0）----------
