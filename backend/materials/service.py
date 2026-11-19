@@ -9,8 +9,11 @@
 2. 纯文本资料（TXT / MD）可被抽成「术语候选」，一键追加进自定义术语框（V7 术语层入口）；
 3. 纯文本资料同时进入答疑上下文（/api/ai/ask 的 context 前缀）。
 
-范围纪律（ADR-004 §2）：PDF / PPT / DOCX 本次**只登记不解析**（indexed=0），
-解析进路线图 —— 别在这里偷偷加 PyMuPDF。
+范围纪律（ADR-004 §2，2026-11-19 升级）：曾规定 PDF/PPT/DOCX 只登记不解析；
+现接入 markitdown（microsoft/markitdown）把这些格式转成 Markdown 再进上下文。
+markitdown 是**可选依赖**：未安装时本地格式降级为「登记但不解析」，不影响
+TXT/MD 与其余功能。图片等需要联网 OCR/字幕的格式，markitdown 依赖在线服务，
+界面会提示「联网可用」，联网后即可解析（不打断离线使用）。
 
 为什么不依赖 python-multipart：上传走 raw body（前端 `fetch(url, { body: file })`），
 文件名放 `X-Filename` 请求头。少一个依赖 = CI / 打包 / 新机克隆少一个翻车点。
@@ -30,9 +33,18 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 #: 扩展名白名单 —— 不在名单内的一律 400，别让上传窗口变成任意文件仓库
-ALLOWED_EXTS = {".txt", ".md", ".pdf", ".ppt", ".pptx", ".docx"}
-#: 这些扩展名可以抽文本（术语候选 + 答疑上下文）
+#: 2026-11-19 扩展：新增 xlsx/html/csv/json/xml 与常见图片格式（markitdown 可处理）
+ALLOWED_EXTS = {
+    ".txt", ".md", ".pdf", ".ppt", ".pptx", ".docx",
+    ".xlsx", ".html", ".htm", ".csv", ".json", ".xml",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp",
+}
+#: 原生 UTF-8 可读的纯文本（无需转换）
 TEXT_EXTS = {".txt", ".md"}
+#: 需要 markitdown 转成 md 才能进上下文的格式
+MARKITDOWN_EXTS = ALLOWED_EXTS - TEXT_EXTS
+#: 这些格式 markitdown 的图片字幕/OCR 依赖联网服务；离线时登记但不解析
+NETWORK_HINT_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 #: 单文件上限（20MB）。测试会 monkeypatch 这个值，别写成常量表达式
 MAX_SIZE_BYTES = 20 * 1024 * 1024
@@ -129,8 +141,10 @@ def save_material(course_id: str, filename: str, data: bytes) -> dict:
         "name": final_name,
         "ext": ext,
         "size": len(data),
-        # 纯文本才进答疑上下文/术语候选；其余只登记（ADR-004 L1 纪律）
-        "indexed": 1 if ext in TEXT_EXTS else 0,
+        # 白名单内格式都尝试解析（TXT/MD 直读，其余走 markitdown 转 md）；
+        # 转换失败（缺依赖 / 图片需联网）时 read_material_text 返回空串，
+        # 不会污染上下文。前端按扩展名自行提示图片需联网。
+        "indexed": 1,
     }
 
 
@@ -148,12 +162,76 @@ def delete_course_materials(course_id: str) -> None:
     shutil.rmtree(materials_root() / course_id, ignore_errors=True)
 
 
-def read_material_text(course_id: str, name: str) -> str:
-    """读纯文本资料。读不到（被删/编码怪异）返回空串，不抛 —— 答疑上下文要尽力而为。"""
-    target = materials_root() / course_id / sanitize_filename(name)
+#: markitdown 转换结果缓存：(<mtime_ns>, text)。同一份资料会被术语候选与答疑
+#: 各读一次，PDF/DOCX 转换动辄数百毫秒，缓存避免重复开销；文件被改写时
+#: mtime_ns 变化会自动失效。进程内缓存，不落盘。
+_CONVERT_CACHE: dict[str, tuple[int, str]] = {}
+
+#: markitdown 首次导入结果（None=未探测，False=不可用，对象=转换器）。
+#: 用模块级缓存避免每次读文件都付 import 开销（markitdown 依赖链很重）。
+_MARKITDOWN: object = None
+_MARKITDOWN_PROBED = False
+
+
+def _get_markitdown():
+    """懒加载 markitdown；未安装或导入失败返回 None（本地格式降级为不解析）。"""
+    global _MARKITDOWN, _MARKITDOWN_PROBED
+    if _MARKITDOWN_PROBED:
+        return _MARKITDOWN or None
+    _MARKITDOWN_PROBED = True
     try:
-        return target.read_text(encoding="utf-8", errors="ignore")
+        from markitdown import MarkItDown
+        _MARKITDOWN = MarkItDown()
+        logger.info("markitdown 已就绪：支持 PDF/DOCX/PPTX/XLSX/HTML 等转 Markdown")
+    except Exception as e:
+        logger.warning("markitdown 不可用，非文本资料将只登记不解析：%s", e)
+        _MARKITDOWN = None
+    return _MARKITDOWN or None
+
+
+def read_material_text(course_id: str, name: str) -> str:
+    """读资料文本并进上下文：TXT/MD 直读，其余用 markitdown 转 Markdown。
+
+    读不到 / 转换失败（缺依赖、图片需联网却离线）返回空串，不抛 ——
+    答疑上下文要尽力而为，一份资料坏掉不能拖垮整个 AI 功能。
+    """
+    target = materials_root() / course_id / sanitize_filename(name)
+    ext = target.suffix.lower()
+    try:
+        stat = target.stat()
     except OSError:
+        return ""
+
+    if ext in TEXT_EXTS:
+        try:
+            return target.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return ""
+
+    if ext in NETWORK_HINT_EXTS:
+        logger.debug("资料 %s 是图片，markitdown 字幕/OCR 需联网服务", name)
+
+    converter = _get_markitdown()
+    if converter is None:
+        return ""
+
+    # 缓存命中且文件未变 → 直接返回
+    key = f"{course_id}/{name}"
+    cached = _CONVERT_CACHE.get(key)
+    if cached is not None and cached[0] == stat.st_mtime_ns:
+        return cached[1]
+
+    try:
+        result = converter.convert(str(target))
+        text = (result.markdown or "") if hasattr(result, "markdown") else str(result)
+        text = str(text).strip()
+        # 只缓存成功结果；空串也缓存（避免联网不可用时反复尝试拖慢轮询）
+        _CONVERT_CACHE[key] = (stat.st_mtime_ns, text)
+        if not text and ext in NETWORK_HINT_EXTS:
+            logger.info("资料 %s 未提取到文本（图片 OCR 需联网），联网后重新上传即可解析", name)
+        return text
+    except Exception as e:
+        logger.warning("资料 %s 转 Markdown 失败：%s", name, e)
         return ""
 
 

@@ -32,7 +32,7 @@ function LogoMark({ size = 34 }: { size?: number }) {
   )
 }
 
-export type Screen = 'courses' | 'recognition' | 'config' | 'review' | 'vocabulary'
+export type Screen = 'courses' | 'recognition' | 'config' | 'review' | 'vocabulary' | 'chapter-summary' | 'exports'
 
 interface SidebarProps {
   screen: Screen

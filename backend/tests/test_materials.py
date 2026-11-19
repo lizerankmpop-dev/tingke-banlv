@@ -98,10 +98,15 @@ def test_upload_txt_indexed_and_listed(client, course_id):
     assert any(m["name"] == "讲义.txt" for m in listed)
 
 
-def test_upload_pdf_registered_but_not_indexed(client, course_id):
+def test_upload_pdf_indexed_for_markitdown(client, course_id):
+    """v4.3.0：PDF 走 markitdown 转 md 进上下文，标为 indexed。
+
+    转换本身可能失败（缺依赖 / 假 PDF），但那只影响 read_material_text 返回
+    空串，不影响这里「标为可解析」的语义 —— 界面据此显示「已解析」。
+    """
     r = _upload(client, course_id, "课件.pdf", b"%PDF-1.4 fake")
     assert r.status_code == 200, r.text
-    assert r.json()["indexed"] is False
+    assert r.json()["indexed"] is True
 
 
 def test_upload_rejects_bad_extension_and_empty(client, course_id):
@@ -177,8 +182,9 @@ def test_terms_endpoint_returns_candidates(client, course_id):
     r = client.post(f"/api/courses/{course_id}/materials/terms")
     assert r.status_code == 200, r.text
     body = r.json()
-    # PDF 不计入 fromFiles，其内容也不产生候选
-    assert body["fromFiles"] == 1
+    # v4.3.0：PDF 现在也标为已解析（走 markitdown），故计入 fromFiles；
+    # 但这份是假 PDF，转不出内容，不会产生额外候选 —— 候选仍只来自 TXT。
+    assert body["fromFiles"] == 2
     assert "sterile technique" in body["terms"]
     assert "asepsis" in body["terms"]
     assert "无菌操作" in body["terms"]

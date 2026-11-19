@@ -213,8 +213,10 @@ class AudioCapture:
         sample_rate: int = SAMPLE_RATE,
         chunk_size: int = CHUNK_SIZE,
         device_index: Optional[int] = None,  # 手动指定设备
+        on_error: Optional[Callable[[str], None]] = None,  # 采集失败上报（替代静默退出）
     ):
         self.on_audio_chunk = on_audio_chunk
+        self.on_error = on_error
         self.mode = mode
         self.sample_rate = sample_rate          # 输出采样率，固定 16000
         self.chunk_size = chunk_size
@@ -246,6 +248,19 @@ class AudioCapture:
         self.retry_max_delay = 10.0   # 退避上限 10s（1→2→4→8→10→10…）
         self._chunk_count = 0
         self._dropped = 0
+
+    def _report_error(self, message: str) -> None:
+        """把采集失败透给上层（pipeline → 前端），绝不静默退出。
+
+        回调本身也可能抛异常（上层在做 IPC / 队列操作），这里吞掉以免
+        拖垮采集线程的 finally 清理。
+        """
+        if self.on_error is None:
+            return
+        try:
+            self.on_error(message)
+        except Exception as e:
+            logger.debug(f"采集错误上报回调失败: {e}")
 
     # ---------- 生命周期 ----------
 
@@ -295,6 +310,19 @@ class AudioCapture:
             if device_index != self._device_index:
                 self._device_index = device_index
                 self._device_changed.set()
+
+    def health_snapshot(self) -> dict:
+        """采集线程健康快照，供 /asr/poll 判断「管道在跑但没有真音频」。
+
+        三类失败此前都是静默的（找不到设备 / 重试耗尽 / 线程意外退出）：
+        `_running` 被置 False，但 pipeline 仍在 active_pipelines 里 ⇒ 前端
+        一直显示「等待音频输入...」。把这份快照透出去，前端才能区分
+        「设备没在采」和「采到了但没人说话」。
+        """
+        return {
+            "captureAlive": bool(self._running and self._thread and self._thread.is_alive()),
+            "audioChunks": self._chunk_count,
+        }
 
     # ---------- 设备枚举 ----------
 
@@ -487,7 +515,13 @@ class AudioCapture:
                     device_index = self._find_microphone_device(self._pyaudio)
 
                 if device_index is None:
-                    logger.error(f"未找到可用的音频设备 (模式: {self.mode})")
+                    msg = (
+                        "未检测到可用的麦克风，请检查设备连接与系统权限"
+                        if self.mode == "microphone"
+                        else "未检测到系统音频（回环）设备，请确认正在播放课程声音或已安装虚拟声卡"
+                    )
+                    logger.error(f"{msg} (模式: {self.mode})")
+                    self._report_error(msg)
                     if self.mode != "microphone":
                         self._running = False
                     return
@@ -602,8 +636,9 @@ class AudioCapture:
                     e = e2
 
             if e is not None:
-                logger.error(f"音频捕获错误（重试 {attempt} 次后仍失败）: "
-                             f"{type(e).__name__}: {e}")
+                msg = f"音频采集持续失败（已重试 {attempt} 次），请检查音频设备是否被其它程序独占"
+                logger.error(f"{msg}: {type(e).__name__}: {e}")
+                self._report_error(msg)
                 if self.mode != "microphone":
                     self._running = False
         finally:
@@ -699,7 +734,19 @@ class AudioCapture:
         with _CrossProcessGuard():
             cached = _DEFAULT_LOOPBACK_INDEX_CACHE
         if cached is not None:
-            return cached
+            # 🔴 索引漂移防护（2026-11-19）：缓存命中≠设备还在。用户插拔声卡、
+            #    重装驱动、切换系统输出后，同一个 index 可能已指向别的设备或失效。
+            #    开流前用 get_device_info_by_index 校验一次；失效就清缓存重新枚举。
+            #    这次校验仍在同一把 PortAudio 锁内，不会重新引入并发断言。
+            try:
+                info = pyaudio_obj.get_device_info_by_index(cached)
+                if info and info.get("maxInputChannels", 0) > 0:
+                    return cached
+                logger.warning(f"缓存的回环设备 index={cached} 已无输入通道，重新枚举")
+            except Exception as e:
+                logger.warning(f"缓存的回环设备 index={cached} 校验失败（{e}），重新枚举")
+            with _CrossProcessGuard():
+                _DEFAULT_LOOPBACK_INDEX_CACHE = None
 
         # 防线 1：枚举串行化
         with _CrossProcessGuard():

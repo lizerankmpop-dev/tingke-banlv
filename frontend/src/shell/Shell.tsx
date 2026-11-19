@@ -6,13 +6,18 @@ import { useOverlayStore } from '../stores/useOverlayStore'
 import { vocabularyApi, type DueSummary } from '../lib/vocabularyApi'
 import { getDiagInfo } from '../lib/diagBridge'
 import { onboardingBridge } from '../lib/onboardingBridge'
+import { readDefaultCourseType } from '../lib/defaultCourseType'
+import { loadLocalLLMConfig, mergeLLMConfig, getLLMConfig, putLLMConfig } from '../lib/llmConfigApi'
 import { Toast } from '../components/ui/Toast'
 import { Sidebar, type Screen } from './components/Sidebar'
 import { CoursesPage, NewCourseModal, type NewCoursePayload } from './pages/CoursesPage'
 import { RecognitionPage } from './pages/RecognitionPage'
+import { ChapterSummaryPage } from './pages/ChapterSummaryPage'
+import { ExportsPage } from './pages/ExportsPage'
 import { ConfigPage } from './pages/ConfigPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { VocabPage } from './pages/VocabPage'
+import type { SummaryDraft } from '../lib/chapterApi'
 import { WordPanelDrawer } from './components/WordPanelDrawer'
 import './limeng.css'
 
@@ -55,6 +60,7 @@ export default function Shell() {
   const [version, setVersion] = useState('')
   const [showHelp, setShowHelp] = useState(false)
   const [showOverlayPanel, setShowOverlayPanel] = useState(false)
+  const [summaryDraft, setSummaryDraft] = useState<SummaryDraft | null>(null)
   const initializeOverlay = useOverlayStore(state => state.init)
   const highContrast = useOverlayStore(state => state.settings.highContrast)
 
@@ -70,6 +76,15 @@ export default function Shell() {
     void loadCourses()
     vocabularyApi.dueSummary().then(setDueSummary).catch(() => {})
     void getDiagInfo().then((info) => { if (info?.version) setVersion(info.version) }).catch(() => {})
+    // 恢复上次保存的 LLM 配置到后端运行时（后端配置不落盘，重启会丢）。
+    // 只有本地真的存过配置才推送，避免覆盖由环境变量注入的部署配置。
+    void (async () => {
+      const local = loadLocalLLMConfig()
+      if (!local) return
+      const server = await getLLMConfig()
+      const merged = mergeLLMConfig(server, local)
+      await putLLMConfig(merged)
+    })()
   }, [loadCourses])
 
   // 收藏成功后刷新到期概览（侧栏计数）
@@ -109,8 +124,23 @@ export default function Shell() {
     setScreen('config')
   }
 
-  function openNewCourse(type: 'online' | 'offline' = 'online') {
-    setNewCourseType(type)
+  // D7：「结束并总结」后带着摘要草稿跳到章节保存页；保存完回识别页。
+  // 草稿存 state 而不是 URL，避免刷新后重复触发生成（一次摘要要十几秒）。
+  function openChapterSummary(courseId: string, draft: SummaryDraft) {
+    setSelectedCourseId(courseId)
+    setSummaryDraft(draft)
+    closeWordPanel()
+    setScreen('chapter-summary')
+  }
+
+  function backFromChapterSummary() {
+    setSummaryDraft(null)
+    setScreen('recognition')
+  }
+
+  function openNewCourse(type?: 'online' | 'offline') {
+    // 没显式指定时，用首启向导第 2 步保存的使用场景作为默认类型
+    setNewCourseType(type ?? readDefaultCourseType() ?? 'online')
     setShowNewCourse(true)
   }
 
@@ -147,14 +177,14 @@ export default function Shell() {
         counts={counts}
         dueCount={dueCount}
         wordCount={wordCount}
-        version={version || '4.2.0'}
+        version={version || '4.3.0'}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         coursesExpanded={coursesExpanded}
         onToggleCourses={() => setCoursesExpanded((v) => !v)}
         onNavigate={navigate}
         onNewCourse={() => openNewCourse()}
-        onExport={() => navigate('vocabulary')}
+        onExport={() => navigate('exports')}
         onSettings={() => setShowOverlayPanel(true)}
         onOpenGuide={() => void onboardingBridge.reopen()}
         onHelp={() => setShowHelp(true)}
@@ -181,7 +211,23 @@ export default function Shell() {
             onOpenConfig={() => openConfig(selectedCourse.id)}
             onOpenOverlaySettings={() => setShowOverlayPanel(true)}
             onGoReview={() => navigate('review')}
+            onOpenChapterSummary={(draft) => openChapterSummary(selectedCourse.id, draft)}
             onSelectWord={(word) => void selectWord(word)}
+            onToast={setToast}
+          />
+        )}
+
+        {screen === 'chapter-summary' && selectedCourse && summaryDraft && (
+          <ChapterSummaryPage
+            key={selectedCourse.id}
+            course={selectedCourse}
+            draft={summaryDraft}
+            onBack={backFromChapterSummary}
+            onSaved={(_chapterId, chapterName) => {
+              setSummaryDraft(null)
+              setScreen('recognition')
+              setToast(`总结已保存到「${chapterName}」`)
+            }}
             onToast={setToast}
           />
         )}
@@ -209,6 +255,14 @@ export default function Shell() {
         {screen === 'vocabulary' && (
           <VocabPage
             onSelectWord={(word) => void selectWord(word)}
+            onToast={setToast}
+          />
+        )}
+
+        {screen === 'exports' && (
+          <ExportsPage
+            onBack={() => navigate('courses', 'all')}
+            onGoCourses={() => navigate('courses', 'all')}
             onToast={setToast}
           />
         )}

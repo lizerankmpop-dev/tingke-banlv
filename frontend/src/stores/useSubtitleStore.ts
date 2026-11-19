@@ -4,7 +4,7 @@ import type { SubtitleLine, VocabularyEntry, ASRStatus, TermGuardStats, Translat
 import { useCourseStore } from './useCourseStore'
 import { overlayBridge } from '../lib/overlayBridge'
 import { useClassroomAudioStore } from './useClassroomAudioStore'
-import { readMicrophoneMeter } from '../lib/classroomAudio'
+import { readMicrophoneMeter, readCaptureHealth } from '../lib/classroomAudio'
 import type { MicrophoneMeter } from '../lib/classroomAudio'
 
 /**
@@ -214,6 +214,19 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
         set(state => ({
           microphoneMeter: readMicrophoneMeter(state.microphoneMeter, data, performance.now()),
         }))
+
+        // 🔴 采集健康兜底（2026-11-19）：后端显式上报 captureAlive=false 时，
+        //    说明音频采集线程已死（设备丢失/被独占/找不到设备），此时管道还在
+        //    active_pipelines 里 ⇒ poll 的 status 仍是 running。若不拦截，界面会
+        //    永远停在「等待音频输入...」。这里直接切成 error 提示用户去检查设备。
+        //    只在明确拿到 false 且当前不是 error/已停止时才覆盖，避免反复刷提示。
+        const health = readCaptureHealth(data)
+        if (health.captureAlive === false
+            && data.status === 'running'
+            && get().asrStatus !== 'error') {
+          get().setASRStatus('error', '音频采集已中断，请检查设备连接后重新开始识别')
+          return
+        }
 
         if (data.status === 'not_running') {
           // 启动宽限期内：管道还在构造/加载模型，not_running 是预期的，

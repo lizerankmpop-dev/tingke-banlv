@@ -144,6 +144,8 @@ class ASRPipeline:
             on_audio_chunk=self._on_audio_chunk,
             mode="microphone" if self._offline else "loopback",
             device_index=course_config.get("micDeviceIndex") if self._offline else None,
+            # 采集线程静默死掉是「假识别」的根源；现在真正上报到前端状态
+            on_error=lambda msg: self.on_status("error", msg),
         )
 
     async def start(self):
@@ -369,16 +371,27 @@ class ASRPipeline:
         self._capture.select_microphone(device_index)
 
     def input_meter(self) -> dict:
-        if not self._offline or not self._meter_started or self._paused:
-            return {}
+        # 采集健康度两种模式都要上报（在线课也可能「回环设备没在采」）。
+        # 电平表（inputLevel/agcGainDb）只对线下麦克风有意义，避免在线课误显示。
+        health: dict = {}
+        try:
+            health = self._capture.health_snapshot()
+        except Exception:
+            pass
+        if not self._meter_started or self._paused:
+            return health
+        if not self._offline:
+            return health
         sampled_at, level, gain = self._input_sample
         if time.monotonic() - sampled_at > 1:
             level, gain = 0.0, None
-        return {
+        meter = {
             "inputLevel": level,
             "agcGainDb": gain,
             "micDeviceIndex": self._capture.active_device_index,
         }
+        meter.update(health)
+        return meter
 
     def _on_audio_chunk(self, audio: np.ndarray):
         """音频块到达 → VAD"""

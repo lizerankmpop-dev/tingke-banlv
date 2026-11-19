@@ -408,6 +408,19 @@ class CreateChapterRequest(BaseModel):
     name: str
 
 
+class ChapterSummaryRequest(BaseModel):
+    summary: str
+
+
+class ExportRecordRequest(BaseModel):
+    courseId: str = ""
+    courseName: str = ""
+    kind: str
+    format: str
+    fileName: str = ""
+    rowCount: int = 0
+
+
 @router.get("/courses/{course_id}/chapters")
 async def list_chapters(course_id: str):
     """章节列表（按创建顺序）"""
@@ -440,6 +453,52 @@ async def delete_chapter(course_id: str, chapter_id: str):
     record = await db.delete_chapter(chapter_id, course_id=course_id)
     if not record:
         raise HTTPException(status_code=404, detail="章节不存在")
+    return {"ok": True}
+
+
+@router.put("/courses/{course_id}/chapters/{chapter_id}/summary")
+async def save_chapter_summary(course_id: str, chapter_id: str, req: ChapterSummaryRequest):
+    """保存「结束并总结」产生的章节总结。
+
+    归属校验放在 db.update_chapter_summary 内部（course_id + chapter_id 双条件），
+    避免 B 课能覆盖 A 课章节的总结 —— 与 delete_chapter 同类缺陷的预防。
+    """
+    summary = req.summary.strip()
+    if not summary:
+        raise HTTPException(status_code=400, detail="总结内容不能为空")
+    record = await db.update_chapter_summary(chapter_id, course_id, summary[:20000])
+    if not record:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return {"ok": True, **record}
+
+
+# ============ 导出记录 API（D10）============
+
+_EXPORT_KINDS = {"subtitles", "vocabulary"}
+_EXPORT_FORMATS = {"md", "srt", "csv", "json"}
+
+
+@router.get("/exports")
+async def list_exports():
+    """导出历史（ newest first）。空列表由前端渲染「没有记录」空态。"""
+    return {"records": await db.list_export_records()}
+
+
+@router.post("/exports")
+async def add_export(req: ExportRecordRequest):
+    """前端成功触发下载后才回调这里，避免把取消/失败的导出记进去。"""
+    if req.kind not in _EXPORT_KINDS or req.format not in _EXPORT_FORMATS:
+        raise HTTPException(status_code=400, detail="导出类型或格式不合法")
+    return await db.add_export_record(
+        req.courseId[:80], req.courseName[:120], req.kind, req.format,
+        req.fileName[:200], max(0, min(req.rowCount, 1_000_000)),
+    )
+
+
+@router.delete("/exports/{record_id}")
+async def delete_export(record_id: str):
+    if not await db.delete_export_record(record_id):
+        raise HTTPException(status_code=404, detail="记录不存在")
     return {"ok": True}
 
 
@@ -1858,6 +1917,35 @@ async def config_asr(req: AsrConfigRequest):
         logger.info(f"术语提示词自动降级 = {'开启' if term_auto_degrade_default else '关闭'}")
 
     return {"status": "ok", "applied": applied, "activePipelines": len(active_pipelines)}
+
+
+# ---------- LLM 运行时配置（云端模型 UI，v4.3.0）----------
+
+class LLMConfigRequest(BaseModel):
+    """运行时 LLM 配置：空串字段表示清除覆盖、回退到环境变量。"""
+    provider: Optional[str] = None
+    cloudApiBase: Optional[str] = None
+    cloudApiKey: Optional[str] = None
+    cloudModel: Optional[str] = None
+    ollamaModel: Optional[str] = None
+
+
+@router.get("/llm/config")
+async def get_llm_config():
+    """读取当前 LLM 配置（API key 只回显是否已设置，不回传明文）"""
+    from llm.chains.base import get_runtime_llm_config
+
+    return {"status": "ok", "config": get_runtime_llm_config()}
+
+
+@router.put("/llm/config")
+async def put_llm_config(req: LLMConfigRequest):
+    """更新运行时 LLM 配置（立即生效，无需重启；持久化由桌面端 overlay.json 负责）"""
+    from llm.chains.base import set_runtime_llm_config, get_provider
+
+    config = set_runtime_llm_config(req.model_dump(exclude_none=True))
+    logger.info(f"LLM 运行时配置已更新：provider={config['provider']}（key 已设置={config['cloudApiKeySet']}）")
+    return {"status": "ok", "config": config, "provider": get_provider()}
 
 
 @router.get("/asr/poll")

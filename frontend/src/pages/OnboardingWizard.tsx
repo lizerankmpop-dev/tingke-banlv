@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   PartyPopper, MonitorPlay, School, Cpu, MousePointerClick, Move, RotateCcw,
-  Keyboard, BookOpenCheck, ShieldCheck, X, Loader2, CheckCircle2, AlertCircle, FileDown,
+  Keyboard, BookOpenCheck, ShieldCheck, X, Loader2, CheckCircle2, AlertCircle, FileDown, Check,
 } from 'lucide-react'
 import {
   HOTKEYS, STEP4_KEYS, STEP_TITLES, TOTAL_STEPS, WIZARD_COPY,
@@ -10,6 +10,7 @@ import {
 } from '../lib/onboarding'
 import { onboardingBridge, probeBackend } from '../lib/onboardingBridge'
 import { hostBridge, overlayBridge } from '../lib/overlayBridge'
+import { readDefaultCourseType, writeDefaultCourseType, type CourseType } from '../lib/defaultCourseType'
 
 /**
  * 首启向导（独立窗口，路由 `#/onboarding`）
@@ -37,7 +38,15 @@ export default function OnboardingWizard() {
   const [notice, setNotice] = useState<string | null>(null)
   /** null = 还没读到（IPC 未返回）；true/false = 真实值 */
   const [termAutoDegrade, setTermAutoDegrade] = useState<boolean | null>(null)
+  /** 第 2 步选择的使用场景：null 表示还没选；初值读自偏好（重看向导时回填上次选择） */
+  const [scenario, setScenario] = useState<CourseType | null>(() => readDefaultCourseType())
   const attemptsRef = useRef(0)
+
+  /** 选中场景：立即写偏好，作为之后新建课程的默认类型（与主窗口同源共享） */
+  const chooseScenario = useCallback((type: CourseType) => {
+    setScenario(type)
+    writeDefaultCourseType(type)
+  }, [])
 
   /**
    * 埋点：每进入一步上报一次
@@ -177,7 +186,7 @@ export default function OnboardingWizard() {
         <div style={styles.body}>
           <h1 style={styles.title}>{STEP_TITLES[step - 1]}</h1>
           {step === 1 && <Step1 />}
-          {step === 2 && <Step2 />}
+          {step === 2 && <Step2 selected={scenario} onSelect={(t) => chooseScenario(t)} />}
           {step === 3 && (
             <Step3
               phase={phase}
@@ -243,14 +252,21 @@ function Step1() {
   )
 }
 
-function Step2() {
-  const cards = [
+function Step2({
+  selected, onSelect,
+}: {
+  selected: CourseType | null
+  onSelect: (type: CourseType) => void
+}) {
+  const cards: { type: CourseType; icon: React.ReactNode; title: string; rows: string[] }[] = [
     {
+      type: 'online',
       icon: <MonitorPlay size={18} color="var(--accent-light)" />,
       title: WIZARD_COPY.step2OnlineTitle,
       rows: [WIZARD_COPY.step2OnlineSource, WIZARD_COPY.step2OnlineHow, WIZARD_COPY.step2OnlineLang, WIZARD_COPY.step2OnlineSetup],
     },
     {
+      type: 'offline',
       icon: <School size={18} color="var(--accent-light)" />,
       title: WIZARD_COPY.step2ClassroomTitle,
       rows: [WIZARD_COPY.step2ClassroomSource, WIZARD_COPY.step2ClassroomHow, WIZARD_COPY.step2ClassroomLang, WIZARD_COPY.step2ClassroomSetup],
@@ -259,12 +275,30 @@ function Step2() {
   return (
     <>
       <div style={styles.twoCol}>
-        {cards.map((c) => (
-          <div key={c.title} style={styles.sceneCard}>
-            <div style={styles.sceneHead}>{c.icon}<strong>{c.title}</strong></div>
-            {c.rows.map((r) => <div key={r} style={styles.sceneRow}>{r}</div>)}
-          </div>
-        ))}
+        {cards.map((c) => {
+          const active = selected === c.type
+          return (
+            <button
+              key={c.type}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onSelect(c.type)}
+              style={{
+                ...styles.sceneCard,
+                ...styles.sceneCardButton,
+                ...(active ? styles.sceneCardActive : null),
+              }}
+            >
+              <div style={styles.sceneHead}>
+                {c.icon}
+                <strong>{c.title}</strong>
+                <span style={styles.sceneCheck} aria-hidden="true">{active ? <Check size={14} /> : null}</span>
+              </div>
+              {c.rows.map((r) => <div key={r} style={styles.sceneRow}>{r}</div>)}
+            </button>
+          )
+        })}
       </div>
       <div style={styles.tip}>
         <div style={styles.blockTitle}>{WIZARD_COPY.step2TipTitle}</div>
@@ -556,7 +590,18 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
     padding: '10px 10px', background: 'var(--bg-tertiary)',
   },
+  // 卡片是真正的按钮：pointer 光标 + 左对齐文本复位（button 默认居中）
+  sceneCardButton: {
+    cursor: 'pointer', textAlign: 'left', color: 'inherit',
+    font: 'inherit', transition: 'border-color .15s, background .15s, box-shadow .15s',
+  },
+  sceneCardActive: {
+    borderColor: 'var(--accent)',
+    background: 'var(--accent-glow)',
+    boxShadow: '0 0 0 1px var(--accent) inset',
+  },
   sceneHead: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 8 },
+  sceneCheck: { marginLeft: 'auto', display: 'inline-flex', color: 'var(--accent-light)', minWidth: 14 },
   sceneRow: { fontSize: 11, lineHeight: 1.6, color: 'var(--text-secondary)' },
   tip: {
     fontSize: 12, lineHeight: 1.6, color: 'var(--text-secondary)',

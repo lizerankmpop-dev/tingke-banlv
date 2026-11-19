@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createElement } from 'react'
 import type { DragEvent } from 'react'
 import {
-  AlertCircle, ArrowLeft, ArrowRight, Brain, Check, CheckCircle2, ChevronDown, Download,
+  AlertCircle, ArrowLeft, ArrowRight, BookOpen, Brain, Check, CheckCircle2, ChevronDown, Download,
   Globe, GripVertical, Lock, Notebook, Pause, Play, Plus, RefreshCw, Sparkles,
 } from 'lucide-react'
 import { IconButton } from '../../components/ui/IconButton'
@@ -11,6 +11,7 @@ import { HighlightedText } from '../components/HighlightedText'
 import { SubtitleExportPanel } from '../components/SubtitleExportPanel'
 import { CourseScreenCapture } from '../components/CourseScreenCapture'
 import { readCourseURL } from '../../lib/courseDrop'
+import { generateSummary, listChapters, createChapter, type ChapterRow, type SummaryDraft } from '../../lib/chapterApi'
 import { useSubtitleStore } from '../../stores/useSubtitleStore'
 import { useCourseStore } from '../../stores/useCourseStore'
 import { useOverlayStore } from '../../stores/useOverlayStore'
@@ -40,6 +41,7 @@ interface RecognitionPageProps {
   onOpenOverlaySettings: () => void
   onGoReview: () => void
   onSelectWord: (word: string) => void
+  onOpenChapterSummary: (draft: SummaryDraft) => void
   onToast: (message: string) => void
 }
 
@@ -50,6 +52,7 @@ export function RecognitionPage({
   onOpenOverlaySettings,
   onGoReview,
   onSelectWord,
+  onOpenChapterSummary,
   onToast,
 }: RecognitionPageProps) {
   const online = isOnline(course)
@@ -115,7 +118,14 @@ export function RecognitionPage({
   const [webFill, setWebFill] = useState(false)
   const [showLegacyWeb, setShowLegacyWeb] = useState(false)
   const [ending, setEnding] = useState(false)
-  const [summaryRequest, setSummaryRequest] = useState(0)
+  // D7：历史刷新与摘要生成解耦——结束并总结后只刷新会话/章节，
+  // 摘要草稿由保存页承载，避免同一次点击触发两遍 LLM（十几秒 × 2）。
+  const [historyRefresh, setHistoryRefresh] = useState(0)
+  // D7：下次进课的章节目录 + 是否新建章节询问
+  const [resumeChapters, setResumeChapters] = useState<ChapterRow[]>([])
+  const [resumeDismissed, setResumeDismissed] = useState(false)
+  const [resumeChapterName, setResumeChapterName] = useState('')
+  const [creatingChapter, setCreatingChapter] = useState(false)
   const pageActive = useRef(false)
   useEffect(() => {
     pageActive.current = true
@@ -126,13 +136,53 @@ export function RecognitionPage({
     if (ending) return
     setEnding(true)
     const stopped = await disconnectASR()
-    if (!pageActive.current) return
-    setEnding(false)
     if (!stopped) {
-      onToast('未能确认识别已结束，请检查连接后重试')
+      if (pageActive.current) {
+        setEnding(false)
+        onToast('未能确认识别已结束，请检查连接后重试')
+      }
       return
     }
-    setSummaryRequest(request => request + 1)
+    // AI 不可用也照常跳转：保存页允许手写总结，不再把失败埋在侧栏里。
+    let draft: SummaryDraft
+    try {
+      draft = await generateSummary(course.id)
+    } catch {
+      draft = { available: false, summary: '', key_points: [], review_words: [], message: '无法连接摘要服务，请手写本节总结' }
+    }
+    if (!pageActive.current) return
+    setEnding(false)
+    setHistoryRefresh(value => value + 1)
+    onOpenChapterSummary(draft)
+  }
+
+  useEffect(() => {
+    const controller = new AbortController()
+    listChapters(course.id, controller.signal)
+      .then((rows) => {
+        if (controller.signal.aborted) return
+        setResumeChapters(rows)
+        setResumeChapterName(`第 ${rows.length + 1} 讲`)
+      })
+      .catch(() => { /* 章节目录读取失败不阻塞识别 */ })
+    return () => controller.abort()
+  }, [course.id, historyRefresh])
+
+  async function createResumeChapter() {
+    const name = resumeChapterName.trim()
+    if (!name || creatingChapter) return
+    setCreatingChapter(true)
+    try {
+      const created = await createChapter(course.id, name)
+      // 下一次点「开始」时，connectASR 会把新字幕挂到这一章
+      archiveChapterRef.current = created.id
+      setResumeDismissed(true)
+      onToast(`已新建「${name}」，点开始后新字幕会归档到该章节`)
+    } catch {
+      onToast('章节创建失败，请检查本地服务后重试')
+    } finally {
+      setCreatingChapter(false)
+    }
   }
 
   const listening = asrStatus === 'listening' || asrStatus === 'processing'
@@ -231,6 +281,34 @@ export function RecognitionPage({
         </div>
       </div>
 
+      {resumeChapters.length > 0 && !resumeDismissed ? (
+        <div className="resume-chapter-banner" role="status">
+          <div className="resume-chapter-head">
+            <BookOpen size={15} />
+            <strong>本节课程章节</strong>
+            <span className="resume-chapter-count">共 {resumeChapters.length} 讲</span>
+            <button type="button" className="text-btn" onClick={() => setResumeDismissed(true)}>关闭</button>
+          </div>
+          <div className="resume-chapter-list">
+            {resumeChapters.map((chapter) => (
+              <span key={chapter.id} className={chapter.summary ? 'has-summary' : ''}>
+                {chapter.name}{chapter.summary ? ' · 已总结' : ' · 未总结'}
+              </span>
+            ))}
+          </div>
+          <div className="resume-chapter-ask">
+            <span>为这节课新建章节？</span>
+            <input value={resumeChapterName} onChange={(e) => setResumeChapterName(e.target.value)}
+              placeholder="章节名称" maxLength={60} aria-label="新章节名称" />
+            <button type="button" className="btn btn-primary btn-sm" disabled={creatingChapter || !resumeChapterName.trim()}
+              onClick={() => void createResumeChapter()}>
+              {creatingChapter ? '创建中…' : '新建章节'}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setResumeDismissed(true)}>暂不</button>
+          </div>
+        </div>
+      ) : null}
+
       {hasError && asrMessage ? (
         <div className="asr-error-bar" role="alert">
           <RefreshCw size={13} />
@@ -284,9 +362,9 @@ export function RecognitionPage({
             </SidePanel>
 
             <HistoryPanel key={course.id} courseId={course.id} recent={historyLines}
-              refresh={summaryRequest}
+              refresh={historyRefresh}
               onArchiveChapterChange={id => { archiveChapterRef.current = id }} />
-            {summaryRequest > 0 && <SummaryPanel courseId={course.id} request={summaryRequest} />}
+            <SummaryPanel courseId={course.id} request={0} />
           </aside>
         </div>
       ) : (
@@ -316,9 +394,9 @@ export function RecognitionPage({
               <WordList entries={vocab} onSelectWord={onSelectWord} />
             </SidePanel>
 
-            <HistoryPanel courseId={course.id} recent={historyLines} refresh={summaryRequest}
+            <HistoryPanel courseId={course.id} recent={historyLines} refresh={historyRefresh}
               onArchiveChapterChange={id => { archiveChapterRef.current = id }} />
-            <SummaryPanel courseId={course.id} request={summaryRequest} />
+            <SummaryPanel courseId={course.id} request={0} />
 
             <NotebookPanel courseId={course.id} onToast={onToast} />
           </aside>
@@ -341,7 +419,9 @@ function HistoryPanel({ courseId, recent, refresh, onArchiveChapterChange }: {
   refresh: number
   onArchiveChapterChange?: (id: string) => void
 }) {
-  const [expanded, setExpanded] = useState(false)
+  // D6：默认展开。此前初始 false 导致「会话 / 章节 / 新建章节」三块初次进课
+  // 完全不渲染，用户以为功能不存在（线下课实测也踩过新建章节找不到入口）。
+  const [expanded, setExpanded] = useState(true)
   const [sessionId, setSessionId] = useState('')
   const [chapterId, setChapterId] = useState<string | null>(null)
   const [sessions, setSessions] = useState<HistorySession[]>([])
@@ -383,7 +463,8 @@ function HistoryPanel({ courseId, recent, refresh, onArchiveChapterChange }: {
   }
 
   useEffect(() => {
-    if (!expanded) return
+    // D6：会话/章节列表与面板展开与否解耦——进入课程就拉取，
+    // 用户收起再展开时数据是现成的，不必等一次网络往返。
     const request = new AbortController()
     const options = { signal: request.signal }
 
@@ -404,7 +485,7 @@ function HistoryPanel({ courseId, recent, refresh, onArchiveChapterChange }: {
       .catch(() => {})
 
     return () => { request.abort() }
-  }, [courseId, expanded, refresh])
+  }, [courseId, refresh])
 
   useEffect(() => {
     if (refresh) {
@@ -456,41 +537,47 @@ function HistoryPanel({ courseId, recent, refresh, onArchiveChapterChange }: {
       }
     >
       {expanded && (
-        <div>
-          <label>会话{' '}
-            <select value={sessionId} onChange={event => setSessionId(event.target.value)}>
-              <option value="">全部会话</option>
-              {sessions.map(session => (
-                <option key={session.sessionId} value={session.sessionId}>
-                  {session.startedAt ? new Date(session.startedAt).toLocaleString() : '历史会话'}
-                  {session.isLatest ? '（最近一次）' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>章节{' '}
-            <select value={chapterId ?? '__all__'}
-              onChange={event => setChapterId(event.target.value === '__all__' ? null : event.target.value)}>
-              <option value="__all__">全部章节</option>
-              <option value="">未分章</option>
-              {chapters.map(chapter => <option key={chapter.id} value={chapter.id}>{chapter.name}</option>)}
-            </select>
-          </label>
-          <div className="chapter-inline-add">
-            <input
-              value={newChapterName}
-              onChange={event => setNewChapterName(event.target.value)}
-              onKeyDown={event => { if (event.key === 'Enter') void addChapter() }}
-              placeholder="新章节名，例如「第 2 讲」"
-              disabled={addingChapter}
-              aria-label="新章节名"
-            />
-            <button type="button" className="btn btn-secondary btn-sm"
-              onClick={() => void addChapter()} disabled={addingChapter || !newChapterName.trim()}>
-              <Plus size={12} /> {addingChapter ? '创建中' : '新建章节'}
-            </button>
+        <div className="history-controls">
+          <div className="history-group">
+            <div className="history-group-title">会话筛选</div>
+            <label className="history-field">会话{' '}
+              <select value={sessionId} onChange={event => setSessionId(event.target.value)}>
+                <option value="">全部会话</option>
+                {sessions.map(session => (
+                  <option key={session.sessionId} value={session.sessionId}>
+                    {session.startedAt ? new Date(session.startedAt).toLocaleString() : '历史会话'}
+                    {session.isLatest ? '（最近一次）' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-          {chapterNotice ? <div className="fineprint" role="status">{chapterNotice}</div> : null}
+          <div className="history-group">
+            <div className="history-group-title">章节管理</div>
+            <label className="history-field">章节{' '}
+              <select value={chapterId ?? '__all__'}
+                onChange={event => setChapterId(event.target.value === '__all__' ? null : event.target.value)}>
+                <option value="__all__">全部章节</option>
+                <option value="">未分章</option>
+                {chapters.map(chapter => <option key={chapter.id} value={chapter.id}>{chapter.name}</option>)}
+              </select>
+            </label>
+            <div className="chapter-inline-add">
+              <input
+                value={newChapterName}
+                onChange={event => setNewChapterName(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Enter') void addChapter() }}
+                placeholder="新章节名，例如「第 2 讲」"
+                disabled={addingChapter}
+                aria-label="新章节名"
+              />
+              <button type="button" className="btn btn-secondary btn-sm"
+                onClick={() => void addChapter()} disabled={addingChapter || !newChapterName.trim()}>
+                <Plus size={12} /> {addingChapter ? '创建中' : '新建章节'}
+              </button>
+            </div>
+            {chapterNotice ? <div className="fineprint" role="status">{chapterNotice}</div> : null}
+          </div>
           {state === 'loading' && <div className="side-empty" role="status">正在加载历史字幕…</div>}
           {state === 'error' && <div className="side-empty" role="alert">历史字幕加载失败，请收起后重试。</div>}
         </div>

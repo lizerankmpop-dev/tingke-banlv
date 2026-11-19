@@ -34,20 +34,66 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# 一·前置：运行时 LLM 配置（2026-11-19，云端配置 UI）
+#
+# 此前 provider / 云端三要素只能靠启动期环境变量设置，改一次要重启应用，且
+# 目标机器上没人会去 set 环境变量 => 云端模型形同虚设。这里加一层**进程内**
+# 配置：由 Electron 主进程经 POST /api/llm/config 推过来，优先于环境变量；
+# 环境变量仍是回退（CI / 测试用 monkeypatch env 的用例不受影响）。
+#
+# 不落盘：桌面端 overlay.json 才是持久化真理源，后端只持有本次运行的镜像。
+# =============================================================================
+
+_RUNTIME_LLM_CONFIG: dict[str, str] = {}
+
+
+def set_runtime_llm_config(config: dict) -> dict:
+    """更新运行时 LLM 配置（只接受已知字段的字符串值；空串=清除该覆盖走 env）。
+
+    返回脱敏后的当前配置（API key 只回显是否设置，绝不回传明文）。
+    """
+    allowed = ("provider", "cloudApiBase", "cloudApiKey", "cloudModel", "ollamaModel")
+    for key in allowed:
+        if key in config:
+            value = config[key]
+            if value is None or not str(value).strip():
+                _RUNTIME_LLM_CONFIG.pop(key, None)
+            else:
+                _RUNTIME_LLM_CONFIG[key] = str(value).strip()
+    return get_runtime_llm_config()
+
+
+def get_runtime_llm_config() -> dict:
+    """当前运行时配置（脱敏），用于 GET /api/llm/config 回显。"""
+    return {
+        "provider": _cfg("provider") or "ollama",
+        "cloudApiBase": _cfg("cloudApiBase") or "",
+        "cloudApiKeySet": bool(_cfg("cloudApiKey")),
+        "cloudModel": _cfg("cloudModel") or "",
+        "ollamaModel": _cfg("ollamaModel") or "",
+    }
+
+
+def _cfg(field: str) -> str:
+    """读一个运行时配置字段（优先进程内覆盖）。"""
+    return _RUNTIME_LLM_CONFIG.get(field, "").strip()
+
+
+# =============================================================================
 # 一、模型提供方抽象
 # =============================================================================
 
 
 def get_provider() -> str:
-    """当前 LLM 提供方：ollama | cloud"""
-    return os.environ.get("TINGKEBANLV_LLM_PROVIDER", "ollama").strip().lower()
+    """当前 LLM 提供方：ollama | cloud（运行时配置优先，env 回退）"""
+    return (_cfg("provider") or os.environ.get("TINGKEBANLV_LLM_PROVIDER", "ollama")).strip().lower()
 
 
 def _build_ollama_model(temperature: float = 0.3, num_predict: int = 1024) -> BaseChatModel:
     """构造本地 Ollama 模型（LangChain 的 ChatOllama 封装）"""
     from langchain_ollama import ChatOllama
 
-    model_name = os.environ.get("TINGKEBANLV_OLLAMA_MODEL", "qwen2.5:7b")
+    model_name = _cfg("ollamaModel") or os.environ.get("TINGKEBANLV_OLLAMA_MODEL", "qwen2.5:7b")
     return ChatOllama(
         model=model_name,
         temperature=temperature,
@@ -61,9 +107,9 @@ def _build_cloud_model(temperature: float = 0.3, num_predict: int = 1024) -> Bas
     """构造云端 OpenAI 兼容模型（DeepSeek / Kimi / 智谱 / OpenAI 等）"""
     from langchain_openai import ChatOpenAI
 
-    base = os.environ["TINGKEBANLV_CLOUD_API_BASE"].strip().rstrip("/")
-    key = os.environ["TINGKEBANLV_CLOUD_API_KEY"].strip()
-    model = os.environ["TINGKEBANLV_CLOUD_MODEL"].strip()
+    base = (_cfg("cloudApiBase") or os.environ.get("TINGKEBANLV_CLOUD_API_BASE", "")).strip().rstrip("/")
+    key = (_cfg("cloudApiKey") or os.environ.get("TINGKEBANLV_CLOUD_API_KEY", "")).strip()
+    model = (_cfg("cloudModel") or os.environ.get("TINGKEBANLV_CLOUD_MODEL", "")).strip()
     return ChatOpenAI(
         model=model,
         base_url=base,
@@ -115,12 +161,11 @@ def get_chat_model(
 
 
 def cloud_configured() -> bool:
-    """云端配置是否齐全（不发实际请求）"""
-    return bool(
-        os.environ.get("TINGKEBANLV_CLOUD_API_BASE", "").strip()
-        and os.environ.get("TINGKEBANLV_CLOUD_API_KEY", "").strip()
-        and os.environ.get("TINGKEBANLV_CLOUD_MODEL", "").strip()
-    )
+    """云端配置是否齐全（不发实际请求；运行时配置优先，env 回退）"""
+    base = _cfg("cloudApiBase") or os.environ.get("TINGKEBANLV_CLOUD_API_BASE", "")
+    key = _cfg("cloudApiKey") or os.environ.get("TINGKEBANLV_CLOUD_API_KEY", "")
+    model = _cfg("cloudModel") or os.environ.get("TINGKEBANLV_CLOUD_MODEL", "")
+    return bool(base.strip() and key.strip() and model.strip())
 
 
 def is_available() -> bool:
@@ -288,6 +333,8 @@ __all__ = [
     "get_chat_model",
     "cloud_configured",
     "is_available",
+    "set_runtime_llm_config",
+    "get_runtime_llm_config",
     "safe_invoke",
     "build_structured_chain",
     "build_qa_chain",

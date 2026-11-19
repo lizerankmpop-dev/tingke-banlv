@@ -250,3 +250,29 @@ input:focus, textarea:focus, select:focus {
   --fs-display: 28px;
 }
 
+
+/* ===== 设置行问号（v4.3.0，D9）=====
+   详细说明默认收起，点行右上角「?」展开；只引用已有 token。 */
+.setting-help-block { position: relative; }
+.setting-help-block .row,
+.setting-help-block .btnRow { padding-right: 22px; }
+.row-help {
+  position: absolute; top: -2px; right: 0;
+  width: 16px; height: 16px; padding: 0;
+  display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 50%;
+  background: var(--bg-tertiary); color: var(--text-muted);
+  font: inherit; font-size: var(--fs-micro); font-weight: 600; line-height: 1; cursor: pointer;
+}
+.row-help:hover,
+.row-help[aria-expanded='true'] {
+  border-color: var(--accent); color: var(--accent-light);
+}
+.row-help-detail {
+  margin: -2px 0 10px; padding: 9px 11px;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: var(--fs-caption); line-height: 1.65;
+}

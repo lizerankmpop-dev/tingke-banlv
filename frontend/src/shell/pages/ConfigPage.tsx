@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { IconButton } from '../../components/ui/IconButton'
 import CourseConfigHint from '../../components/CourseConfigHint'
+import { LLMConfigCard } from '../components/LLMConfigCard'
 import { LevelMeter } from '../../components/ui/LevelMeter'
 import { useCourseStore } from '../../stores/useCourseStore'
 import { useClassroomAudioStore } from '../../stores/useClassroomAudioStore'
@@ -232,6 +233,13 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
       </div>
 
       <CourseConfigHint />
+
+      {/* D3：把「必须先看什么」压成一行，重点加粗；其余卡片都有默认值，不必一次读完全部说明。 */}
+      <div className="config-priority-note" role="note">
+        <strong>配置顺序</strong>
+        <span><strong>① 音频检测</strong> → <strong>② 术语 / 资料</strong> → <strong>③ 开始识别</strong>；模型、字幕语言、章节都有默认值，可稍后再调。</span>
+      </div>
+
       <div className="config-grid">
         <section className="config-card">
           <div className="card-head">
@@ -377,6 +385,11 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
         }} />
       </div>
 
+      {/* D3：次级设置两列排布，减少长页面滚动；小屏自动回落到单列。 */}
+      <div className="config-secondary-grid">
+      {/* AI 模型配置：本地 Ollama / 云端 OpenAI 兼容接口（v4.3.0） */}
+      <LLMConfigCard onToast={onToast} />
+
       {/* 识别设置（主线能力：字幕语言 / 识别语言 / 领域 / 描述） */}
       <section className="config-card term-panel">
         <div className="card-head">
@@ -502,6 +515,7 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
           </button>
         </div>
       </section>
+      </div>
     </div>
   )
 }
@@ -517,6 +531,8 @@ interface MaterialRecord {
   size: number
   indexed: boolean
 }
+
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
 
 function MaterialsCard({
   courseId,
@@ -623,8 +639,8 @@ function MaterialsCard({
         <div className="dropzone-icon">
           <Upload size={22} />
         </div>
-        <strong>拖入 PDF / PPT / DOCX / TXT / MD</strong>
-        <span>或点击选择文件 · 单个文件不超过 20 MB</span>
+        <strong>拖入 PDF / PPT / DOCX / XLSX / TXT / MD / 图片</strong>
+        <span>或点击选择文件 · 单个文件不超过 20 MB · 自动转成文字进入 AI 上下文</span>
         {uploading > 0 ? <span className="dropzone-busy">正在上传 {uploading} 个文件…</span> : null}
       </button>
       <input
@@ -643,7 +659,10 @@ function MaterialsCard({
             </div>
             <div className="file-meta">
               <div className="file-name">{file.name}</div>
-              <div className="file-size">{formatSize(file.size)} · {file.indexed ? '已解析' : '已登记'}</div>
+              <div className="file-size">
+                {formatSize(file.size)} · {file.indexed ? '已解析' : '已登记'}
+                {IMAGE_EXTS.has((file.ext || '').toLowerCase()) ? ' · 图片需联网解析' : ''}
+              </div>
             </div>
             <span className={`file-status ${file.indexed ? 'done' : ''}`}>
               {file.indexed ? '已解析' : '已登记'}
@@ -654,7 +673,7 @@ function MaterialsCard({
           </div>
         ))}
         {materials.length === 0 ? (
-          <div className="side-empty">还没有资料；TXT / MD 会被解析进 AI 上下文</div>
+          <div className="side-empty">还没有资料；文档与纯文本会自动转成文字进入 AI 上下文（图片需联网）</div>
         ) : null}
       </div>
 

@@ -128,7 +128,20 @@ hiddenimports += [
     "llm.term_generator",
     "asr.backend_factory",
     "asr.huawei_asr",
+    # v4.3.0：课程资料转 Markdown。materials.service 里是函数内惰性导入
+    # （可选依赖，未安装时降级），PyInstaller 静态分析抓不到，须显式列出。
+    "markitdown",
 ]
+
+# markitdown 的格式转换器多靠 importlib 动态加载；装了就 collect_all 带上其
+# 数据文件与子模块（与 COLLECT_ALL 同套路，未安装时跳过不影响打包）。
+try:
+    _md_datas, _md_bins, _md_hidden = collect_all("markitdown")
+    datas += _md_datas
+    binaries += _md_bins
+    hiddenimports += _md_hidden
+except Exception as exc:
+    print(f"[spec] 收集 markitdown 失败（非文本资料将只登记）: {exc}")
 
 # torch 只是「如果装了就用它探测 CUDA」的可选依赖（见 asr/whisper_engine.py 的
 # _detect_device）。刻意**不**打包 torch：它会额外带来 2GB+ 体积，

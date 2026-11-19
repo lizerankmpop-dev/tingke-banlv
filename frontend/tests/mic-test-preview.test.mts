@@ -29,15 +29,15 @@ test('合并张春阳增量后仍保留 v4.1.4 窗口捕获修复', () => {
   assert.doesNotMatch(main, /type:\s*source\.type/, '不能退回透传 Electron 31 缺失的 type')
 })
 
-test('版本号四处同步到 4.2.0', () => {
+test('版本号四处同步（升版时不能漏改出口）', () => {
   const pkg = JSON.parse(read('../package.json'))
   const lock = JSON.parse(read('../package-lock.json'))
   const app = read('../../backend/main.py')
   const shell = read('../src/shell/Shell.tsx')
+  const v = pkg.version
 
-  assert.equal(pkg.version, '4.2.0')
-  assert.equal(lock.version, '4.2.0')
-  assert.equal(lock.packages[''].version, '4.2.0')
-  assert.match(app, /APP_VERSION\s*=\s*"4\.2\.0"/)
-  assert.match(shell, /version \|\| '4\.2\.0'/)
+  assert.equal(lock.version, v)
+  assert.equal(lock.packages[''].version, v)
+  assert.match(app, new RegExp(`APP_VERSION\\s*=\\s*"${v}"`))
+  assert.match(shell, new RegExp(`version \\|\\| '${v}'`))
 })

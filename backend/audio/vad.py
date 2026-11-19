@@ -5,6 +5,7 @@
 
 import logging
 import os
+import time
 from typing import Callable, Optional
 
 import numpy as np
@@ -39,6 +40,11 @@ MAX_SPEECH_DURATION = float(os.environ.get("TINGKEBANLV_VAD_MAX_SPEECH", "6.0"))
                              # 6.0s 反而优于 8.0s（切点更贴近语义边界），
                              # 且把最坏延迟从 ~16s 压到 ~8s。
 MIN_SPEECH_DURATION = 1.2    # 最小语音片段长度（秒），低于此不提交识别
+# 能量检测回退阈值（无 Silero 时）：env 可调，远场低电平环境可下调以免整段判静音
+ENERGY_RMS_THRESHOLD = float(os.environ.get("TINGKEBANLV_VAD_ENERGY_RMS", "0.01"))
+# Silero 降级后的恢复重试间隔（秒）：0 表示不重试（保留旧行为）；默认 30s。
+# 偶发的推理失败（torch 线程/内存抖动）不该让整节课永久停在能量检测。
+SILERO_RECOVER_INTERVAL = float(os.environ.get("TINGKEBANLV_VAD_RECOVER_INTERVAL", "30"))
                              # （仅作用于「静音断句」路径；「达到最长上限」路径
                              #   只要片段里出现过语音就会提交，见 _process_window）
 
@@ -92,6 +98,7 @@ class VoiceActivityDetector:
 
         self._model = None
         self._backend = "energy"
+        self._degraded_at: float | None = None  # 降级时刻，用于可恢复重试
         self._pending = np.zeros(0, dtype=np.float32)   # 凑满 512 的残余
         self._audio_buffer: list[np.ndarray] = []
         self._speech_buffer: list[np.ndarray] = []
@@ -306,7 +313,34 @@ class VoiceActivityDetector:
                     logger.warning(f"Silero 推理失败，降级为能量检测: {e}")
                     self._model = None
                     self._backend = "energy"
+                    self._degraded_at = time.monotonic()
+        elif self._backend == "energy" and self._degraded_at is not None and SILERO_RECOVER_INTERVAL > 0:
+            # 🔴 可恢复降级（2026-11-19）：偶发推理失败不该让整节课永久停在
+            #    能量检测（远场噪声下会大量漏字）。每隔 SILERO_RECOVER_INTERVAL
+            #    尝试重载一次；成功则恢复 Silero，失败则继续用能量检测并重置计时。
+            if time.monotonic() - self._degraded_at >= SILERO_RECOVER_INTERVAL:
+                self._degraded_at = time.monotonic()
+                if self._try_reload_silero():
+                    logger.info("Silero VAD 已恢复")
         return self._detect_energy(window)
+
+    def _try_reload_silero(self) -> bool:
+        """尝试重新加载 Silero 模型（降级恢复路径）；成功返回 True。"""
+        try:
+            from silero_vad import load_silero_vad
+            for onnx_backend in (True, False):
+                try:
+                    model = load_silero_vad(onnx=onnx_backend)
+                    if model is not None:
+                        self._model = model
+                        self._backend = "silero-onnx" if onnx_backend else "silero-jit"
+                        self._degraded_at = None
+                        return True
+                except Exception as e:
+                    logger.debug(f"Silero 恢复失败 (onnx={onnx_backend}): {e}")
+        except Exception:
+            pass
+        return False
 
     def _detect_silero(self, window: np.ndarray) -> bool:
         """使用 Silero 模型检测（window 必须恰好 512 样本）"""
@@ -320,7 +354,7 @@ class VoiceActivityDetector:
     def _detect_energy(self, window: np.ndarray) -> bool:
         """基于能量的语音检测（降级方案）"""
         rms = float(np.sqrt(np.mean(window ** 2)))
-        return rms > 0.01  # 简单的 RMS 阈值
+        return rms > ENERGY_RMS_THRESHOLD
 
     # ---------- 状态查询 ----------
 

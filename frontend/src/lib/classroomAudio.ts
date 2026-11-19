@@ -31,6 +31,36 @@ export interface MicrophoneMeter {
   silent: boolean
 }
 
+export interface CaptureHealth {
+  /** 采集线程是否还活着（后端显式上报，不是前端猜的） */
+  captureAlive: boolean | null
+  /** 累计采集到的音频块数 */
+  audioChunks: number | null
+}
+
+/**
+ * 从 /asr/poll 的附带字段读采集健康度。
+ *
+ * 后端在采集线程「找不到设备 / 重试耗尽 / 意外退出」时会把 captureAlive 置 false。
+ * 前端此前只看 asr status（管道在 active_pipelines 就返回 running），
+ * 于是采集线程明明死了，界面还停在「等待音频输入...」——这就是用户说的
+ * 「识别不稳定、有时检测不到音频」里最恶劣的一类：假装在识别。
+ *
+ * 只有明确拿到布尔 false 才判定不健康；字段缺失（旧后端）一律返回 null，
+ * 保持向后兼容，不制造误报。
+ */
+export function readCaptureHealth(data: {
+  captureAlive?: unknown
+  audioChunks?: unknown
+}): CaptureHealth {
+  return {
+    captureAlive: typeof data.captureAlive === 'boolean' ? data.captureAlive : null,
+    audioChunks: typeof data.audioChunks === 'number' && Number.isFinite(data.audioChunks)
+      ? data.audioChunks
+      : null,
+  }
+}
+
 export function readMicrophoneMeter(
   previous: MicrophoneMeter | null,
   data: { inputLevel?: unknown; agcGainDb?: unknown; micDeviceIndex?: unknown },

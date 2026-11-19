@@ -49,5 +49,10 @@ ollama>=0.3.0
 # Utilities
 python-dotenv>=1.0.1
 
+# 课程资料解析：PDF/DOCX/PPTX/XLSX/HTML 等转 Markdown 后进 AI 上下文。
+# 可选依赖：未安装时这些格式只登记不解析，TXT/MD 不受影响。
+# 图片/音频的 OCR 与字幕依赖在线服务（联网可用），离线时自动跳过。
+markitdown[pdf,docx,pptx,xlsx]>=0.1.0
+
 # 测试
 pytest>=8.0.0

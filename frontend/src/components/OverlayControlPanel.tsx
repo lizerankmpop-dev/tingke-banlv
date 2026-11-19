@@ -62,6 +62,34 @@ const A11Y_ID = {
   colorGroup: 'ov-label-color',
 } as const
 
+/**
+ * D9：设置行详情收进右上角「?」。
+ *
+ * 原来每个开关下面都挂一段常驻小字，面板一打开就是一屏说明，真正要调的开关
+ * 反而不显眼。现在默认只留标签 + 控件；需要解释时点问号展开。
+ * 问号带 aria-label / aria-expanded，读屏能知道它是什么、现在是开是关。
+ */
+function HelpRow({ label, help, children }: {
+  label: string
+  help: React.ReactNode
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="setting-help-block">
+      {children}
+      <button
+        type="button"
+        className="row-help"
+        aria-label={`${label}说明`}
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+      >?</button>
+      {open ? <div className="row-help-detail" role="note">{help}</div> : null}
+    </div>
+  )
+}
+
 export default function OverlayControlPanel({ onClose, showHighContrast = false }: {
   onClose: () => void
   showHighContrast?: boolean
@@ -163,6 +191,9 @@ export default function OverlayControlPanel({ onClose, showHighContrast = false 
           ) : (
             <>
               {/* 开关 */}
+              <HelpRow label="显示悬浮窗" help={
+                <>开启后可切到浏览器看网课，字幕会一直浮在最上层。热键 <b>Alt+Shift+O</b> 随时开关。</>
+              }>
               <div style={styles.row}>
                 <div style={styles.rowLabel}>
                   <Eye size={13} />
@@ -184,9 +215,7 @@ export default function OverlayControlPanel({ onClose, showHighContrast = false 
                   <span style={{ ...styles.knob, transform: open ? 'translateX(16px)' : 'translateX(0)' }} />
                 </button>
               </div>
-              <div style={styles.hint}>
-                开启后可切到浏览器看网课，字幕会一直浮在最上层。热键 <b>Alt+Shift+O</b> 随时开关。
-              </div>
+              </HelpRow>
 
               {error && <div style={styles.error} role="alert">{error}</div>}
 
@@ -278,6 +307,13 @@ export default function OverlayControlPanel({ onClose, showHighContrast = false 
                   关        = 交给 Chromium 节流，省电，但字幕会在切走后停住
                 必须让用户看见代价后再选，而不是我们替他硬编码一个值。
               */}
+              <HelpRow label="后台持续更新字幕" help={
+                settings.backgroundUpdate ? (
+                  <>开启后，切到浏览器看网课字幕仍会持续更新（推荐）。代价是后台会持续识别，耗电略高。</>
+                ) : (
+                  <>已关闭：主窗口切到后台后字幕会暂停更新，省电。想边看网课边看字幕请打开它。</>
+                )
+              }>
               <div style={styles.row}>
                 <div style={styles.rowLabel}>
                   <Zap size={14} color={settings.backgroundUpdate ? 'var(--accent-light)' : 'var(--text-muted)'} />
@@ -301,13 +337,7 @@ export default function OverlayControlPanel({ onClose, showHighContrast = false 
                   />
                 </button>
               </div>
-              <div style={styles.hint}>
-                {settings.backgroundUpdate ? (
-                  <>开启后，切到浏览器看网课字幕仍会持续更新（推荐）。代价是后台会持续识别，耗电略高。</>
-                ) : (
-                  <>已关闭：主窗口切到后台后字幕会暂停更新，省电。想边看网课边看字幕请打开它。</>
-                )}
-              </div>
+              </HelpRow>
 
               <Divider />
 
@@ -336,6 +366,9 @@ export default function OverlayControlPanel({ onClose, showHighContrast = false 
                 两处叫法不一致也会让人以为是两个不同的功能。
                 这条口径由 `tests/panel-copy.test.mts` 的守卫钉住（它会先剥注释再扫）。
               */}
+              <HelpRow label="参与识别的术语自动防循环降级" help={
+                <>当检测到字幕重复输出时，自动缩减参与识别的术语范围，防止识别变慢、重复字幕。</>
+              }>
               <div style={styles.row}>
                 <div style={styles.rowLabel}>
                   <ShieldCheck
@@ -362,9 +395,7 @@ export default function OverlayControlPanel({ onClose, showHighContrast = false 
                   />
                 </button>
               </div>
-              <div style={styles.hint}>
-                当检测到字幕重复输出时，自动缩减参与识别的术语范围，防止识别变慢、重复字幕。
-              </div>
+              </HelpRow>
               {termGuardRows.map((row) => (
                 <div
                   key={row.text}
@@ -378,6 +409,13 @@ export default function OverlayControlPanel({ onClose, showHighContrast = false 
               <Divider />
 
               {/* 调整模式 / 重置位置 / 导出日志 */}
+              <HelpRow label="调整模式" help={
+                settings.clickThrough ? (
+                  <>字幕默认<b>鼠标穿透</b>，不会挡住网课页面的按钮。点「调整模式」（或热键 <b>Alt+Shift+D</b>）可拖动窗口。热键 <b>Alt+Shift+R</b> 可一键把窗口挪回屏幕底部居中。</>
+                ) : (
+                  <>调整模式已开启：拖动悬浮窗顶部的紫色条移动位置，鼠标此时会恢复点击。</>
+                )
+              }>
               <div style={styles.btnRow}>
                 {/*
                   「调整模式 / 结束调整」是**命令式**按钮：标签本身随状态变化
@@ -413,13 +451,7 @@ export default function OverlayControlPanel({ onClose, showHighContrast = false 
               */}
               {resetNotice && <div style={styles.logNotice} role="status">{resetNotice}</div>}
               {logNotice && <div style={styles.logNotice} role="status">{logNotice}</div>}
-              <div style={styles.hint}>
-                {settings.clickThrough ? (
-                  <>字幕默认<b>鼠标穿透</b>，不会挡住网课页面的按钮。点「调整模式」（或热键 <b>Alt+Shift+D</b>）可拖动窗口。热键 <b>Alt+Shift+R</b> 可一键把窗口挪回屏幕底部居中。</>
-                ) : (
-                  <>调整模式已开启：拖动悬浮窗顶部的紫色条移动位置，鼠标此时会恢复点击。</>
-                )}
-              </div>
+              </HelpRow>
             </>
           )}
         </div>

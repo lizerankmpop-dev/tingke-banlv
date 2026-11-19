@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Course } from '../../types'
+import { recordExport } from '../../lib/exportRecords'
 
 interface ExportSession {
   sessionId: string
@@ -119,6 +120,15 @@ export function SubtitleExportPanel({ course, onClose, onToast }: Props) {
       link.click()
       link.remove()
       window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      // D10：只有真的触发了下载才登记；登记失败不能影响已下载的文件。
+      void recordExport({
+        courseId: course.id,
+        courseName: course.name,
+        kind: 'subtitles',
+        format,
+        fileName: safeFileName(format),
+        rowCount: Number(data.count) || 0,
+      }).catch(() => {})
       onToast(`已导出 ${data.count} 条字幕（${format === 'srt' ? 'SRT' : 'Markdown'}）`)
       onClose()
     } catch {

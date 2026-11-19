@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { HostStatusPayload, OverlaySubtitlePayload } from '../types'
 import { hostBridge, overlayBridge } from '../lib/overlayBridge'
 import { useOverlayStore } from '../stores/useOverlayStore'
-import { Loader2, AlertCircle, Move, Unplug, Crosshair } from 'lucide-react'
+import { Loader2, AlertCircle, Move, Unplug, Crosshair, Check } from 'lucide-react'
 
 /**
  * 桌面字幕悬浮窗（独立窗口入口：#/overlay）
@@ -30,6 +30,7 @@ import { Loader2, AlertCircle, Move, Unplug, Crosshair } from 'lucide-react'
 export default function OverlayWindow() {
   const settings = useOverlayStore((s) => s.settings)
   const init = useOverlayStore((s) => s.init)
+  const patch = useOverlayStore((s) => s.patch)
   const [payload, setPayload] = useState<OverlaySubtitlePayload | null>(null)
   const [host, setHost] = useState<HostStatusPayload | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -98,7 +99,13 @@ export default function OverlayWindow() {
   const hostDown = host?.alive === false
 
   return (
-    <div style={styles.root}>
+    <div style={{
+      ...styles.root,
+      // 调整模式（clickThrough=false）时整窗可交互，与「鼠标恢复点击」的提示一致；
+      // 平时仍完全穿透，绝不挡住网课页面。主进程 setIgnoreMouseEvents 是真正
+      // 的穿透开关，这里这层是渲染侧双保险（D8：此前写死 none 导致退出按钮点不到）。
+      pointerEvents: clickThrough ? 'none' : 'auto',
+    }}>
       {/* 主窗口已断开：这比「字幕不动」有意义得多 —— 用户知道该重启了 */}
       {hostDown && (
         <div style={styles.hostDown}>
@@ -109,11 +116,21 @@ export default function OverlayWindow() {
         </div>
       )}
 
-      {/* 调整模式：给用户一个明确的可拖动区域与退出提示 */}
+      {/* 调整模式：给用户一个明确的可拖动区域与就地退出按钮。
+          D8：此前退出只能靠主窗口面板按钮（被置顶悬浮窗遮挡）或 Alt+Shift+D 热键；
+          现在悬浮窗自身提供退出入口，鼠标即可完成全流程。 */}
       {!clickThrough && (
         <div style={styles.dragBar}>
           <Move size={12} />
-          <span style={styles.dragText}>拖动调整位置 · Alt+Shift+D 退出调整模式</span>
+          <span style={styles.dragText}>拖动调整位置</span>
+          <button
+            type="button"
+            style={styles.exitAdjustBtn}
+            onClick={(e) => { e.stopPropagation(); void patch({ clickThrough: true }) }}
+            aria-label="结束调整模式"
+          >
+            <Check size={12} /> 结束调整
+          </button>
         </div>
       )}
 
@@ -189,10 +206,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     background: 'transparent',
     overflow: 'hidden',
-    // 整层不接收鼠标事件：字幕悬浮在网课页面之上时绝不能挡住点击。
-    // 主进程层面的 setIgnoreMouseEvents 才是真正的穿透，这一层是双保险
-    // （也覆盖「主进程尚未切换 forward 标志」的短暂窗口）。
-    pointerEvents: 'none',
+    // pointerEvents 在 render 时按 clickThrough 动态决定（见 JSX 的 styles.root 展开）
   },
   hostDown: {
     display: 'flex',
@@ -209,9 +223,9 @@ const styles: Record<string, React.CSSProperties> = {
   dragBar: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     gap: 6,
-    padding: '3px 0',
+    padding: '3px 8px',
     background: 'var(--accent-strong)',
     color: '#fff',
     fontSize: 11,
@@ -220,7 +234,15 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitAppRegion: 'drag',
     pointerEvents: 'auto',
   } as React.CSSProperties,
-  dragText: { fontSize: 11 },
+  dragText: { fontSize: 11, marginRight: 'auto' },
+  exitAdjustBtn: {
+    display: 'inline-flex', alignItems: 'center', gap: 3,
+    background: 'rgba(255,255,255,0.18)', color: '#fff',
+    border: '1px solid rgba(255,255,255,0.35)', borderRadius: 4,
+    padding: '1px 6px', fontSize: 11, cursor: 'pointer',
+    // 按钮在 drag 区里必须 no-drag，否则点击被当成拖动
+    WebkitAppRegion: 'no-drag',
+  } as React.CSSProperties,
   lines: {
     flex: 1,
     display: 'flex',

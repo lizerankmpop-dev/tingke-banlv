@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChevronRight, Download, Search } from 'lucide-react'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { vocabularyApi, exportUrl, downloadUrl } from '../../lib/vocabularyApi'
+import { recordExport } from '../../lib/exportRecords'
 import { useCourseStore } from '../../stores/useCourseStore'
 import type { Course, VocabularyEntry, VocabularyStats } from '../../types'
 import { isOnline, sm2Badge } from '../lib/mapping'
@@ -77,6 +78,14 @@ export function VocabPage({ onSelectWord, onToast }: VocabPageProps) {
     let bestCount = -1
     counts.forEach((n, id) => { if (n > bestCount) { bestCount = n; best = id } })
     downloadUrl(exportUrl(best, 'csv'))
+    void recordExport({
+      courseId: best,
+      courseName: courses.find((c) => c.id === best)?.name ?? '',
+      kind: 'vocabulary',
+      format: 'csv',
+      fileName: `生词本-${courses.find((c) => c.id === best)?.name ?? best}.csv`,
+      rowCount: bestCount,
+    }).catch(() => {})
     onToast(`已导出 ${bestCount} 个生词（CSV，${courses.find((c) => c.id === best)?.name ?? ''}）`)
   }
 

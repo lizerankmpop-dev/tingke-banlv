@@ -144,6 +144,9 @@ class DatabaseManager:
                 name TEXT NOT NULL,
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
+                -- v4.3.0：章节总结（「结束并总结」后保存到本章节）
+                summary TEXT DEFAULT '',
+                summary_updated_at INTEGER DEFAULT 0,
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
             );
 
@@ -190,6 +193,19 @@ class DatabaseManager:
                 content TEXT NOT NULL DEFAULT '',
                 updated_at INTEGER NOT NULL,
                 FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+            );
+
+            -- 导出记录（2026-11-19，D10）：侧栏「导出记录」要能点进去看历史，
+            -- 空的时候显示「没有记录」而不是禁用按钮。全新表，老库同样会建出来。
+            CREATE TABLE IF NOT EXISTS export_records (
+                id TEXT PRIMARY KEY,
+                course_id TEXT NOT NULL DEFAULT '',
+                course_name TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL,
+                format TEXT NOT NULL,
+                file_name TEXT NOT NULL DEFAULT '',
+                row_count INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_subtitles_course ON subtitles(course_id);
@@ -304,6 +320,21 @@ class DatabaseManager:
             )
             await self.db.commit()
             logger.info("数据库迁移：历史生词已回填复习字段，直接进入待复习队列")
+
+        # v4.3.0：章节总结字段（「结束并总结」后保存到章节）
+        cursor = await self.db.execute("PRAGMA table_info(chapters)")
+        chapter_columns = {row[1] for row in await cursor.fetchall()}
+        chapter_added = []
+        for name, ddl in [
+            ("summary", "TEXT DEFAULT ''"),
+            ("summary_updated_at", "INTEGER DEFAULT 0"),
+        ]:
+            if name not in chapter_columns:
+                await self.db.execute(f"ALTER TABLE chapters ADD COLUMN {name} {ddl}")
+                chapter_added.append(name)
+        if chapter_added:
+            await self.db.commit()
+            logger.info("数据库迁移：chapters 表已添加列 %s", ", ".join(chapter_added))
 
         # 待复习队列按 (course_id, next_review_at) 检索，词量大时是关键索引。
         # 必须放在加列之后（见 _create_tables 里的说明）。
@@ -539,6 +570,71 @@ class DatabaseManager:
             "createdAt": now,
         }
 
+    async def update_chapter_summary(self, chapter_id: str, course_id: str, summary: str) -> dict | None:
+        """保存章节总结（「结束并总结」后调用）；章节不属于该课程则返回 None。"""
+        rows = await self.db.execute_fetchall(
+            "SELECT id FROM chapters WHERE id = ? AND course_id = ?", (chapter_id, course_id)
+        )
+        if not rows:
+            return None
+        now = int(time.time() * 1000)
+        await self.db.execute(
+            "UPDATE chapters SET summary = ?, summary_updated_at = ? WHERE id = ?",
+            (summary, now, chapter_id),
+        )
+        await self.db.commit()
+        return {"id": chapter_id, "summary": summary, "summaryUpdatedAt": now}
+
+    async def add_export_record(
+        self, course_id: str, course_name: str, kind: str,
+        format: str, file_name: str, row_count: int,
+    ) -> dict:
+        """记一次成功下载（由前端在 Blob/URL 下载触发后回调，避免记下取消的导出）。"""
+        record = {
+            "id": uuid.uuid4().hex,
+            "courseId": course_id,
+            "courseName": course_name,
+            "kind": kind,
+            "format": format,
+            "fileName": file_name,
+            "rowCount": int(row_count),
+            "createdAt": int(time.time() * 1000),
+        }
+        await self.db.execute(
+            """INSERT INTO export_records
+               (id, course_id, course_name, kind, format, file_name, row_count, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (record["id"], course_id, course_name, kind, format, file_name,
+             record["rowCount"], record["createdAt"]),
+        )
+        await self.db.commit()
+        return record
+
+    async def list_export_records(self, limit: int = 100) -> list[dict]:
+        cursor = await self.db.execute_fetchall(
+            "SELECT * FROM export_records ORDER BY created_at DESC LIMIT ?", (limit,)
+        )
+        return [
+            {
+                "id": row["id"],
+                "courseId": row["course_id"],
+                "courseName": row["course_name"],
+                "kind": row["kind"],
+                "format": row["format"],
+                "fileName": row["file_name"],
+                "rowCount": row["row_count"],
+                "createdAt": row["created_at"],
+            }
+            for row in cursor
+        ]
+
+    async def delete_export_record(self, record_id: str) -> bool:
+        cursor = await self.db.execute(
+            "DELETE FROM export_records WHERE id = ?", (record_id,)
+        )
+        await self.db.commit()
+        return cursor.rowcount > 0
+
     async def list_chapters(self, course_id: str) -> list[dict]:
         rows = await self.db.execute_fetchall(
             "SELECT * FROM chapters WHERE course_id = ? ORDER BY sort_order ASC",
@@ -550,6 +646,8 @@ class DatabaseManager:
             d["courseId"] = d.pop("course_id")
             d["sortOrder"] = d.pop("sort_order")
             d["createdAt"] = d.pop("created_at")
+            if "summary_updated_at" in d:
+                d["summaryUpdatedAt"] = d.pop("summary_updated_at")
             result.append(d)
         return result
 
@@ -564,6 +662,8 @@ class DatabaseManager:
         d["courseId"] = d.pop("course_id")
         d["sortOrder"] = d.pop("sort_order")
         d["createdAt"] = d.pop("created_at")
+        if "summary_updated_at" in d:
+            d["summaryUpdatedAt"] = d.pop("summary_updated_at")
         return d
 
     async def delete_chapter(self, chapter_id: str, course_id: str = "") -> dict | None:

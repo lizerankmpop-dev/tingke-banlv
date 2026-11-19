@@ -386,7 +386,7 @@ test('面板里的开关/滑杆/按钮数量与预期一致（扫描逻辑没退
   assert.equal(switches.length, 3, '开关：显示悬浮窗 / 后台持续更新字幕 / 术语提示词自动防循环降级');
   assert.equal(sliderCalls, 4, '滑杆：字号 / 显示行数 / 当前句底色 / 整体透明度');
   assert.equal(ranges.length, 1, '四个滑杆共用 SliderRow 里的同一个 <input type="range">');
-  assert.equal(buttons.length, 8, '按钮：关闭 + 3 开关 + 1 色板模板 + 调整模式 / 重置位置 / 导出日志');
+  assert.equal(buttons.length, 9, '按钮：关闭 + 3 开关 + 1 色板模板 + 1 问号帮助模板 + 调整模式 / 重置位置 / 导出日志');
 });
 
 // ============ 变异验证：证明守卫真的会失败 ============
