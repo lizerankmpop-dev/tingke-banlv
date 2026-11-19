@@ -155,6 +155,53 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
     if (!online && devices.length === 0) void loadDevices()
   }, [online, devices.length, loadDevices])
 
+  // v4.3.1：进入线下配置页自动扫一遍所有输入设备的电平——
+  // 「系统默认麦克风」在这台机器上恰好是没接麦的阵列映射器，用户点了试采
+  // 永远显示「没声音」却不知道该换哪个。扫完直接把有声设备的名字标出来并
+  // 自动选中，用户再点试采就能采到声音。
+  interface DeviceProbe {
+    index: number; name: string; isDefaultInput: boolean
+    ok: boolean; level: number; peak: number; message: string
+  }
+  const [probes, setProbes] = useState<DeviceProbe[]>([])
+  const [scanning, setScanning] = useState(false)
+  const [scanNotice, setScanNotice] = useState('')
+  const scanDevices = useCallback(async (autoSelect: boolean) => {
+    if (scanning) return
+    setScanning(true)
+    setScanNotice('')
+    try {
+      const res = await fetch('/api/audio/mic-scan', { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json() as {
+        devices: DeviceProbe[]; recommendedIndex: number | null
+        candidateIndex?: number | null; hasAudible?: boolean; hint?: string; count: number
+      }
+      setProbes(Array.isArray(data.devices) ? data.devices : [])
+      const pick = data.recommendedIndex ?? data.candidateIndex ?? null
+      if (pick != null && autoSelect) {
+        setSettings({ micDeviceIndex: pick })
+        const chosen = data.devices.find(d => d.index === pick)
+        setScanNotice(data.hasAudible
+          ? `已找到有声设备「${chosen?.name ?? pick}」并自动选中，点「试采 3 秒」确认。`
+          : `已选中候选麦克风「${chosen?.name ?? pick}」。请对着它说话，同时点「重新扫描麦克风」。${data.hint ?? ''}`)
+      } else {
+        setScanNotice(data.hint || '当前没有检测到有声音的输入设备。请确认麦克风已插好、系统未静音，再点「重新扫描」。')
+      }
+    } catch {
+      setScanNotice('设备扫描失败，请确认本地服务已启动后重试。')
+    } finally {
+      setScanning(false)
+    }
+  }, [scanning, setSettings])
+
+  // 设备列表就绪后自动扫描一次（仅线下、未扫过）
+  useEffect(() => {
+    if (!online && devices.length > 0 && probes.length === 0 && !scanning) {
+      void scanDevices(true)
+    }
+  }, [online, devices.length, probes.length, scanning, scanDevices])
+
   const [micTesting, setMicTesting] = useState(false)
   const [micResult, setMicResult] = useState<{
     ok: boolean; level: number; message: string; transcript?: string; previewMessage?: string
@@ -290,7 +337,7 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
             </>
           ) : (
             <>
-              <label className="field field-tight">
+              <div className="field">
                 <span>麦克风设备</span>
                 <select
                   value={settings.micDeviceIndex === null ? '' : String(settings.micDeviceIndex)}
@@ -300,11 +347,42 @@ export function ConfigPage({ course, onBack, onStartRecognition, onToast }: Conf
                   }}
                 >
                   <option value="">系统默认麦克风</option>
-                  {devices.map((device) => (
-                    <option key={device.index} value={device.index}>{device.name}</option>
-                  ))}
+                  {devices.map((device) => {
+                    const probe = probes.find(p => p.index === device.index)
+                    const tag = probe
+                      ? probe.level >= 0.004 ? ' · 有声' : ' · 静音'
+                      : ''
+                    return (
+                      <option key={device.index} value={device.index}>{device.name}{tag}</option>
+                    )
+                  })}
                 </select>
-              </label>
+                {probes.length > 0 ? (
+                  <div className="mic-device-probes" role="list">
+                    {probes.map(probe => (
+                      <button
+                        type="button"
+                        role="listitem"
+                        key={probe.index}
+                        className={`mic-device-chip ${settings.micDeviceIndex === probe.index ? 'active' : ''} ${probe.level >= 0.004 ? 'audible' : 'silent'}`}
+                        onClick={() => setSettings({ micDeviceIndex: probe.index })}
+                        title={probe.message}
+                      >
+                        <span className="mic-device-dot" />
+                        <span className="mic-device-name">{probe.name}</span>
+                        <span className="mic-device-level">
+                          {probe.ok ? `${Math.round(probe.level * 100)}%` : '失败'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <button type="button" className="text-btn" onClick={() => void scanDevices(true)} disabled={scanning}>
+                  <RefreshCw size={12} className={scanning ? 'spin' : ''} />
+                  {scanning ? '正在扫描设备…' : '重新扫描麦克风'}
+                </button>
+                {scanNotice ? <small className="mic-scan-notice" role="status">{scanNotice}</small> : null}
+              </div>
 
               <div className="field">
                 <span>收音档位</span>

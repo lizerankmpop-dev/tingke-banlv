@@ -22,6 +22,24 @@ test('只保留合法的窗口/屏幕源，脏值不会进入下拉列表', () =
   })
 })
 
+test('D-捕获：空 name 的课程窗口用 id 兜底，不再被丢弃', () => {
+  // UWP / 课程 App 的 source.name 有时是空串，原来直接判空丢掉 → 列表里找不到。
+  const normalized = normalizeCaptureSource({ id: 'window:787434:0', name: '', type: 'window' })
+  assert.ok(normalized, '空 name 的窗口必须保留')
+  assert.match(normalized!.name, /课程窗口/)
+  assert.equal(normalized!.id, 'window:787434:0')
+})
+
+test('D-捕获：窗口列表持续刷新（定时 + 焦点），切回应用即得新列表', () => {
+  const ui = readFileSync(
+    new URL('../src/shell/components/CourseScreenCapture.tsx', import.meta.url), 'utf8',
+  )
+  assert.match(ui, /setInterval\(\(\) => \{ void refreshSources\(true\) \}, 2000\)/)
+  assert.match(ui, /addEventListener\('focus'/)
+  assert.match(ui, /const refreshSources = useCallback\(async \(silent = false\)/, '后台静默刷新不能打断用户')
+  assert.match(ui, /个源/, '窗口数要可见，让用户知道列表在更新')
+})
+
 test('默认优先非本应用窗口，选中项始终压过默认策略', () => {
   assert.equal(preferCourseSource(sources)?.id, 'ppt')
   assert.equal(preferCourseSource(sources, 'screen')?.id, 'screen')

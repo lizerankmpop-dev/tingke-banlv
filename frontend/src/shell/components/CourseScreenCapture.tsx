@@ -57,8 +57,8 @@ export function CourseScreenCapture({ courseName, onToast }: CourseScreenCapture
     void window.electronAPI?.capture?.clearSource?.()
   }, [clearBlackTimer])
 
-  const refreshSources = useCallback(async () => {
-    setBusy(true)
+  const refreshSources = useCallback(async (silent = false) => {
+    if (!silent) setBusy(true)
     try {
       const raw = await window.electronAPI?.capture?.listSources?.() ?? []
       const list = raw.map(normalizeCaptureSource).filter((item): item is CaptureSource => item != null)
@@ -67,13 +67,32 @@ export function CourseScreenCapture({ courseName, onToast }: CourseScreenCapture
       if (preferred) setSelectedId(preferred.id)
       setMessage(list.length ? '' : '没有找到可捕获的窗口。请先打开课程网页或课程 App。')
     } catch (error) {
-      const text = captureErrorMessage(error)
-      setMessage(text)
-      onToast(text)
+      // 后台静默刷新失败不弹 toast，避免用户什么都没做就被打断
+      if (!silent) {
+        const text = captureErrorMessage(error)
+        setMessage(text)
+        onToast(text)
+      }
     } finally {
-      setBusy(false)
+      if (!silent) setBusy(false)
     }
   }, [onToast, selectedId])
+
+  // v4.3.1：窗口列表只在挂载时拉一次 —— 用户往往是「先进识别页，再去开课程
+  // 网页」，此时列表还是旧的，看起来就是「灵敏度不够 / 找不到对应页面」。
+  // 改为每 2 秒静默刷新一次；不在捕获中、不在忙时才刷，避免打断正在选源。
+  useEffect(() => {
+    if (capturing) return undefined
+    const timer = window.setInterval(() => { void refreshSources(true) }, 2000)
+    return () => window.clearInterval(timer)
+  }, [capturing, refreshSources])
+
+  // 从课程窗口 Alt+Tab 切回来时立刻刷一次，比等定时更跟手
+  useEffect(() => {
+    const onFocus = () => { if (!capturing) void refreshSources(true) }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [capturing, refreshSources])
 
   useEffect(() => { void refreshSources() }, [refreshSources])
 
@@ -152,7 +171,7 @@ export function CourseScreenCapture({ courseName, onToast }: CourseScreenCapture
           <span>{courseName}</span>
         </div>
         <div className="web-tab-spacer" />
-        <span className="capture-mode-tag">窗口画面</span>
+        <span className="capture-mode-tag">窗口画面 · {sources.length} 个源</span>
       </div>
 
       <div className="web-toolbar capture-toolbar">
@@ -211,7 +230,7 @@ export function CourseScreenCapture({ courseName, onToast }: CourseScreenCapture
           <div className="web-empty">
             <div className="web-empty-icon"><MonitorPlay size={22} /></div>
             <strong>选择课程网页 / 课程 App 窗口</strong>
-            <span>把它全屏后点「开始捕获」，画面会等比放在这里</span>
+            <span>把课程页面打开后切回这里，列表会自动更新（约 2 秒），再点「开始捕获」</span>
             <span className="web-empty-hint">识别继续用系统音频，不需要把画面交给识别引擎</span>
           </div>
         ) : null}

@@ -3575,3 +3575,29 @@ html[data-contrast="high"] .term {
 .config-card .self-review-item strong { font-weight: 600; }
 .config-card .form-error,
 .config-card .term-note { padding: 8px 0; }
+
+/* ===== 麦克风设备电平扫描（v4.3.1）=====
+   一眼看出哪个设备真的有声音，避免一直用静音的「系统默认麦克风」。 */
+.mic-device-probes {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 132px; overflow: auto;
+}
+.mic-device-chip {
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; padding: 6px 9px;
+  border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  background: var(--bg-secondary); color: var(--text-secondary);
+  font: inherit; font-size: var(--fs-caption); cursor: pointer; text-align: left;
+}
+.mic-device-chip:hover { border-color: var(--accent); }
+.mic-device-chip.active { border-color: var(--accent); background: var(--accent-light); color: var(--text-primary); }
+.mic-device-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+.mic-device-chip.audible .mic-device-dot { background: var(--success); }
+.mic-device-chip.silent .mic-device-dot { background: var(--danger); }
+.mic-device-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mic-device-level { font-variant-numeric: tabular-nums; color: var(--text-3); }
+.mic-scan-notice {
+  display: block; padding: 6px 9px; border-radius: var(--radius-sm);
+  background: var(--accent-light); color: var(--text-primary);
+  font-size: var(--fs-caption); line-height: 1.6;
+}

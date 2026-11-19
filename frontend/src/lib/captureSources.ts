@@ -20,9 +20,12 @@ export function normalizeCaptureSource(input: unknown): CaptureSource | null {
   if (!input || typeof input !== 'object') return null
   const raw = input as Record<string, unknown>
   const id = typeof raw.id === 'string' ? raw.id : ''
-  const name = typeof raw.name === 'string' ? raw.name : ''
+  // v4.3.1：课程 App / UWP 窗口的 source.name 有时是空串。原来直接判空丢弃，
+  // 结果就是「课程窗口明明开着，列表里找不到」。用 id 尾部兜底成可读名。
+  const rawName = typeof raw.name === 'string' ? raw.name.trim() : ''
+  const name = rawName || `课程窗口 ${String(id).split(':').pop()?.slice(0, 8) || '未命名'}`
   const type = raw.type === 'screen' ? 'screen' : raw.type === 'window' ? 'window' : null
-  if (!id || !name || !type) return null
+  if (!id || !type) return null
   return {
     id,
     name,

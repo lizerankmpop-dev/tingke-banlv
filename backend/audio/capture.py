@@ -405,34 +405,67 @@ class AudioCapture:
                     kwargs = {}
                     if device_index is not None:
                         kwargs["input_device_index"] = device_index
+
+                    # 🔴 v4.3.1：按设备原生格式开流，不再写死 16000/1ch。
+                    # 实测踩坑：阵列麦（Realtek）默认给的是 48000Hz/2ch，
+                    # 强行用 16000Hz/1ch 打开 → PyAudioWPatch 静默返回 -1~1 的
+                    # 数字静音（电平 0.0001），界面就显示「没有声音」；另有设备
+                    # 直接抛 Errno -9997 Invalid sample rate。
+                    rate = 16000
+                    channels = 1
+                    if device_index is not None:
+                        try:
+                            info = p.get_device_info_by_index(device_index)
+                            candidate_rate = int(info.get("defaultSampleRate") or 0)
+                            if candidate_rate > 0:
+                                rate = candidate_rate
+                            candidate_channels = int(info.get("maxInputChannels") or 0)
+                            if candidate_channels > 0:
+                                channels = candidate_channels
+                        except Exception as exc:  # 枚举失败就用保守默认值
+                            logger.debug(f"试采读取设备格式失败，沿用 16k/1ch: {exc}")
+                    frames_per_buffer = max(160, min(rate // 10, 4096))
+
                     stream = p.open(
                         format=pyaudio.paInt16,
-                        channels=1,
-                        rate=16000,
+                        channels=channels,
+                        rate=rate,
                         input=True,
-                        frames_per_buffer=1600,  # 100ms
+                        frames_per_buffer=frames_per_buffer,
                         **kwargs,
                     )
                     try:
-                        frames = int(seconds * 10)
+                        frames = max(1, int(seconds * rate / frames_per_buffer))
                         pcm = bytearray() if include_pcm else None
                         squares = 0.0
                         count = 0
                         peak = 0
                         for _ in range(frames):
-                            data = stream.read(1600, exception_on_overflow=False)
-                            if pcm is not None:
-                                pcm.extend(data)
+                            data = stream.read(frames_per_buffer, exception_on_overflow=False)
                             arr = np.frombuffer(data, dtype=np.int16)
+                            # 多通道取绝对值的通道最大值，避免某些通道静音把电平拉低
+                            if channels > 1 and arr.size >= channels:
+                                multichannel = arr.reshape(-1, channels).astype(np.int32)
+                                arr = multichannel[np.arange(multichannel.shape[0]),
+                                                   np.abs(multichannel).argmax(axis=1)].astype(np.int16)
                             absarr = np.abs(arr.astype(np.int32))
                             squares += float((absarr * absarr).sum())
                             count += len(arr)
                             local_peak = int(absarr.max()) if len(arr) else 0
                             peak = max(peak, local_peak)
+                            if pcm is not None:
+                                pcm.extend(arr.tobytes())
                         rms = (squares / count) ** 0.5 if count else 0.0
-                        level = min(1.0, rms / 32768.0 * 8)   # 经验放大：教室远场 RMS 常在满幅 5% 以下
+                        # 自适应放大：原生 48k/2ch 下远场 RMS 更低，需要一个
+                        # 更宽的动态范围；同时保证"数字静音"仍然是 0。
+                        gain = 8.0 if rate <= 16000 else 14.0
+                        level = min(1.0, rms / 32768.0 * gain)
                         peak_level = min(1.0, peak / 32768.0)
-                        if level < 0.02:
+                        # 🔴 v4.3.1：低电平阈值下调 0.02 → 0.004。
+                        # 远场真实语音 RMS 常在满幅 0.5%~2%，放大后 level 落在
+                        # 0.004~0.02，旧阈值把这类可用输入误判成「没声音」。
+                        quiet_floor = 0.004
+                        if level < quiet_floor:
                             verdict = "几乎没采到声音：检查麦克风选择与物理开关"
                         elif level < 0.08:
                             verdict = "声音偏弱：建议靠近讲台或调高系统增益"
@@ -444,8 +477,18 @@ class AudioCapture:
                             "ok": True, "level": round(level, 4),
                             "peak": round(peak_level, 4),
                             "deviceIndex": device_index,
+                            "sampleRate": rate,
+                            "channels": channels,
                             "message": verdict,
                         }
+                        if pcm is not None and rate != 16000:
+                            # Whisper 只吃 16k；线性插值降采样，不引入 librosa/scipy
+                            src = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+                            target_len = max(1, int(src.size * 16000 / rate))
+                            src_x = np.linspace(0, src.size - 1, src.size, dtype=np.float32)
+                            dst_x = np.linspace(0, src.size - 1, target_len, dtype=np.float32)
+                            pcm = bytearray(np.interp(dst_x, src_x, src)
+                                            .astype(np.int16).tobytes())
                         if pcm is not None:
                             result["_pcm"] = pcm
                         return result
@@ -458,6 +501,36 @@ class AudioCapture:
             logger.error(f"麦克风试采失败: {e}")
             return {"ok": False, "level": 0.0, "peak": 0.0,
                     "deviceIndex": device_index, "message": f"试采失败：{e}"}
+
+    # ---------- 输入设备电平扫描（v4.3.1：一眼看出哪个设备真的有声音） ----------
+
+    @staticmethod
+    def probe_input_devices(seconds: float = 0.4) -> list[dict]:
+        """逐个输入设备试采极短时间，返回各自电平，供配置页自动推荐。
+
+        解决「选了系统默认却一直是数字静音」：Windows 上默认输入常指向
+        没接麦的阵列/映射器，用户逐个手试根本不知道该选哪个。这里一次性
+        量出所有输入设备的真实电平，前端直接标出「推荐」。
+
+        回环设备（isLoopback）只用于线上课系统音频，不参与麦克风推荐。
+        """
+        devices = AudioCapture.list_devices()
+        results: list[dict] = []
+        for device in devices:
+            if device.get("isLoopback") or device.get("maxInputChannels", 0) <= 0:
+                continue
+            index = device["index"]
+            probe = AudioCapture.mic_test_burst(index, seconds, include_pcm=False)
+            results.append({
+                "index": index,
+                "name": device.get("name", ""),
+                "isDefaultInput": bool(device.get("isDefaultInput")),
+                "ok": bool(probe.get("ok")),
+                "level": probe.get("level", 0.0),
+                "peak": probe.get("peak", 0.0),
+                "message": probe.get("message", ""),
+            })
+        return results
 
     # ---------- 捕获主循环 ----------
 

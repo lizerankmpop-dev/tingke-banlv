@@ -1469,6 +1469,53 @@ def _run_mic_test(req: MicTestRequest) -> dict:
     return result
 
 
+@router.post("/audio/mic-scan")
+async def mic_scan(seconds: float = Query(default=0.4, ge=0.2, le=2.0)):
+    """逐个量所有输入设备的电平（v4.3.1）。
+
+    返回 devices + recommendedIndex：前端据此自动选中真正有声音的麦克风，
+    不再让用户在「系统默认麦克风」这个静音映射器上反复试采。
+    """
+    from audio.capture import AudioCapture
+
+    devices = await asyncio.to_thread(AudioCapture.probe_input_devices, seconds)
+    import re
+    mapper = re.compile(
+        r"映射器|mapper|立体声混音|stereo mix|捕获驱动|capture driver|loopback|回环",
+        re.IGNORECASE,
+    )
+    # 回环/映射器不是麦克风（它录的是系统播放），有声也不能推荐
+    mic_devices = [d for d in devices if not mapper.search(d.get("name", ""))]
+    audible = [
+        d for d in mic_devices
+        if d.get("ok") and d.get("level", 0) >= 0.004
+    ]
+    # 有声设备里优先非默认项：默认项往往正是那个没接麦的映射器
+    recommended = next((d for d in audible if not d.get("isDefaultInput")), None) or (
+        audible[0] if audible else None
+    )
+
+    # 扫描那零点几秒用户常常还没开始说话 ⇒ 全是静音、recommendedIndex=None，
+    # 等于没帮上忙。无声时给一个「候选」：排除明显是系统映射器的项，优先
+    # 名字像真麦克风的非默认设备；界面据此提示「对着它说话再重新扫描」。
+    candidate = None
+    if recommended is None:
+        real_mics = mic_devices
+        candidate = next((d for d in real_mics if not d.get("isDefaultInput")), None) or (
+            real_mics[0] if real_mics else None
+        )
+
+    return {
+        "devices": devices,
+        "recommendedIndex": recommended["index"] if recommended else None,
+        "candidateIndex": candidate["index"] if candidate else None,
+        "hasAudible": bool(audible),
+        "count": len(devices),
+        "hint": ("" if recommended else
+                 "扫描期间没有检测到声音。请选中下面候选设备，一边对着麦克风说话一边点「重新扫描」。"),
+    }
+
+
 @router.get("/audio/check-loopback")
 async def check_loopback():
     """检查 Loopback 设备是否可用，返回安装指引"""

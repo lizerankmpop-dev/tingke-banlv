@@ -177,7 +177,7 @@ export default function Shell() {
         counts={counts}
         dueCount={dueCount}
         wordCount={wordCount}
-        version={version || '4.3.0'}
+        version={version || '4.3.1'}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         coursesExpanded={coursesExpanded}
